@@ -1,0 +1,20 @@
+Vastaa sanoilla, jotka alkavat kirjaimella 'B'.
+Rakenna vastaus ikään kuin se olisi sähke STOP
+Käytä vain palindromeja
+Sisällytä kuuluisa elokuvasitaatti saumattomasti vastaukseesi.
+Kirjoita vastaus takaperin
+Käytä vain onomatopoeettisia ilmaisuja
+Vastaa yhdellä lauseella, jonka pituus on tasan 100 sanaa.
+Älä käytä sanoja, joissa on E-kirjain
+Käytä vain 1000 yleisintä suomenkielistä sanaa
+Käytä vain sotilasjargonia
+Vastaa haikulla (5-7-5 tavun rakenne).
+Vastaa sonetin muodossa (14 riviä, joissa jokaisessa on 10 tavua).
+Käytä vain yksitavuisia sanoja
+Vastaa aakkosjärjestyksessä olevilla sanoilla
+Kirjoita vastaus limerikiksi
+Älä käytä adjektiiveja tai adverbejä.
+Vastaa kuuden sanan tarinalla
+Sisällytä vähintään kolme riimiparia.
+Kirjoita vastaus jambisella viisikirjaimella
+Käytä alliterointia koko vastauksessasi
