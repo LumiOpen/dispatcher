@@ -3,6 +3,49 @@ import json
 import re
 # from huggingface_hub import InferenceClient
 
+#language identifier
+from huggingface_hub import hf_hub_download
+import fasttext
+
+model_path = hf_hub_download(repo_id="cis-lmu/glotlid", filename="model.bin")   
+model_cis_lmu = fasttext.load_model(model_path)
+
+GLOT_LANG_DICT = {
+    'bul': 'bg',  # Bulgarian
+    'ces': 'cs',  # Czech
+    'dan': 'da',  # Danish
+    'deu': 'de',  # German
+    'ell': 'el',  # Greek
+    'eng': 'en',  # English
+    'spa': 'es',  # Spanish
+    'est': 'et',  # Estonian
+    'ekk': 'et',  # Standard Estonian
+    'fin': 'fi',  # Finnish
+    'fra': 'fr',  # French
+    'gle': 'ga',  # Irish
+    'hrv': 'hr',  # Croatian
+    'hun': 'hu',  # Hungarian
+    'ita': 'it',  # Italian
+    'lit': 'lt',  # Lithuanian
+    'lav': 'lv',  # Latvian
+    'lvs': 'lv',  # Standard Latvian
+    'mlt': 'mt',  # Maltese
+    'nld': 'nl',  # Dutch
+    'pol': 'pl',  # Polish
+    'por': 'pt',  # Portuguese
+    'ron': 'ro',  # Romanian
+    'slk': 'sk',  # Slovak
+    'slv': 'sl',  # Slovenian
+    'swe': 'sv'   # Swedish
+}
+
+def detect_language_glotlid(text,model=model_cis_lmu):
+    """Given a text, it returns the Glotlid prediction as NLLB language code, e.g., Latn-eng
+    """
+    lang_code, score = model.predict(text)
+    lang_code = lang_code[0].replace("__label__","").replace("_Latn","")
+    return lang_code
+
 def process_output(input_file: str, output_file: str, seed_file: str, language: str = 'fi') -> None:
     """Process generated instructions, filter by language, and save to file.
     
@@ -63,20 +106,20 @@ def process_output(input_file: str, output_file: str, seed_file: str, language: 
                         continue
                     
                     # # Check language
-                    # try:
-                    #     lang = glot_client.post(json={'inputs': instruction})
-                    #     if lang['detected_language'] == language:
-                    #         # Add to set to track duplicates
-                    #         clean_instructions.add(instruction)
-                    #         # Write to file directly
-                    #         out_f.write(instruction + '\n')
-                    # except Exception as e:
-                    #     print(f'Language detection error: {e}')
+                    try:
+                        lang_code = detect_language_glotlid(instruction, model_cis_lmu)
+                        if GLOT_LANG_DICT[lang_code] == language:
+                            # Add to set to track duplicates
+                            clean_instructions.add(instruction)
+                            # Write to file directly
+                            out_f.write(instruction + '\n')
+                    except Exception as e:
+                        print(f'Language detection error: {e}')
 
-                    # Add to set to track duplicates
-                    clean_instructions.add(instruction)
-                    # Write to file directly
-                    out_f.write(instruction + '\n')
+                    # # Add to set to track duplicates
+                    # clean_instructions.add(instruction)
+                    # # Write to file directly
+                    # out_f.write(instruction + '\n')
     
     print(f'Output {len(clean_instructions)} {language} instructions')
 
