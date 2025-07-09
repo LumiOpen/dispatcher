@@ -2,14 +2,15 @@ import argparse
 from typing import List, Dict
 import random
 import json
+from datasets import load_dataset
 
 def concat_queries(
     verifiers_path: str, 
     queries_file: str, 
     queries_dataset: str,
     output_file: str,
-    queries_per_instruction: int = 16,
-    verifiers_per_query: int = 10
+    queries_per_instruction: int = 1,
+    verifiers_per_query: int = 1
 ) -> int:
     """Concatenate queries with verification functions."""
     # Load verifiers from file
@@ -24,26 +25,20 @@ def concat_queries(
     
     # Load queries
     queries = []
-    try:
-        if queries_file is not None:
-            with open(queries_file, 'r') as f:
-                for line in f:
-                    line = line.strip()
-                    if len(line) < 200:  # Filter out long queries
-                        queries.append(line)
-        elif queries_dataset is not None:
-            dataset = load_dataset(queries_dataset)
-            for item in dataset['train']:
-                if 'text' in item and len(item['text']) < 200:
-                    queries.append(item['text'])
-    except Exception as e:
-        print(f"Error loading queries: {e}")
-        # Generate some sample queries if file not found
-        queries = [
-            'Mitä mieltä olet tekoälystä?',
-            'Kerro minulle Suomen historiasta.',
-            'Mikä on elämän tarkoitus?'
-        ]
+    if queries_file is not None:
+        with open(queries_file, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if len(line) < 200:  # Filter out long queries
+                    queries.append(line)
+    elif queries_dataset is not None:
+        dataset = load_dataset(queries_dataset)
+        for item in dataset['train']:
+            if 'instruction' in item and len(item['instruction']) < 200:
+                queries.append(item['instruction'])
+    else:
+        print("No queries file or dataset provided")
+        return 0
     
     # Ensure we have some queries
     if len(queries) < 10:
@@ -66,7 +61,7 @@ def concat_queries(
                 output = {
                     'instruction': instruction,
                     'query': query,
-                    'eval_func': verifier['eval_func'][:verifiers_per_query],
+                    'eval_func': verifier['eval_func'],
                     'cases': verifier['cases'],
                     'prompt': prompt
                 }
@@ -82,18 +77,21 @@ def main():
     
     parser.add_argument('--verifiers_file', type=str, required=True,
                         help='Input file with filtered verifiers')
+    parser.add_argument('--output_file', type=str, required=True,
+                        help='Output file for concatenated queries and verifiers')
     parser.add_argument('--queries_file', type=str, default=None,
                         help='File with queries for concatenation')
     parser.add_argument('--queries_dataset', type=str, default=None,
                         help='Dataset with queries for concatenation')
-    parser.add_argument('--queries_per_instruction', type=int, default=16,
+    parser.add_argument('--queries_per_instruction', type=int, default=1,
                         help='Number of queries to use per instruction')
-    parser.add_argument('--verifiers_per_query', type=int, default=10,
+    parser.add_argument('--verifiers_per_query', type=int, default=1,
                         help='Maximum number of verification functions per query')
     
     args = parser.parse_args()
 
-        # Concatenate with queries
+    # TODO support verifiers_per_query
+    # Concatenate with queries
     concat_queries(
         args.verifiers_file,
         args.queries_file,
@@ -102,3 +100,6 @@ def main():
         args.queries_per_instruction,
         args.verifiers_per_query
     )
+
+if __name__ == "__main__":
+    main()

@@ -1,47 +1,47 @@
 #!/bin/bash
-#SBATCH --job-name=autoif_aug_instr
-#SBATCH --nodes=1
+#SBATCH --job-name=autoif_verifiers
+#SBATCH --nodes=2
 #SBATCH --partition=dev-g
-#SBATCH --time=00-00:30:00
-#SBATCH --ntasks-per-node=1
-#SBATCH --mem=240G
+#SBATCH --time=00-02:00:00
+#SBATCH --ntasks-per-node=2
+#SBATCH --mem=480G
 #SBATCH --cpus-per-task=7
 #SBATCH --exclusive=user
 #SBATCH --hint=nomultithread
-#SBATCH --gpus-per-node=mi250:1
+#SBATCH --gpus-per-node=mi250:8
 #SBATCH --account=project_462000353
-#SBATCH --output=logs/%j_augment.out
-#SBATCH --error=logs/%j_augment.err
+#SBATCH --output=logs/%j_verifiers.out
+#SBATCH --error=logs/%j_verifiers.err
 
 ###
 # Configuration
 ###
 
-# Temporary files
-TMP_AUG_INPUT_FILE="data/tmp_aug_input.jsonl"
-TMP_AUG_OUTPUT_FILE="data/tmp_aug_output.jsonl"
+# Input/Output files - Use environment variables if already set by parents script ../phase1_pipeline.sh, otherwise use defaults
+: "${VERIFIERS_INPUT_FILE:=data/verifiers_input.jsonl}"
+: "${VERIFIERS_OUTPUT_FILE:=data/verifiers_output.jsonl}"
 
 # jq-like path string to find the prompt within the input jsonl row.
 PROMPT_PATH=".prompt"
 
 # Prompting mode is "chat" or "completion"
-MODE=completion
+MODE=chat
 STOP_WORD=$'\n\n'  # $'' format allows escape chars to be interpreted.
 
 # Generation parameters
 BATCH_SIZE=8
-NUM_GENERATIONS=1
+NUM_GENERATIONS=10
 
 # Sampling parameters
 MIN_P=0.05
 TOP_P=1.00
-TEMPERATURE=0.8
+TEMPERATURE=0.7
 
 # Model configuration
-MODEL="meta-llama/Llama-3.1-8B-Instruct"
-GPUS_PER_TASK=1
-MAX_MODEL_LEN=8192
-MAX_TOKENS=4096
+MODEL=/scratch/project_462000353/cache/hub/models--meta-llama--Llama-3.3-70B-Instruct/snapshots/6f6073b423013f6a7d4d9f39144961bfbfbc386b/
+GPUS_PER_TASK=4     # 8B model uses 1 GPU per task, 70B model requires 4 GPUs per task
+MAX_MODEL_LEN=16384
+MAX_TOKENS=8192     # Generous token limit for complex verifier functions
 
 ###
 # Job execution
@@ -59,27 +59,20 @@ unset PYTHONEXECUTABLE
 mkdir -p logs pythonuserbase
 export PYTHONUSERBASE=./pythonuserbase
 module use /appl/local/csc/modulefiles
-module load pytorch
-
-# Install dispatcher and download example inference script
+module load pytorch/2.5
 pip install git+https://github.com/LumiOpen/dispatcher.git
 
-if [ ! -f "src/inference.py" ]; then
-    echo "Downloading inference.py example from dispatcher repository..."
-    curl -s https://raw.githubusercontent.com/LumiOpen/dispatcher/master/examples/inference.py -o src/inference.py
-fi
+export HF_HOME="/scratch/project_462000353/hf_cache"
 
-echo "Starting instruction augmentation job at $(date)"
+echo "Starting verifier generation job at $(date)"
 
-# dispatcher server will run on the first node, before we launch the worker
-# tasks.
+# dispatcher server will run on the first node, before we launch the worker tasks
 export DISPATCHER_SERVER=$(hostname)
 export DISPATCHER_PORT=9999
 
-
 python -m dispatcher.server \
-    --infile $TMP_AUG_INPUT_FILE \
-    --outfile $TMP_AUG_OUTPUT_FILE \
+    --infile $VERIFIERS_INPUT_FILE \
+    --outfile $VERIFIERS_OUTPUT_FILE \
     --host 0.0.0.0 \
     --port ${DISPATCHER_PORT} &
 
@@ -104,12 +97,12 @@ srun -l \
     export MASTER_PORT=$(( 7000 + SLURM_LOCALID ))
     export VLLM_PORT=$(( 8000 + SLURM_LOCALID * 100 ))
 
-    echo "Launching task $SLURM_LOCALID (global id: $SLURM_PROCID) with GPU $GPU_IDS on $(hostname)"
+    echo "Launching task $SLURM_LOCALID (global id: $SLURM_PROCID) with GPUs $GPU_IDS on $(hostname)"
 
     module use /appl/local/csc/modulefiles
-    module load pytorch
+    module load pytorch/2.5
     export PYTHONUSERBASE=./pythonuserbase
-    python inference.py \
+    python ../inference.py \
         --batch_size '"$BATCH_SIZE"' \
         --dispatcher_server ${DISPATCHER_SERVER}:${DISPATCHER_PORT} \
         --prompt_path "'"$PROMPT_PATH"'" \

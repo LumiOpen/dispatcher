@@ -59,9 +59,9 @@ unset PYTHONEXECUTABLE
 mkdir -p logs pythonuserbase
 export PYTHONUSERBASE="$(pwd)/pythonuserbase"
 module use /appl/local/csc/modulefiles
-module load pytorch
+module load pytorch/2.5
 
-#pip install git+https://github.com/LumiOpen/dispatcher.git
+export HF_HOME="/scratch/project_462000353/hf_cache"
 
 # dispatcher server will run on the first node, before we launch the worker
 # tasks.

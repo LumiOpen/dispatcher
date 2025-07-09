@@ -623,8 +623,6 @@ def main():
                         help='Output file for all verifiers with filter status')
     parser.add_argument('--filtered_file', type=str, required=True,
                         help='Output file for filtered verifiers')
-    parser.add_argument('--output_file', type=str, required=True,
-                        help='Final output file with query-instruction pairs')
     
     args = parser.parse_args()
 

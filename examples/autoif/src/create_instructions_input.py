@@ -16,7 +16,7 @@ def create_input_file(seed_file: str, output_file: str, num_prompts: int = 4) ->
 - Instructions are about the format but not style of a response
 - Whether instructions are followed can be easily evaluated by a Python function
 
-Do not generate instructions about writing style, using metaphor, or translation. Here are some examples of instructions we do not need:
+Do not generate instructions about writing style, using metaphor, using a large list of options, or translation. Here are some examples of instructions we do not need:
 - Incorporate a famous historical quote seamlessly into your answer
 - Translate your answer into Pig Latin
 - Use only words that are also a type of food
