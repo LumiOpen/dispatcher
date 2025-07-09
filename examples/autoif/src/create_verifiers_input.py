@@ -27,7 +27,6 @@ Here is the instruction:
 
 Please write a Python function named `evaluate` to evaluate whether an input string `response` follows this instruction. If it follows, simply return True, otherwise return False.
 Your response will only contain a single python code block with the function definition and a single json block with a list of three test cases in the key `cases`, which includes an input in the key `input` and an expected output in the key `output` (true, false). 
-Use backticks to format the code block and json block.
 
 Example output:
 ```python
@@ -37,12 +36,12 @@ def evaluate(response: str) -> bool:
 ```
 
 ```json
-{
+{{
     "cases": [
-        {"input": "example input", "output": true},
-        {"input": "another example input", "output": false}
+        {{ "input": "example input", "output": true }},
+        {{ "input": "another example input", "output": false }}
     ]
-}
+}}
 ```'''
             
             data = {

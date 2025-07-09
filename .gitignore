@@ -5,3 +5,4 @@ __pycache__
 *.jsonl.checkpoint
 logs/
 pythonuserbase/
+.venv

@@ -15,7 +15,7 @@ Phase 1 is implemented as a multi-step process with pre/post-processing steps an
 Run this script if you want to trigger execution of the full phase1. The checkpointing file `logs/phase1_checkpoint.log` will keep track of which step has already been executed and has logic to wait for the generation task to complete or restart if it failed.
 
 ```bash
-sbatch phase1_pipeline.sh
+./phase1_pipeline.sh
 ```
 
 ### Step 1: Augment Instructions

@@ -1,7 +1,6 @@
 #!/bin/bash
 
 # Phase 1 Pipeline Script
-# This script implements the pipeline described in phase1.md
 LANGUAGE="en"
 
 # Virtual environment settings
@@ -22,25 +21,22 @@ VERIFIERS_QUERIES_FILE="data/verifiers_queries.jsonl"
 TMP_AUG_INPUT_FILE="data/tmp_aug_input.jsonl"
 TMP_AUG_OUTPUT_FILE="data/tmp_aug_output.jsonl"
 
-# Generation parameters 
-NUM_PROMPTS=4
-
 # Checkpointing mechanism
 mkdir -p logs
-CHECKPOINT_FILE="logs/phase1_checkpoint.log"
+CHECKPOINT_FILE="logs/phase1_state_tracker.log"
 touch "$CHECKPOINT_FILE"
 
 # Function to check if a step has been completed
 step_completed() {
     local step_name="$1"
-    run_python src/utils/checkpoint.py --checkpoint_file "$CHECKPOINT_FILE" check --step "$step_name"
+    python src/utils/checkpoint.py --checkpoint_file "$CHECKPOINT_FILE" check --step "$step_name"
     return $?
 }
 
 # Function to mark a step as completed
 mark_step_completed() {
     local step_name="$1"
-    run_python src/utils/checkpoint.py --checkpoint_file "$CHECKPOINT_FILE" mark --step "$step_name"
+    python src/utils/checkpoint.py --checkpoint_file "$CHECKPOINT_FILE" mark --step "$step_name"
 }
 
 submit_slurm_job() {
@@ -60,20 +56,10 @@ submit_slurm_job() {
     mark_step_completed $submitted_step
     
     # Save job ID to checkpoint file for later recovery
-    run_python src/utils/checkpoint.py --checkpoint_file "$CHECKPOINT_FILE" save-job --prefix "$job_id_prefix" --job-id "$job_id"
+    python src/utils/checkpoint.py --checkpoint_file "$CHECKPOINT_FILE" save-job --prefix "$job_id_prefix" --job-id "$job_id"
 
     # set the job ID for further processing in the parent scope
     LAST_SUBMITTED_JOB_ID=$job_id
-}
-
-# Function to activate virtual environment and run a Python command
-run_python() {
-    # Run the python command in the virtual environment
-    source "$VENV_DIR/bin/activate"
-    python "$@"
-    local result=$?
-    deactivate
-    return $result
 }
 
 # Function to set up virtual environment if it doesn't exist
@@ -82,13 +68,13 @@ setup_venv() {
         echo "Creating virtual environment at $VENV_DIR"
         
         # Check if Python is installed
-        if ! command -v python3 &> /dev/null; then
-            echo "ERROR: Python 3 is not installed!"
+        if ! command -v python &> /dev/null; then
+            echo "ERROR: Python is not installed!"
             exit 1
         fi
         
         # Create virtual environment
-        python3 -m venv $VENV_DIR
+        python -m venv $VENV_DIR --system-site-packages
         
         # Activate the virtual environment
         source "$VENV_DIR/bin/activate"
@@ -102,7 +88,7 @@ setup_venv() {
             deactivate
             exit 1
         fi
-        
+
         deactivate
         echo "Virtual environment setup completed successfully."
     else
@@ -110,10 +96,14 @@ setup_venv() {
     fi
 }
 
-echo "Starting Phase 1: Generating verifiers"
-
+module use /appl/local/csc/modulefiles
+module load pytorch/2.5
 # Setup virtual environment
 setup_venv
+# Activate the virtual environment
+source "$VENV_DIR/bin/activate"
+
+echo "Starting Phase 1: Generating verifiers"
 
 # Step 1: Augment instructions
 AUG_PREPROCESSING="AUG_PREPROCESSING"
@@ -127,10 +117,10 @@ echo "Starting Step 1: Augment instructions"
 # Step 1: Pre-process - Create instructions input
 if ! step_completed $AUG_PREPROCESSING; then
     echo "AUG: Pre-processing instructions"
-    run_python src/create_instructions_input.py \
+    python src/create_instructions_input.py \
         --seed_file $SEED_FILE \
         --output_file $TMP_AUG_INPUT_FILE \
-        --num_prompts $NUM_PROMPTS
+        --num_prompts 4
     if [ $? -ne 0 ]; then
         echo "Pre-processing failed!"
         exit 1
@@ -144,14 +134,14 @@ fi
 # Step 1.2: Submit inference job
 if step_completed $AUG_INFERENCE_FAILED; then
     echo "AUG: Previous inference job failed, resubmitting..."
-    submit_slurm_job "src/launch_scripts/augment_instructions_launch.sh" "AUG_JOB_ID" "$AUG_INFERENCE_SUBMITTED" "instruction augmentation"
+    submit_slurm_job "launch_augment_instructions.sh" "AUG_JOB_ID" "$AUG_INFERENCE_SUBMITTED" "instruction augmentation"
     AUG_JOB_ID=$LAST_SUBMITTED_JOB_ID
 elif ! step_completed $AUG_INFERENCE_SUBMITTED; then
-    submit_slurm_job "src/launch_scripts/augment_instructions_launch.sh" "AUG_JOB_ID" "$AUG_INFERENCE_SUBMITTED" "instruction augmentation"
+    submit_slurm_job "launch_augment_instructions.sh" "AUG_JOB_ID" "$AUG_INFERENCE_SUBMITTED" "instruction augmentation"
     AUG_JOB_ID=$LAST_SUBMITTED_JOB_ID
 else
     echo "AUG: Inference job already submitted, retrieving job ID."
-    AUG_JOB_ID=$(run_python src/utils/checkpoint.py --checkpoint_file "$CHECKPOINT_FILE" get-job --prefix "AUG_JOB_ID")
+    AUG_JOB_ID=$(python src/utils/checkpoint.py --checkpoint_file "$CHECKPOINT_FILE" get-job --prefix "AUG_JOB_ID")
     echo "Retrieved Augmentation Job ID: $AUG_JOB_ID"
 fi
 
@@ -161,7 +151,7 @@ if ! step_completed $AUG_INFERENCE_COMPLETE; then
     LOG_FILE="logs/${AUG_JOB_ID}_augment.out"
     
     # First monitor the job status
-    run_python src/utils/monitor_slurm_job.py \
+    bash src/utils/monitor_slurm_job.sh \
         --job_id "$AUG_JOB_ID" \
         --prefix "AUG" \
         --check_interval 30
@@ -173,7 +163,7 @@ if ! step_completed $AUG_INFERENCE_COMPLETE; then
     fi
     
     # Once job is completed, verify the output files
-    run_python src/utils/verify_job_output.py \
+    python src/utils/verify_job_output.py \
         --input_file "$TMP_AUG_INPUT_FILE" \
         --output_file "$TMP_AUG_OUTPUT_FILE" \
         --log_file "$LOG_FILE" \
@@ -197,7 +187,7 @@ fi
 # Step 1.4: Post-process
 if ! step_completed $AUG_POSTPROCESSING; then
     echo "AUG: Post-processing inference results"
-    run_python src/process_instructions_output.py \
+    python src/process_instructions_output.py \
         --input_file $TMP_AUG_OUTPUT_FILE \
         --output_file $AUGMENTED_INSTR_FILE \
         --seed_file $SEED_FILE \
@@ -217,14 +207,14 @@ VER_INFERENCE_SUBMITTED="VER_INFERENCE_SUBMITTED"
 VER_INFERENCE_COMPLETE="VER_INFERENCE_COMPLETE"
 VER_INFERENCE_FAILED="VER_INFERENCE_FAILED"
 VER_CROSS_VALIDATION="VER_CROSS_VALIDATION"
-VER_QUERIES_AUGMENTED="VER_QUERIES_AUGMENTED"
+VER_QUERIES_CONCATED="VER_QUERIES_CONCATED"
 
 echo "Starting Step 2: Generate verifiers"
 
 # Step 2.1: Create verifiers input
 if ! step_completed $VER_PREPROCESSING; then
     echo "VER: Pre-processing instructions for verifier generation"
-    run_python src/create_verifiers_input.py \
+    python src/create_verifiers_input.py \
         --instructions_file $AUGMENTED_INSTR_FILE \
         --output_file $VERIFIERS_INPUT_FILE
     if [ $? -ne 0 ]; then
@@ -241,14 +231,14 @@ fi
 # Check if previous run failed and we need to resubmit
 if step_completed $VER_INFERENCE_FAILED && ! step_completed $VER_INFERENCE_COMPLETE; then
     echo "VER: Previous inference job failed, resubmitting..."
-    submit_slurm_job "src/launch_scripts/generate_verifiers_launch.sh" "VER_JOB_ID" "$VER_INFERENCE_SUBMITTED" "verifier generation"
+    submit_slurm_job "launch_generate_verifiers.sh" "VER_JOB_ID" "$VER_INFERENCE_SUBMITTED" "verifier generation"
     VER_JOB_ID=$LAST_SUBMITTED_JOB_ID
 elif ! step_completed $VER_INFERENCE_SUBMITTED; then
-    submit_slurm_job "src/launch_scripts/generate_verifiers_launch.sh" "VER_JOB_ID" "$VER_INFERENCE_SUBMITTED" "verifier generation"
+    submit_slurm_job "launch_generate_verifiers.sh" "VER_JOB_ID" "$VER_INFERENCE_SUBMITTED" "verifier generation"
     VER_JOB_ID=$LAST_SUBMITTED_JOB_ID
 else
     echo "VER: Inference job already submitted, retrieving job ID."
-    VER_JOB_ID=$(run_python src/utils/checkpoint.py --checkpoint_file "$CHECKPOINT_FILE" get-job --prefix "VER_JOB_ID")
+    VER_JOB_ID=$(python src/utils/checkpoint.py --checkpoint_file "$CHECKPOINT_FILE" get-job --prefix "VER_JOB_ID")
     echo "Retrieved Verifier Job ID: $VER_JOB_ID"
 fi
 
@@ -259,7 +249,7 @@ if ! step_completed $VER_INFERENCE_COMPLETE; then
     VER_LOG_FILE="logs/${VER_JOB_ID}_verifiers.out"
     
     # First monitor the job status
-    run_python src/utils/monitor_slurm_job.py \
+    bash src/utils/monitor_slurm_job.sh \
         --job_id "$VER_JOB_ID" \
         --prefix "VER" \
         --check_interval 30
@@ -271,7 +261,7 @@ if ! step_completed $VER_INFERENCE_COMPLETE; then
     fi
     
     # Once job is completed, verify the output files
-    run_python src/utils/verify_job_output.py \
+    python src/utils/verify_job_output.py \
         --input_file "$VERIFIERS_INPUT_FILE" \
         --output_file "$VERIFIERS_OUTPUT_FILE" \
         --log_file "$VER_LOG_FILE" \
@@ -295,24 +285,38 @@ fi
 # Step 2.4: Cross-validate verifiers and filter
 if ! step_completed $VER_CROSS_VALIDATION; then
     echo "VER: Cross-validating and filtering verifiers"
-    run_python src/verifiers_cross_validation.py \
+    python src/verifiers_cross_validation.py \
         --verifiers_file $VERIFIERS_OUTPUT_FILE \
         --all_results_file $ALL_RESULTS_FILE \
-        --filtered_file $FILTERED_VERIFIERS_FILE \
-        --output_file $VERIFIERS_QUERIES_FILE \
-        --queries_dataset $QUERIES_DATASET \
-        --queries_per_instruction 16 \
-        --verifiers_per_query 10
+        --filtered_file $FILTERED_VERIFIERS_FILE
     if [ $? -ne 0 ]; then
         echo "Cross-validation failed!"
         exit 1
     fi
     mark_step_completed $VER_CROSS_VALIDATION
-    mark_step_completed $VER_QUERIES_AUGMENTED  # Since the script handles both steps
 else
     echo "VER: Cross-validation already completed, skipping."
+fi
+
+# Step 2.5: Concat queries
+if ! step_completed $VER_QUERIES_CONCATED; then
+    echo "VER: Concat queries"
+    python src/concat_queries.py \
+        --verifiers_file $FILTERED_VERIFIERS_FILE \
+        --output_file $VERIFIERS_QUERIES_FILE \
+        --queries_dataset $QUERIES_DATASET \
+        --queries_per_instruction 16
+    if [ $? -ne 0 ]; then
+        echo "Concat queries failed!"
+        exit 1
+    fi
+    mark_step_completed $VER_QUERIES_CONCATED
+else
+    echo "VER: Concat already performed, skipping."
 fi
 
 echo "Phase 1 pipeline completed successfully!"
 echo "Generated verifiers are available at: $FILTERED_VERIFIERS_FILE"
 echo "Query-instruction pairs with verifiers are available at: $VERIFIERS_QUERIES_FILE"
+
+deactivate
