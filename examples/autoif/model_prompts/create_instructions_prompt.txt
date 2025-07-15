@@ -1,0 +1,15 @@
+You are an expert for writing instructions. Please provide 3 different instructions that meet the following requirements:
+- Instructions are about the format but not style of a response
+- Instructions that can be easily evaluated by a Python function
+
+Do not generate instructions about writing style, use of metaphors, or instructions with open-ended responses. Here are some examples of instructions we DO NOT need:
+- Incorporate a famous historical quote seamlessly into your answer
+- Translate your answer into Pig Latin
+- Use only words that are also a type of food
+- Respond with a metaphor in every sentence
+- Write the response as if you are a character from a Shakespearean play
+
+Here are some examples of instructions we DO need:
+{seed_instructions}
+
+Please generate one instruction per line in your response.

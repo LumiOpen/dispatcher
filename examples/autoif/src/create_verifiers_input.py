@@ -19,31 +19,9 @@ Please respond with a single JSON including the evaluation function in the key `
 and a list of three test cases in the key `cases`, which includes an input in the key `input` and an expected output in the key `output` (true, false).
 Here is an example of output JSON format: {{\"func\": JSON_STR(use only \\\\n instead of \\n), \"cases\": [{{\"input\": str, \"output\": str}}]}}.'''
 
-            prompt_code = f'''You are an expert for writing evaluation functions in Python to evaluate whether a response strictly follows an instruction.
-
-Here is the instruction: 
-
-{instruction}
-
-Please write a Python function named `evaluate` to evaluate whether an input string `response` follows this instruction. If it follows, simply return True, otherwise return False.
-Your response will only contain a single python code block with the function definition and a single json block with a list of three test cases in the key `cases`, which includes an input in the key `input` and an expected output in the key `output` (true, false). 
-
-Example output:
-```python
-def evaluate(response: str) -> bool:
-    # Your evaluation logic here
-    return result
-```
-
-```json
-{{
-    "cases": [
-        {{ "input": "example input", "output": true }},
-        {{ "input": "another example input", "output": false }}
-    ]
-}}
-```'''
-            
+            prompt_code = open("model_prompts/create_verifiers_prompt.txt").read().strip()
+            prompt_code = prompt_code.format(instruction=instruction)
+            print(f"\nPROMPT:\n{prompt_code}\n")
             data = {
                 'prompt': prompt_code,
                 'instruction': instruction
