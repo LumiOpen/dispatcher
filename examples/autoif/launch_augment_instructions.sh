@@ -17,9 +17,9 @@
 # Configuration
 ###
 
-# Temporary files - Use environment variables if already set by parents script ../phase1_pipeline.sh, otherwise use defaults
-: "${TMP_AUG_INPUT_FILE:=data/tmp_aug_input.jsonl}"
-: "${TMP_AUG_OUTPUT_FILE:=data/tmp_aug_output.jsonl}"
+# Use environment variables if already set by parents script ../phase1_pipeline.sh, otherwise use defaults
+: "${AUGMENT_INPUT_FILE:=data/aug_input.jsonl}"
+: "${AUGMENT_OUTPUT_FILE:=data/aug_output.jsonl}"
 
 # jq-like path string to find the prompt within the input jsonl row.
 PROMPT_PATH=".prompt"
@@ -74,8 +74,8 @@ export DISPATCHER_PORT=9999
 
 
 python -m dispatcher.server \
-    --infile $TMP_AUG_INPUT_FILE \
-    --outfile $TMP_AUG_OUTPUT_FILE \
+    --infile $AUGMENT_INPUT_FILE \
+    --outfile $AUGMENT_OUTPUT_FILE \
     --host 0.0.0.0 \
     --port ${DISPATCHER_PORT} &
 

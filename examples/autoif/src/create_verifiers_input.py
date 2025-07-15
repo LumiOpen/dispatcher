@@ -1,30 +1,37 @@
 import argparse
 import json
+import csv
 
 def create_verifier_input(instructions_file: str, output_file: str) -> None:
     """Create input for verification function generation."""
+    instructions = []
     try:
-        with open(instructions_file, 'r') as f:
-            instructions = [line.strip() for line in f if line.strip()]
+        with open(instructions_file, 'r', encoding='utf-8') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                instruction = row['instruction'].strip()
+                instruction_id = row['id']
+                if instruction:
+                    instructions.append({'id': instruction_id, 'instruction': instruction})
     except FileNotFoundError:
         print(f"Error: Instructions file {instructions_file} not found")
         exit(1)
+    except KeyError as e:
+        print(f"Error: Required column {e} not found in CSV file")
+        exit(1)
+    except Exception as e:
+        print(f"Error reading CSV file: {e}")
+        exit(1)
     
     with open(output_file, 'w') as f:
-        for instruction in instructions:
-            prompt = f'''You are an expert for writing evaluation functions in Python to evaluate whether a response strictly follows an instruction.
-Here is the instruction: {instruction}
-Please write a Python function named `evaluate` to evaluate whether an input string `response` follows this instruction. If it follows, simply return True, otherwise return False.
-Please respond with a single JSON including the evaluation function in the key `func`, 
-and a list of three test cases in the key `cases`, which includes an input in the key `input` and an expected output in the key `output` (true, false).
-Here is an example of output JSON format: {{\"func\": JSON_STR(use only \\\\n instead of \\n), \"cases\": [{{\"input\": str, \"output\": str}}]}}.'''
-
-            prompt_code = open("model_prompts/create_verifiers_prompt.txt").read().strip()
-            prompt_code = prompt_code.format(instruction=instruction)
-            print(f"\nPROMPT:\n{prompt_code}\n")
+        for item in instructions:
+            prompt = open("model_prompts/create_verifiers_prompt.txt").read().strip()
+            prompt = prompt.format(instruction=instruction)
+            print(f"\nPROMPT:\n{prompt}\n")
             data = {
-                'prompt': prompt_code,
-                'instruction': instruction
+                'instruction_id': item['id'],
+                'instruction': item['instruction'],
+                'prompt': prompt
             }
             f.write(json.dumps(data) + '\n')
     
