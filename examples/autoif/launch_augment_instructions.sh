@@ -3,12 +3,12 @@
 #SBATCH --nodes=1
 #SBATCH --partition=dev-g
 #SBATCH --time=00-00:30:00
-#SBATCH --ntasks-per-node=1
-#SBATCH --mem=240G
+#SBATCH --ntasks-per-node=2
+#SBATCH --mem=480G
 #SBATCH --cpus-per-task=7
 #SBATCH --exclusive=user
 #SBATCH --hint=nomultithread
-#SBATCH --gpus-per-node=mi250:1
+#SBATCH --gpus-per-node=mi250:8
 #SBATCH --account=project_462000353
 #SBATCH --output=logs/%j_augment.out
 #SBATCH --error=logs/%j_augment.err
@@ -25,21 +25,21 @@
 PROMPT_PATH=".prompt"
 
 # Prompting mode is "chat" or "completion"
-MODE=completion
+MODE=chat
 STOP_WORD=$'\n\n'  # $'' format allows escape chars to be interpreted.
 
 # Generation parameters
-BATCH_SIZE=8
+BATCH_SIZE=4
 NUM_GENERATIONS=1
 
 # Sampling parameters
-MIN_P=0.05
-TOP_P=1.00
-TEMPERATURE=0.8
+MIN_P=0
+TOP_P=0.9
+TEMPERATURE=0.6
 
 # Model configuration
-MODEL="meta-llama/Llama-3.1-8B-Instruct"
-GPUS_PER_TASK=1
+MODEL=meta-llama/Llama-3.3-70B-Instruct
+GPUS_PER_TASK=4
 MAX_MODEL_LEN=8192
 MAX_TOKENS=4096
 
