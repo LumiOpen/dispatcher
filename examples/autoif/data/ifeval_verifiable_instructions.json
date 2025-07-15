@@ -1,0 +1,327 @@
+[
+  {
+    "id": 1,
+    "instruction_group": "Keywords",
+    "instruction": "Include Keywords",
+    "description": "Include keywords {keyword1}, {keyword2} in your response",
+    "examples": [
+      "Include keywords \"apple\", \"banana\" in your response",
+      "Include keywords \"cat\", \"dog\" in your response",
+      "Include keywords \"sun\", \"moon\" in your response",
+      "Include keywords \"computer\", \"science\" in your response",
+      "Include keywords \"happy\", \"sad\" in your response"
+    ]
+  },
+  {
+    "id": 2,
+    "instruction_group": "Keywords",
+    "instruction": "Keyword Frequency",
+    "description": "In your response, the word word should appear {N} times.",
+    "examples": [
+      "In your response, the word \"tree\" should appear 5 times.",
+      "In your response, the word \"ocean\" should appear 2 times.",
+      "In your response, the word \"mountain\" should appear 7 times.",
+      "In your response, the word \"city\" should appear 3 times.",
+      "In your response, the word \"star\" should appear 10 times."
+    ]
+  },
+  {
+    "id": 3,
+    "instruction_group": "Keywords",
+    "instruction": "Forbidden Words",
+    "description": "Do not include keywords {forbidden words} in the response.",
+    "examples": [
+      "Do not include keywords \"hate\", \"never\" in the response.",
+      "Do not include keywords \"bad\", \"terrible\" in the response.",
+      "Do not include keywords \"ugly\", \"disgusting\" in the response.",
+      "Do not include keywords \"fail\", \"lose\" in the response.",
+      "Do not include keywords \"stupid\", \"idiot\" in the response."
+    ]
+  },
+  {
+    "id": 4,
+    "instruction_group": "Keywords",
+    "instruction": "Letter Frequency",
+    "description": "In your response, the letter {letter} should appear {N} times.",
+    "examples": [
+      "In your response, the letter \"a\" should appear 15 times.",
+      "In your response, the letter \"e\" should appear 20 times.",
+      "In your response, the letter \"o\" should appear 10 times.",
+      "In your response, the letter \"s\" should appear 8 times.",
+      "In your response, the letter \"t\" should appear 12 times."
+    ]
+  },
+  {
+    "id": 5,
+    "instruction_group": "Language",
+    "instruction": "Response Language",
+    "description": "Your ENTIRE response should be in {language}, no other language is allowed.",
+    "examples": [
+      "Your ENTIRE response should be in French, no other language is allowed.",
+      "Your ENTIRE response should be in Spanish, no other language is allowed.",
+      "Your ENTIRE response should be in German, no other language is allowed.",
+      "Your ENTIRE response should be in Japanese, no other language is allowed.",
+      "Your ENTIRE response should be in Arabic, no other language is allowed."
+    ]
+  },
+  {
+    "id": 6,
+    "instruction_group": "Length Constraints",
+    "instruction": "Number Paragraphs",
+    "description": "Your response should contain {N} paragraphs. You separate paragraphs using the markdown divider: ***",
+    "examples": [
+      "Your response should contain 3 paragraphs. You separate paragraphs using the markdown divider: ***",
+      "Your response should contain 5 paragraphs. You separate paragraphs using the markdown divider: ***",
+      "Your response should contain 2 paragraphs. You separate paragraphs using the markdown divider: ***",
+      "Your response should contain 4 paragraphs. You separate paragraphs using the markdown divider: ***",
+      "Your response should contain 6 paragraphs. You separate paragraphs using the markdown divider: ***"
+    ]
+  },
+  {
+    "id": 7,
+    "instruction_group": "Length Constraints",
+    "instruction": "Number Words",
+    "description": "Answer with at least / around/at most {N} words.",
+    "examples": [
+      "Answer with at least 100 words.",
+      "Answer with around 250 words.",
+      "Answer with at most 50 words.",
+      "Answer with at least 300 words.",
+      "Answer with around 150 words."
+    ]
+  },
+  {
+    "id": 8,
+    "instruction_group": "Length Constraints",
+    "instruction": "Number Sentences",
+    "description": "Answer with at least / around / at most {N} sentences.",
+    "examples": [
+      "Answer with at least 10 sentences.",
+      "Answer with around 20 sentences.",
+      "Answer with at most 5 sentences.",
+      "Answer with at least 15 sentences.",
+      "Answer with around 25 sentences."
+    ]
+  },
+  {
+    "id": 9,
+    "instruction_group": "Length Constraints",
+    "instruction": "Number Paragraphs + First Word in i-th Paragraph",
+    "description": "There should be {N} paragraphs. Paragraphs and only paragraphs are separated with each other by two line breaks. The {i}-th paragraph must start with word {first_word}.",
+    "examples": [
+      "There should be 3 paragraphs. Paragraphs and only paragraphs are separated with each other by two line breaks. The 2nd paragraph must start with word \"However\".",
+      "There should be 4 paragraphs. Paragraphs and only paragraphs are separated with each other by two line breaks. The 1st paragraph must start with word \"Initially\".",
+      "There should be 2 paragraphs. Paragraphs and only paragraphs are separated with each other by two line breaks. The 2nd paragraph must start with word \"Finally\".",
+      "There should be 5 paragraphs. Paragraphs and only paragraphs are separated with each other by two line breaks. The 3rd paragraph must start with word \"Moreover\".",
+      "There should be 3 paragraphs. Paragraphs and only paragraphs are separated with each other by two line breaks. The 1st paragraph must start with word \"To begin\"."
+    ]
+  },
+  {
+    "id": 10,
+    "instruction_group": "Detectable Content",
+    "instruction": "Postscript",
+    "description": "At the end of your response, please explicitly add a postscript starting with {postscript marker}",
+    "examples": [
+      "At the end of your response, please explicitly add a postscript starting with P.S.",
+      "At the end of your response, please explicitly add a postscript starting with P.P.S.",
+      "At the end of your response, please explicitly add a postscript starting with N.B.",
+      "At the end of your response, please explicitly add a postscript starting with Update:",
+      "At the end of your response, please explicitly add a postscript starting with Note:"
+    ]
+  },
+  {
+    "id": 11,
+    "instruction_group": "Detectable Content",
+    "instruction": "Number Placeholder",
+    "description": "The response must contain at least {N} placeholders represented by square brackets, such as [address].",
+    "examples": [
+      "The response must contain at least 3 placeholders represented by square brackets, such as [address].",
+      "The response must contain at least 5 placeholders represented by square brackets, such as [name].",
+      "The response must contain at least 2 placeholders represented by square brackets, such as [date].",
+      "The response must contain at least 4 placeholders represented by square brackets, such as [city].",
+      "The response must contain at least 6 placeholders represented by square brackets, such as [phone number]."
+    ]
+  },
+  {
+    "id": 12,
+    "instruction_group": "Detectable Format",
+    "instruction": "Number Bullets",
+    "description": "Your answer must contain exactly {N} bullet points. Use the markdown bullet points such as:  This is a point.",
+    "examples": [
+      "Your answer must contain exactly 3 bullet points. Use the markdown bullet points such as:  This is a point.",
+      "Your answer must contain exactly 5 bullet points. Use the markdown bullet points such as:  This is a point.",
+      "Your answer must contain exactly 2 bullet points. Use the markdown bullet points such as:  This is a point.",
+      "Your answer must contain exactly 4 bullet points. Use the markdown bullet points such as:  This is a point.",
+      "Your answer must contain exactly 6 bullet points. Use the markdown bullet points such as:  This is a point."
+    ]
+  },
+  {
+    "id": 13,
+    "instruction_group": "Detectable Format",
+    "instruction": "Title",
+    "description": "Your answer must contain a title, wrapped in double angular brackets, such as <<poem of joy>>.",
+    "examples": [
+      "Your answer must contain a title, wrapped in double angular brackets, such as <<My Great Adventure>>.",
+      "Your answer must contain a title, wrapped in double angular brackets, such as <<The History of Flight>>.",
+      "Your answer must contain a title, wrapped in double angular brackets, such as <<A Recipe for Happiness>>.",
+      "Your answer must contain a title, wrapped in double angular brackets, such as <<Understanding Quantum Physics>>.",
+      "Your answer must contain a title, wrapped in double angular brackets, such as <<The Art of Storytelling>>."
+    ]
+  },
+  {
+    "id": 14,
+    "instruction_group": "Detectable Format",
+    "instruction": "Choose From",
+    "description": "Answer with one of the following options: {options}",
+    "examples": [
+      "Answer with one of the following options: \"Yes\", \"No\", \"Maybe\"",
+      "Answer with one of the following options: \"Red\", \"Blue\", \"Green\"",
+      "Answer with one of the following options: \"Option A\", \"Option B\"",
+      "Answer with one of the following options: \"True\", \"False\"",
+      "Answer with one of the following options: \"Agree\", \"Disagree\""
+    ]
+  },
+  {
+    "id": 15,
+    "instruction_group": "Detectable Format",
+    "instruction": "Minimum Number Highlighted Section",
+    "description": "Highlight at least {N} sections in your answer with markdown, i.e. *highlighted section*",
+    "examples": [
+      "Highlight at least 3 sections in your answer with markdown, i.e. *highlighted section*",
+      "Highlight at least 2 sections in your answer with markdown, i.e. *highlighted section*",
+      "Highlight at least 5 sections in your answer with markdown, i.e. *highlighted section*",
+      "Highlight at least 1 section in your answer with markdown, i.e. *highlighted section*",
+      "Highlight at least 4 sections in your answer with markdown, i.e. *highlighted section*"
+    ]
+  },
+  {
+    "id": 16,
+    "instruction_group": "Detectable Format",
+    "instruction": "Multiple Sections",
+    "description": "Your response must have {N} sections. Mark the beginning of each section with {section splitter} X.",
+    "examples": [
+      "Your response must have 3 sections. Mark the beginning of each section with Section X.",
+      "Your response must have 2 sections. Mark the beginning of each section with Part X.",
+      "Your response must have 4 sections. Mark the beginning of each section with Chapter X.",
+      "Your response must have 5 sections. Mark the beginning of each section with Phase X.",
+      "Your response must have 3 sections. Mark the beginning of each section with Step X."
+    ]
+  },
+  {
+    "id": 17,
+    "instruction_group": "Detectable Format",
+    "instruction": "JSON Format",
+    "description": "Entire output should be wrapped in JSON format.",
+    "examples": [
+      "Entire output should be wrapped in JSON format.",
+      "Ensure the entire response is in JSON format.",
+      "Provide the complete output as a JSON object.",
+      "The whole response must be a valid JSON structure.",
+      "Format your entire answer as JSON."
+    ]
+  },
+  {
+    "id": 18,
+    "instruction_group": "Combination",
+    "instruction": "Repeat Prompt",
+    "description": "First, repeat the request without change, then give your answer (do not say anything before repeating the request; the request you need to repeat does not include this sentence)",
+    "examples": [
+      "First, repeat the request without change, then give your answer (do not say anything before repeating the request; the request you need to repeat does not include this sentence)",
+      "Repeat the prompt exactly as given, then provide your response.",
+      "Start by echoing the original request, then answer.",
+      "Your first action should be to reiterate the prompt, followed by your answer.",
+      "Echo the request verbatim before presenting your solution."
+    ]
+  },
+  {
+    "id": 19,
+    "instruction_group": "Combination",
+    "instruction": "Two Responses",
+    "description": "Give two different responses. Responses and only responses should be separated by 6 asterisk symbols: ******",
+    "examples": [
+      "Give two different responses. Responses and only responses should be separated by 6 asterisk symbols: ******",
+      "Provide two distinct answers, separated by ******",
+      "Generate two separate replies, with ****** between them.",
+      "Offer two varied responses, using ****** as a divider.",
+      "Present two different solutions, demarcated by ******."
+    ]
+  },
+  {
+    "id": 20,
+    "instruction_group": "Change Cases",
+    "instruction": "All Uppercase",
+    "description": "Your entire response should be in English, capital letters only.",
+    "examples": [
+      "Your entire response should be in English, capital letters only.",
+      "Write your whole answer in ALL CAPS.",
+      "Ensure all text is uppercase.",
+      "No lowercase letters are permitted in your response.",
+      "The complete output must be in capital letters."
+    ]
+  },
+  {
+    "id": 21,
+    "instruction_group": "Change Cases",
+    "instruction": "All Lowercase",
+    "description": "Your entire response should be in English, and in all lowercase letters. No capital letters are allowed.",
+    "examples": [
+      "Your entire response should be in English, and in all lowercase letters. No capital letters are allowed.",
+      "Write your whole answer in all small letters.",
+      "Ensure all text is lowercase.",
+      "No uppercase letters are permitted in your response.",
+      "The complete output must be in lowercase."
+    ]
+  },
+  {
+    "id": 22,
+    "instruction_group": "Change Cases",
+    "instruction": "Frequency of All capital Words",
+    "description": "In your response, words with all capital letters should appear at least / around / at most {N} times.",
+    "examples": [
+      "In your response, words with all capital letters should appear at least 3 times.",
+      "In your response, words with all capital letters should appear around 5 times.",
+      "In your response, words with all capital letters should appear at most 2 times.",
+      "In your response, words with all capital letters should appear at least 7 times.",
+      "In your response, words with all capital letters should appear around 4 times."
+    ]
+  },
+  {
+    "id": 23,
+    "instruction_group": "Start with/End with",
+    "instruction": "End Checker",
+    "description": "Finish your response with this exact phrase {end_phrase}. No other words should follow this phrase.",
+    "examples": [
+      "Finish your response with this exact phrase \"Thank you for your time.\". No other words should follow this phrase.",
+      "Finish your response with this exact phrase \"Is there anything else I can help with?\". No other words should follow this phrase.",
+      "Finish your response with this exact phrase \"Have a great day!\". No other words should follow this phrase.",
+      "Finish your response with this exact phrase \"Looking forward to hearing from you.\". No other words should follow this phrase.",
+      "Finish your response with this exact phrase \"The end.\". No other words should follow this phrase."
+    ]
+  },
+  {
+    "id": 24,
+    "instruction_group": "Start with / End with",
+    "instruction": "Quotation",
+    "description": "Wrap your entire response with double quotation marks.",
+    "examples": [
+      "Wrap your entire response with double quotation marks.",
+      "Enclose your whole answer in double quotes.",
+      "The complete output should be within \" \".",
+      "Start and end your response with double quotation marks.",
+      "Put double quotes around everything you write."
+    ]
+  },
+  {
+    "id": 25,
+    "instruction_group": "Punctuation",
+    "instruction": "No Commas",
+    "description": "In your entire response, refrain from the use of any commas.",
+    "examples": [
+      "In your entire response, refrain from the use of any commas.",
+      "Do not use commas anywhere in your answer.",
+      "Your response must be entirely comma-free.",
+      "Avoid all commas in your output.",
+      "No punctuation marks like commas are allowed."
+    ]
+  }
+]
