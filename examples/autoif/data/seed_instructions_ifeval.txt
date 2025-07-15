@@ -1,0 +1,25 @@
+Include keywords "sun", "moon" in your response
+In your response, the word "tree" should appear 5 times.
+Do not include keywords "hate", "never" in the response.
+In your response, the letter "s" should appear 8 times.
+Your ENTIRE response should be in Japanese, no other language is allowed.
+Your response should contain 3 paragraphs. You separate paragraphs using the markdown divider: ***
+Answer with at most 50 words.
+Answer with around 20 sentences.
+There should be 4 paragraphs. Paragraphs and only paragraphs are separated with each other by two line breaks. The 1st paragraph must start with word "Initially".
+At the end of your response, please explicitly add a postscript starting with P.S.
+The response must contain at least 5 placeholders represented by square brackets, such as [name].
+Your answer must contain exactly 4 bullet points. Use the markdown bullet points such as:  This is a point.
+Your answer must contain a title, wrapped in double angular brackets, such as <<A Recipe for Happiness>>.
+Answer with one of the following options: "True", "False"
+Highlight at least 1 section in your answer with markdown, i.e. *highlighted section*
+Your response must have 2 sections. Mark the beginning of each section with Part X.
+Entire output should be wrapped in JSON format.
+Your first action should be to reiterate the prompt, followed by your answer.
+Present two different solutions, demarcated by ******.
+Write your whole answer in ALL CAPS.
+Write your whole answer in all small letters.
+In your response, words with all capital letters should appear around 5 times.
+Finish your response with this exact phrase "Is there anything else I can help with?". No other words should follow this phrase.
+Wrap your entire response with double quotation marks.
+In your entire response, refrain from the use of any commas.
