@@ -1,8 +1,8 @@
 #!/bin/bash
-#SBATCH --job-name=que_resp
-#SBATCH --nodes=4
+#SBATCH --job-name=generate_responses
+#SBATCH --nodes=1
 #SBATCH --partition=dev-g
-#SBATCH --time=00-02:00:00
+#SBATCH --time=00:20:00
 #SBATCH --ntasks-per-node=2
 #SBATCH --mem=480G
 #SBATCH --cpus-per-task=7
@@ -19,7 +19,7 @@
 
 INPUT_FILE=data/concat_query_verifiers.jsonl 
 OUTPUT_FILE=data/filtered_responses.jsonl
-TASK=autoif_task.GenerateQueryResponsesTask
+TASK=autoif_generator_task.GenerateQueryResponsesTask
 
 # generation parameters
 # These should be tuned so that you do not overload your backend vllm server,
@@ -61,7 +61,9 @@ export PYTHONUSERBASE="$(pwd)/pythonuserbase"
 module use /appl/local/csc/modulefiles
 module load pytorch/2.5
 
+pip install git+https://github.com/LumiOpen/dispatcher.git
 export HF_HOME="/scratch/project_462000353/hf_cache"
+export SSL_CERT_FILE=$(python -m certifi)
 
 # dispatcher server will run on the first node, before we launch the worker
 # tasks.
@@ -98,7 +100,7 @@ srun -l \
     echo "Launching task $SLURM_LOCALID (global id: $SLURM_PROCID) with GPU $GPU_IDS on $(hostname)"
 
     module use /appl/local/csc/modulefiles
-    module load pytorch
+    module load pytorch/2.5
     export PYTHONUSERBASE=./pythonuserbase
     PYTHONPATH=. python -m dispatcher.taskmanager.cli \
         --dispatcher ${DISPATCHER_SERVER}:${DISPATCHER_PORT} \
