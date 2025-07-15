@@ -29,22 +29,26 @@ echo "Using model: $MODEL"
 VENV_DIR=".venv"
 REQUIREMENTS_FILE="requirements.txt"
 
+RUNID="ifeval"
+
 # Data files
-SEED_FILE="data/seed_instructions.txt"
-AUGMENTED_INSTR_FILE="data/augmented_instructions.txt"
-VERIFIERS_INPUT_FILE="data/verifiers_input.jsonl"
-VERIFIERS_OUTPUT_FILE="data/verifiers_output.jsonl"
-ALL_RESULTS_FILE="data/all_verifiers.jsonl"
-FILTERED_VERIFIERS_FILE="data/filtered_verifiers.jsonl"
+SEED_FILE="data/seed_instructions_${RUNID}.txt"
+AUGMENTED_INSTRUCTIONS_FILE="data/augmented_instructions_${RUNID}.csv"
+VERIFIERS_ALL_FILE="data/verifiers_all_${RUNID}.jsonl"
+VERIFIERS_FILTERED_FILE="data/verifiers_filtered_${RUNID}.jsonl"
+VERIFIERS_QUERIES_FILE="data/verifiers_queries_${RUNID}.jsonl"
 QUERIES_DATASET="databricks/databricks-dolly-15k"
-VERIFIERS_QUERIES_FILE="data/verifiers_queries.jsonl"
+# export to make available for launch script
+export VERIFIERS_INPUT_FILE="data/verifiers_input_${RUNID}.jsonl" 
+export VERIFIERS_OUTPUT_FILE="data/verifiers_output_${RUNID}.jsonl"
+export AUGMENT_INPUT_FILE="data/aug_input_${RUNID}.jsonl"
+export AUGMENT_OUTPUT_FILE="data/aug_output_${RUNID}.jsonl"
 
 # Export MODEL to make it available for launch scripts
 export MODEL
 
-# Temporary files
-TMP_AUG_INPUT_FILE="data/tmp_aug_input.jsonl"
-TMP_AUG_OUTPUT_FILE="data/tmp_aug_output.jsonl"
+# Other config
+NUM_OF_AUGMENTED_INSTRUCTIONS=100
 
 # Checkpointing mechanism
 mkdir -p logs
@@ -144,8 +148,8 @@ if ! step_completed $AUG_PREPROCESSING; then
     echo "AUG: Pre-processing instructions"
     python src/create_instructions_input.py \
         --seed_file $SEED_FILE \
-        --output_file $TMP_AUG_INPUT_FILE \
-        --num_prompts 4
+        --output_file $AUGMENT_INPUT_FILE \
+        --num_instructions $NUM_OF_AUGMENTED_INSTRUCTIONS
     if [ $? -ne 0 ]; then
         echo "Pre-processing failed!"
         exit 1
@@ -189,8 +193,8 @@ if ! step_completed $AUG_INFERENCE_COMPLETE; then
     
     # Once job is completed, verify the output files
     python src/utils/verify_job_output.py \
-        --input_file "$TMP_AUG_INPUT_FILE" \
-        --output_file "$TMP_AUG_OUTPUT_FILE" \
+        --input_file "$AUGMENT_INPUT_FILE" \
+        --output_file "$AUGMENT_OUTPUT_FILE" \
         --log_file "$LOG_FILE" \
         --required_completion 100 \
         --prefix "AUG"
@@ -213,10 +217,11 @@ fi
 if ! step_completed $AUG_POSTPROCESSING; then
     echo "AUG: Post-processing inference results"
     python src/process_instructions_output.py \
-        --input_file $TMP_AUG_OUTPUT_FILE \
-        --output_file $AUGMENTED_INSTR_FILE \
+        --input_file $AUGMENT_OUTPUT_FILE \
+        --output_file $AUGMENTED_INSTRUCTIONS_FILE \
         --seed_file $SEED_FILE \
-        --language $LANGUAGE
+        --language $LANGUAGE \
+        --max_instructions $NUM_OF_AUGMENTED_INSTRUCTIONS
     if [ $? -ne 0 ]; then
         echo "Post-processing failed!"
         exit 1
@@ -240,7 +245,7 @@ echo "Starting Step 2: Generate verifiers"
 if ! step_completed $VER_PREPROCESSING; then
     echo "VER: Pre-processing instructions for verifier generation"
     python src/create_verifiers_input.py \
-        --instructions_file $AUGMENTED_INSTR_FILE \
+        --instructions_file $AUGMENTED_INSTRUCTIONS_FILE \
         --output_file $VERIFIERS_INPUT_FILE
     if [ $? -ne 0 ]; then
         echo "Verifier pre-processing failed!"
@@ -312,8 +317,8 @@ if ! step_completed $VER_CROSS_VALIDATION; then
     echo "VER: Cross-validating and filtering verifiers"
     python src/verifiers_cross_validation.py \
         --verifiers_file $VERIFIERS_OUTPUT_FILE \
-        --all_results_file $ALL_RESULTS_FILE \
-        --filtered_file $FILTERED_VERIFIERS_FILE
+        --output_all_file $VERIFIERS_ALL_FILE \
+        --output_filtered_file $VERIFIERS_FILTERED_FILE
     if [ $? -ne 0 ]; then
         echo "Cross-validation failed!"
         exit 1
@@ -327,7 +332,7 @@ fi
 if ! step_completed $VER_QUERIES_CONCATED; then
     echo "VER: Concat queries"
     python src/concat_queries.py \
-        --verifiers_file $FILTERED_VERIFIERS_FILE \
+        --verifiers_file $VERIFIERS_FILTERED_FILE \
         --output_file $VERIFIERS_QUERIES_FILE \
         --queries_dataset $QUERIES_DATASET \
         --queries_per_instruction 16
@@ -341,7 +346,7 @@ else
 fi
 
 echo "Phase 1 pipeline completed successfully!"
-echo "Generated verifiers are available at: $FILTERED_VERIFIERS_FILE"
+echo "Generated verifiers are available at: $VERIFIERS_FILTERED_FILE"
 echo "Query-instruction pairs with verifiers are available at: $VERIFIERS_QUERIES_FILE"
 
 deactivate

@@ -1,4 +1,4 @@
-You are an expert for writing instructions. Please provide 3 different instructions that meet the following requirements:
+You are an expert for writing instructions. Please provide {num_instructions} different instructions that meet the following requirements:
 - Instructions are about the format but not style of a response
 - Instructions that can be easily evaluated by a Python function
 

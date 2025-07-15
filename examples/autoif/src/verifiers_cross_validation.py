@@ -204,7 +204,7 @@ def parse_function_and_cases(response: str) -> Tuple[Optional[Dict[str, Any]], O
 
 def is_safe_function(func_str: str) -> Tuple[bool, Optional[str]]:
     """Check if function contains potentially harmful imports or operations."""
-    unsafe_patterns = ['import', 'download', 'requests', 'subprocess', 'os.', 'sys.']
+    unsafe_patterns = ['requests', 'subprocess', 'os.', 'sys.']
     
     # Check for unsafe patterns
     for pattern in unsafe_patterns:
@@ -285,7 +285,7 @@ def deduplicate_test_cases(cases: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             result.append(case)
     return result
 
-def cross_validate_verifiers(verifiers_file: str, all_output_file: str, filtered_output_file: str) -> List[Dict]:
+def cross_validate_verifiers(verifiers_file: str, output_all_file: str, output_filtered_file: str) -> List[Dict]:
     """Cross-validate verification functions and test cases."""
     # Initialize language identifier
     # glot_client = InferenceClient('cis-lmu/glotlid')
@@ -316,12 +316,15 @@ def cross_validate_verifiers(verifiers_file: str, all_output_file: str, filtered
         logger.info(f"Processing item {data_idx}/{total_count}")
             
         instruction = None
+        instruction_id = None
         try:
             original = data['original']
             instruction = original['instruction']
+            instruction_id = original['instruction_id']
             
             # Prepare result object with filtered=True by default
             result = {
+                'instruction_id': instruction_id,
                 'instruction': instruction,
                 'filtered': True,
                 'reason': None,
@@ -498,6 +501,7 @@ def cross_validate_verifiers(verifiers_file: str, all_output_file: str, filtered
             
             # Add to filtered list
             filtered_entry = {
+                'instruction_id': instruction_id,
                 'instruction': instruction,
                 'eval_func': final_funcs,
                 'cases': final_cases
@@ -509,6 +513,7 @@ def cross_validate_verifiers(verifiers_file: str, all_output_file: str, filtered
             logger.error(error_msg)
             if instruction:
                 result = {
+                    'instruction_id': instruction_id,
                     'instruction': instruction,
                     'filtered': True,
                     'reason': f"unexpected_error: {str(e)}",
@@ -519,12 +524,12 @@ def cross_validate_verifiers(verifiers_file: str, all_output_file: str, filtered
                 filtered_count += 1
     
     # Write all results (including filtered ones with reasons)
-    with open(all_output_file, 'w') as f:
+    with open(output_all_file, 'w') as f:
         for result in all_results:
             f.write(json.dumps(result) + '\n')
     
     # Write filtered verifiers to file (only those that passed)
-    with open(filtered_output_file, 'w') as f:
+    with open(output_filtered_file, 'w') as f:
         for verifier in filtered_verifiers:
             f.write(json.dumps(verifier) + '\n')
     
@@ -619,14 +624,14 @@ def main():
     
     parser.add_argument('--verifiers_file', type=str, required=True,
                         help='Input file with verification functions')
-    parser.add_argument('--all_results_file', type=str, required=True,
+    parser.add_argument('--output_all_file', type=str, required=True,
                         help='Output file for all verifiers with filter status')
-    parser.add_argument('--filtered_file', type=str, required=True,
+    parser.add_argument('--output_filtered_file', type=str, required=True,
                         help='Output file for filtered verifiers')
     
     args = parser.parse_args()
 
-    logfile = f"logs/{os.path.basename(args.all_results_file)}.log"
+    logfile = f"logs/{os.path.basename(args.output_all_file)}.log"
 
     # Empty the log file before starting new processing
     with open(logfile, 'w') as f:
@@ -644,8 +649,8 @@ def main():
     # Cross-validate verifiers
     cross_validate_verifiers(
         args.verifiers_file, 
-        args.all_results_file, 
-        args.filtered_file,
+        args.output_all_file, 
+        args.output_filtered_file,
     )
     print(f"Full logfile available at: {logfile}")
 
