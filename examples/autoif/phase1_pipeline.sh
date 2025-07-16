@@ -1,7 +1,29 @@
 #!/bin/bash
 
 # Phase 1 Pipeline Script
+
+# Default values
 LANGUAGE="en"
+MODEL="meta-llama/Llama-3.3-70B-Instruct"  # Default model
+
+# Parse command line arguments
+if [[ $# -eq 1 ]]; then
+    if [[ "$1" == "--help" ]]; then
+        echo "Usage: $0 <path/to/model>"
+        echo "  <path/to/model>    Specify the model to use (default is 'meta-llama/Llama-3.3-70B-Instruct')"
+        exit 0
+    else
+        MODEL="$1"
+    fi
+elif [[ $# -gt 1 ]]; then
+    echo "Error: Too many arguments provided"
+    echo "Usage: $0 <path/to/model>"
+    exit 1
+elif [[ $# -eq 0 ]]; then
+    echo "Using default model: $MODEL"
+fi
+
+echo "Using model: $MODEL"
 
 # Virtual environment settings
 VENV_DIR=".venv"
@@ -16,6 +38,9 @@ ALL_RESULTS_FILE="data/all_verifiers.jsonl"
 FILTERED_VERIFIERS_FILE="data/filtered_verifiers.jsonl"
 QUERIES_DATASET="databricks/databricks-dolly-15k"
 VERIFIERS_QUERIES_FILE="data/verifiers_queries.jsonl"
+
+# Export MODEL to make it available for launch scripts
+export MODEL
 
 # Temporary files
 TMP_AUG_INPUT_FILE="data/tmp_aug_input.jsonl"
