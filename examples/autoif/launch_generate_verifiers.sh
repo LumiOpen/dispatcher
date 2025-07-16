@@ -38,7 +38,8 @@ TOP_P=1.00
 TEMPERATURE=0.7
 
 # Model configuration
-MODEL=meta-llama/Llama-3.3-70B-Instruct
+# Use environment variable if already set by parent script phase1_pipeline.sh, otherwise use default
+: "${MODEL:=meta-llama/Llama-3.3-70B-Instruct}"
 GPUS_PER_TASK=4     # 8B model uses 1 GPU per task, 70B model requires 4 GPUs per task
 MAX_MODEL_LEN=16384
 MAX_TOKENS=8192     # Generous token limit for complex verifier functions

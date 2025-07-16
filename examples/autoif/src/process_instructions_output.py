@@ -1,6 +1,7 @@
 import argparse
 import json
 import re
+import csv
 # from huggingface_hub import InferenceClient
 
 #language identifier
@@ -46,33 +47,15 @@ def detect_language_glotlid(text,model=model_cis_lmu):
     lang_code = lang_code[0].replace("__label__","").replace("_Latn","")
     return lang_code
 
-def process_output(input_file: str, output_file: str, seed_file: str, language: str = 'fi') -> None:
-    """Process generated instructions, filter by language, and save to file.
-    
-    First loads seed instructions, then appends new non-duplicate instructions in target language.
+def process_output(input_file: str, output_file: str, seed_file: str, language: str = 'fi', max_instructions: int = 100) -> None:
     """
-    # Initialize language identifier model
-    # glot_client = InferenceClient('cis-lmu/glotlid')
+    De-duplicate instructions and filter by language. Do not include seed instructions in the output
+    """
+
+    seen_instructions = set()
+    instruction_count = 0
     
-    # 1. Start with seed instructions - assume they are already clean
-    clean_instructions = set()
-    try:
-        with open(seed_file, 'r') as f:
-            for line in f:
-                instruction = line.strip()
-                if instruction:
-                    clean_instructions.add(instruction)
-        print(f"Loaded {len(clean_instructions)} seed instructions")
-    except Exception as e:
-        print(f"Error loading seed instructions: {e}")
-        exit(1)
-    
-    # Write seed instructions to output file
-    with open(output_file, 'w') as f:
-        for instruction in clean_instructions:
-            f.write(instruction + '\n')
-    
-    # 2. Process new instructions from model output
+    # Process instructions from model output
     try:
         with open(input_file, 'r') as f:
             results = [json.loads(line) for line in f]
@@ -83,8 +66,12 @@ def process_output(input_file: str, output_file: str, seed_file: str, language: 
         print(f"Error: Input file {input_file} contains invalid JSON")
         exit(1)
     
-    # Append new instructions to output file
-    with open(output_file, 'a') as out_f:
+    # Open CSV file for writing
+    with open(output_file, 'w', newline='', encoding='utf-8') as csvfile:
+        writer = csv.writer(csvfile)
+        # Write header
+        writer.writerow(['id', 'instruction'])
+        
         for result in results:
             for response in result.get('responses', []):
                 # Extract instructions
@@ -93,51 +80,55 @@ def process_output(input_file: str, output_file: str, seed_file: str, language: 
                 # If no numbered instructions found, try line-by-line
                 if not instructions:
                     instructions = [line.strip() for line in response.split('\n') 
-                                  if line.strip() and not line.strip().startswith('#')]
+                                    if line.strip() and not line.strip().startswith('#')]
                 
                 for instruction in instructions:
                     instruction = instruction.strip()
+
+                    # Break if we reach the maximum number of instructions
+                    if instruction_count >= int(max_instructions):
+                        print(f"Reached maximum number of instructions: {max_instructions}. Output {instruction_count} {language} instructions")
+                        return
+
                     # Skip empty or very short instructions
                     if len(instruction) < 5:
                         continue
                     
                     # Skip duplicates
-                    if instruction in clean_instructions:
+                    if instruction in seen_instructions:
                         continue
                     
-                    # # Check language
+                    # Check language
                     try:
                         lang_code = detect_language_glotlid(instruction, model_cis_lmu)
                         if GLOT_LANG_DICT[lang_code] == language:
                             # Add to set to track duplicates
-                            clean_instructions.add(instruction)
-                            # Write to file directly
-                            out_f.write(instruction + '\n')
+                            seen_instructions.add(instruction)
+                            # Write immediately to CSV
+                            writer.writerow([instruction_count, instruction])
+                            instruction_count += 1
                     except Exception as e:
                         print(f'Language detection error: {e}')
-
-                    # # Add to set to track duplicates
-                    # clean_instructions.add(instruction)
-                    # # Write to file directly
-                    # out_f.write(instruction + '\n')
     
-    print(f'Output {len(clean_instructions)} {language} instructions')
-
+    print(f'Output {instruction_count} {language} instructions')
+    
 def main():
     parser = argparse.ArgumentParser(description='Process and filter generated instructions')
     
     parser.add_argument('--input_file', type=str, required=True,
                         help='Input file with model-generated instructions (JSONL)')
     parser.add_argument('--output_file', type=str, required=True,
-                        help='Output file for filtered instructions (text)')
+                        help='Output file for filtered instructions (CSV)')
     parser.add_argument('--seed_file', type=str, required=True,
                         help='File with seed instructions to include')
     parser.add_argument('--language', type=str, default='fi',
                         help='Language code for filtering (e.g., "fi" for Finnish)')
+    parser.add_argument('--max_instructions', type=str, default=100,
+                        help='Maximum number of instructions to output, default is 100.')
     
     args = parser.parse_args()
     
-    process_output(args.input_file, args.output_file, args.seed_file, args.language)
+    process_output(args.input_file, args.output_file, args.seed_file, args.language, args.max_instructions)
 
 if __name__ == "__main__":
     main()
