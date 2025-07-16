@@ -38,7 +38,8 @@ TOP_P=0.9
 TEMPERATURE=0.6
 
 # Model configuration
-MODEL=meta-llama/Llama-3.3-70B-Instruct
+# Use environment variable if already set by parent script phase1_pipeline.sh, otherwise use default
+: "${MODEL:=meta-llama/Llama-3.3-70B-Instruct}"
 GPUS_PER_TASK=4
 MAX_MODEL_LEN=8192
 MAX_TOKENS=4096
