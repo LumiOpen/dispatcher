@@ -2,7 +2,7 @@
 #SBATCH --job-name=generate_responses
 #SBATCH --nodes=1
 #SBATCH --partition=dev-g
-#SBATCH --time=00:30:00
+#SBATCH --time=00:20:00
 #SBATCH --ntasks-per-node=2
 #SBATCH --mem=480G
 #SBATCH --cpus-per-task=7
@@ -16,9 +16,9 @@
 
 ###
 # configure the following.
-
+export LANGUAGE=eng
 INPUT_FILE=data/verifiers_queries_ifeval.jsonl 
-OUTPUT_FILE=data/filtered_responses.jsonl
+OUTPUT_FILE=data/final_scored_responses.jsonl
 TASK=autoif_generator_task.GenerateQueryResponsesTask
 
 # generation parameters
@@ -40,7 +40,7 @@ WORK_TIMEOUT=1800   # time for dispatcher to give up on a work item and reissue 
 # Typically on Lumi 70B = 4 GPUs, 34B = 2 GPUs, 8B = 1 GPU
 # --ntasks-per-node should be int(8 / GPUS_PER_TASK)
 #
-MODEL=meta-llama/Llama-3.3-70B-Instruct
+MODEL=meta-llama/Llama-3.1-8B-Instruct
 GPUS_PER_TASK=4     # enough for the model and large batch size
 MAX_MODEL_LEN=16384 # for efficiency, only as much as you think you need for efficiency
 
@@ -58,12 +58,13 @@ unset PYTHONEXECUTABLE
 # set up environment
 mkdir -p logs pythonuserbase
 export PYTHONUSERBASE="$(pwd)/pythonuserbase"
+
 module use /appl/local/csc/modulefiles
 module load pytorch/2.5
 source .venv/bin/activate
 
-pip install fasttext
-pip install git+https://github.com/LumiOpen/dispatcher.git
+# pip install fasttext
+# pip install git+https://github.com/LumiOpen/dispatcher.git
 export HF_HOME="/scratch/project_462000353/hf_cache"
 export SSL_CERT_FILE=$(python -m certifi)
 
