@@ -3,7 +3,9 @@ from typing import Dict, List, Optional, Any
 import re
 import numpy as np
 import os
-from lang_id import detect_language
+from src.utils.lang_id import detect_language
+import sys
+print("sys.path:", sys.path)
 
 LANGUAGE=os.environ.get("LANGUAGE")
 
@@ -25,7 +27,7 @@ def response_verify(response: str, data: Dict[str, Any]) -> Optional[List[Dict[s
         # Get language prediction
         # lang_code1 is the three-letter code, lang_code2 is the two-letter code
         lang_code1, lang_code2 = detect_language(response)
-        if lang_code1 != LANGUAGE or (lang_code2 is not None and lang_code2 != LANGUAGE)
+        if lang_code1 != LANGUAGE or (lang_code2 is not None and lang_code2 != LANGUAGE):
             print(f"Response language is {lang_code1} ({lang_code2}). Expected {LANGUAGE}.")
             return None
             
@@ -38,55 +40,55 @@ def response_verify(response: str, data: Dict[str, Any]) -> Optional[List[Dict[s
     def timeout_handler(signum, frame):
         raise TimeoutError("Function execution timed out")
     
-    # # Parse the evaluation functions
-    # eval_func_data = data.get('eval_func', [])
-    # print(f"eval_func_data: {eval_func_data}")
-    # if not eval_func_data:
-    #     print("No evaluation functions found")
-    #     return None
+    # Parse the evaluation functions
+    eval_func_data = data.get('eval_func', [])
+    print(f"eval_func_data: {eval_func_data}")
+    if not eval_func_data:
+        print("No evaluation functions found")
+        return None
     
-    # # Process eval_func list similar to the original code
-    # eval_funcs = []
+    # Process eval_func list similar to the original code
+    eval_funcs = []
     
-    # # Handle eval_func in format from original code: list of (func, score) tuples
-    # for func, score in eval_func_data:
-    #     local_vars = {}
-    #     try:
-    #         exec(func, globals(), local_vars)
-    #         if 'evaluate' in local_vars:
-    #             eval_funcs.append(local_vars['evaluate'])
-    #     except Exception as e:
-    #         print(f"Error parsing evaluation function: {e}")
+    # Handle eval_func in format from original code: list of (func, score) tuples
+    for func, score in eval_func_data:
+        local_vars = {}
+        try:
+            exec(func, globals(), local_vars)
+            if 'evaluate' in local_vars:
+                eval_funcs.append(local_vars['evaluate'])
+        except Exception as e:
+            print(f"Error parsing evaluation function: {e}")
     
-    # if not eval_funcs:
-    #     print("No valid evaluation functions found")
-    #     return None
+    if not eval_funcs:
+        print("No valid evaluation functions found")
+        return None
     
-    # # Run each evaluation function and collect results
-    # acc = []
-    # for eval_func in eval_funcs:
-    #     try:
-    #         signal.signal(signal.SIGALRM, timeout_handler)
-    #         signal.alarm(5)  # 5 second timeout
-    #         res = eval_func(response)
-    #     except Exception as e:
-    #         print(f"Evaluation error: {e}")
-    #         res = None
-    #     finally:
-    #         signal.alarm(0)  # Disable the alarm
+    # Run each evaluation function and collect results
+    acc = []
+    for eval_func in eval_funcs:
+        try:
+            signal.signal(signal.SIGALRM, timeout_handler)
+            signal.alarm(5)  # 5 second timeout
+            res = eval_func(response)
+        except Exception as e:
+            print(f"Evaluation error: {e}")
+            res = None
+        finally:
+            signal.alarm(0)  # Disable the alarm
         
-    #     if res is not None:
-    #         try:
-    #             acc.append(int(res))
-    #         except:
-    #             continue
+        if res is not None:
+            try:
+                acc.append(int(res))
+            except:
+                continue
     
-    # # Calculate accuracy as in the original code
-    # acc_value = np.mean(acc) if acc else 0
+    # Calculate accuracy as in the original code
+    acc_value = np.mean(acc) if acc else 0
     
-    # # Filter out responses with acc <= 0
-    # if acc_value <= 0:
-    #     return None
+    # Filter out responses with acc <= 0
+    if acc_value <= 0:
+        return None
     
     # If passed verification, construct the scoring prompt
     prompt_template = """You are an expert that is good at judging whether a response is following the instruction and query.
@@ -107,9 +109,10 @@ Please only provide a score in the format `Score: {{score}}` without any other c
     scoring_messages = [
         {"role": "user", "content": scoring_prompt}
     ]
+
     return scoring_messages
 
-def response_score_filter(scored_text: str) -> Optional[str]:
+def response_score_filter(scored_text: str, score_thresh: float) -> Optional[str]:
     """
     Extracts the score from the scored text and returns the response if score > 8.
     
@@ -127,7 +130,7 @@ def response_score_filter(scored_text: str) -> Optional[str]:
     
     try:
         score = int(score_match.group(1))
-        if score > 8:  # Quality score threshold
+        if score >= score_thresh:  # Quality score threshold
             return scored_text
         return None
     except:
