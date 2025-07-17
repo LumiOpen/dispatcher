@@ -46,9 +46,12 @@ export AUGMENT_OUTPUT_FILE="data/aug_output_${RUNID}.jsonl"
 
 # Export MODEL to make it available for launch scripts
 export MODEL
+# make LANGUAGE available for launch scripts
+export LANGUAGE
+export HF_HOME="/scratch/project_462000353/hf_cache"
 
 # Other config
-NUM_OF_AUGMENTED_INSTRUCTIONS=100
+NUM_OF_AUGMENTED_INSTRUCTIONS=2
 
 # Checkpointing mechanism
 mkdir -p logs

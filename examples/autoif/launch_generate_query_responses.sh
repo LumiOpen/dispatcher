@@ -2,7 +2,7 @@
 #SBATCH --job-name=generate_responses
 #SBATCH --nodes=1
 #SBATCH --partition=dev-g
-#SBATCH --time=00:20:00
+#SBATCH --time=00:30:00
 #SBATCH --ntasks-per-node=2
 #SBATCH --mem=480G
 #SBATCH --cpus-per-task=7
@@ -17,7 +17,7 @@
 ###
 # configure the following.
 
-INPUT_FILE=data/concat_query_verifiers.jsonl 
+INPUT_FILE=data/verifiers_queries_ifeval.jsonl 
 OUTPUT_FILE=data/filtered_responses.jsonl
 TASK=autoif_generator_task.GenerateQueryResponsesTask
 
@@ -60,7 +60,9 @@ mkdir -p logs pythonuserbase
 export PYTHONUSERBASE="$(pwd)/pythonuserbase"
 module use /appl/local/csc/modulefiles
 module load pytorch/2.5
+source .venv/bin/activate
 
+pip install fasttext
 pip install git+https://github.com/LumiOpen/dispatcher.git
 export HF_HOME="/scratch/project_462000353/hf_cache"
 export SSL_CERT_FILE=$(python -m certifi)
