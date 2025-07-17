@@ -38,9 +38,9 @@ GLOT_LANG_DICT = {
 def detect_language(text):
     """Given a text, it returns the Glotlid prediction as NLLB language code, e.g., Latn-eng
     """
-    lang_code, score = model_glotlid.predict(text)
+    lang_code, score = model_glotlid.predict(text.replace("\n", " "))
     # extract 639-2 lang code (three-letter code)
     three_lang_code = lang_code[0].replace("__label__","").replace("_Latn","")
-    # map to 639-1 code if available
+    # map 639-2 to 639-1 code if available
     two_letter_code = GLOT_LANG_DICT.get(three_lang_code)
     return three_lang_code, two_letter_code
