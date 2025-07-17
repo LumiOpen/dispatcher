@@ -4,8 +4,6 @@ import re
 import numpy as np
 import os
 from src.utils.lang_id import detect_language
-import sys
-print("sys.path:", sys.path)
 
 LANGUAGE=os.environ.get("LANGUAGE")
 
@@ -27,7 +25,7 @@ def response_verify(response: str, data: Dict[str, Any]) -> Optional[List[Dict[s
         # Get language prediction
         # lang_code1 is the three-letter code, lang_code2 is the two-letter code
         lang_code1, lang_code2 = detect_language(response)
-        if lang_code1 != LANGUAGE or (lang_code2 is not None and lang_code2 != LANGUAGE):
+        if lang_code1 != LANGUAGE:
             print(f"Response language is {lang_code1} ({lang_code2}). Expected {LANGUAGE}.")
             return None
             
