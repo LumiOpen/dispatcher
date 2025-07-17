@@ -2,50 +2,8 @@ import argparse
 import json
 import re
 import csv
-# from huggingface_hub import InferenceClient
+from utils.lang_id import detect_language  
 
-#language identifier
-from huggingface_hub import hf_hub_download
-import fasttext
-
-model_path = hf_hub_download(repo_id="cis-lmu/glotlid", filename="model.bin")   
-model_cis_lmu = fasttext.load_model(model_path)
-
-GLOT_LANG_DICT = {
-    'bul': 'bg',  # Bulgarian
-    'ces': 'cs',  # Czech
-    'dan': 'da',  # Danish
-    'deu': 'de',  # German
-    'ell': 'el',  # Greek
-    'eng': 'en',  # English
-    'spa': 'es',  # Spanish
-    'est': 'et',  # Estonian
-    'ekk': 'et',  # Standard Estonian
-    'fin': 'fi',  # Finnish
-    'fra': 'fr',  # French
-    'gle': 'ga',  # Irish
-    'hrv': 'hr',  # Croatian
-    'hun': 'hu',  # Hungarian
-    'ita': 'it',  # Italian
-    'lit': 'lt',  # Lithuanian
-    'lav': 'lv',  # Latvian
-    'lvs': 'lv',  # Standard Latvian
-    'mlt': 'mt',  # Maltese
-    'nld': 'nl',  # Dutch
-    'pol': 'pl',  # Polish
-    'por': 'pt',  # Portuguese
-    'ron': 'ro',  # Romanian
-    'slk': 'sk',  # Slovak
-    'slv': 'sl',  # Slovenian
-    'swe': 'sv'   # Swedish
-}
-
-def detect_language_glotlid(text,model=model_cis_lmu):
-    """Given a text, it returns the Glotlid prediction as NLLB language code, e.g., Latn-eng
-    """
-    lang_code, score = model.predict(text)
-    lang_code = lang_code[0].replace("__label__","").replace("_Latn","")
-    return lang_code
 
 def process_output(input_file: str, output_file: str, seed_file: str, language: str = 'fi', max_instructions: int = 100) -> None:
     """
@@ -100,8 +58,10 @@ def process_output(input_file: str, output_file: str, seed_file: str, language: 
                     
                     # Check language
                     try:
-                        lang_code = detect_language_glotlid(instruction, model_cis_lmu)
-                        if GLOT_LANG_DICT[lang_code] == language:
+                        lang_code1, lang_code2 = detect_language(instruction)
+                        # lang_cde1 is the three-letter code, lang_code2 is the two-letter code
+                        if lang_code1 == language or (lang_code2 is not None and lang_code2 == language):
+                            print(f"Response language is {lang_code1} ({lang_code2}). Expected {language}.")
                             # Add to set to track duplicates
                             seen_instructions.add(instruction)
                             # Write immediately to CSV
