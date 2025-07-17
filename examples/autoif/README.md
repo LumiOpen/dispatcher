@@ -104,3 +104,22 @@ The launch script is `src/launch_scripts/launch_generate_query_responses.sh`
 - Python 3.8+
 - Required Python packages in `requirements.txt`
 - Access to LUMI
+
+
+## Utilites
+
+### Verifiers code preview 
+
+The main use for this utility is to display the python code of the verification functions in human-readable format. The usage is
+
+```sh
+python src/utils/preview_verifiers.py <path/to/verifiers/file.jsonl> --instruction_id <id> [ --max_func <max_func> ] [ --tofile ]
+```
+
+This will display all or `--max_func` python functions from the "eval_func" list, along with usage examples in "cases" list. If `--max_func` not supplied, print all.
+
+Each evaluation function is a string with a python code. This utility will format the code and print it out in the console. 
+
+Each test case is a json object with keys "input" and "output". Input is the input to the function and output is the expected output. These are printed at the end of the console output.
+
+If flag `--tofile` is set, output is printed into a python file where each evaluation function is ordered with numbers like evaluate_1(), evaluate_2(), etc. At the end of the file is example usage formed out of the test cases. The python filename is `path/to/verifiers/file_<instruction_id>.py`
