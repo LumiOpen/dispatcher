@@ -26,7 +26,7 @@ def create_verifier_input(instructions_file: str, output_file: str) -> None:
     with open(output_file, 'w') as f:
         for item in instructions:
             prompt = open("model_prompts/create_verifiers_prompt.txt").read().strip()
-            prompt = prompt.format(instruction=instruction)
+            prompt = prompt.format(instruction=item['instruction'])
             data = {
                 'instruction_id': item['id'],
                 'instruction': item['instruction'],
