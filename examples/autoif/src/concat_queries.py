@@ -54,9 +54,7 @@ def concat_queries(
             selected_queries = random.sample(queries, min(queries_per_instruction, len(queries)))
             
             for query in selected_queries:
-                prompt = f"""Please answer the query strictly following the instruction.
-[instruction] {instruction}
-[Query] {query}"""
+                prompt = f"""{query} {instruction}"""
                 
                 output = {
                     'instruction': instruction,
