@@ -1,0 +1,40 @@
+## Definition of an “Instruction”:
+In the context of training a large language model (LLM) for an AI assistant, an "instruction" can be characterized as a specific directive or command given to the model to perform a particular task or behave in a certain way. An instruction for training an AI assistant is a clear, concise statement or question that:
+
+1. Directs the model to perform a specific action or task 
+2. Provides context for the desired behavior or output 
+3. May include constraints or specific requirements
+4. Is typically phrased in natural language
+5. Can be general or domain-specific
+
+Instructions are used to fine-tune the model’s behavior, helping it understand and respond appropriately to various user inputs and scenarios. They are crucial in shaping the AI assistant’s capabilities and ensuring it aligns with the intended use case. Instructions typically fall into one of the categories below:
+
+1. Problem Solving: Coding, Mathematical reasoning, Knowledge and reasoning 
+2. Creative Tasks: Creative writing, Brainstorming
+3. Information Processing: Summarization, Extraction, Classification, Translation 
+4. Question Answering: Open-ended, Closed-ended, Multiple Choice
+5. Text Transformation: Rewriting
+6. Roleplay and Simulation: Inhabiting a character/persona
+7. Advisory: Asking for advice
+8. Domain-Specific Knowledge: Humanity, history, and social studies, Other (specific domains could be added here as needed)
+9. General / Miscellaneous
+
+## Task Description:
+Considering the definition of an Instruction, analyze the following {language} web document and perform a three-step analysis:
+<document> {document} </document>
+
+Firstly, try to give a short summary in {language} of the document. This should help you better understand the document.
+
+Secondly, using the knowledge in the document, create an instruction suitable for training an AI system, where the document provides the topic and, if possible, the answer. Prioritize complex instructions that require knowledge and reasoning to solve. Aim to create an instruction that falls into the {category} category. Note that the instruction should be easy to understand **without requiring access to the document**. It should be clear and detailed enough for the model to comprehend the task without ambiguity, even without seeing the document.
+
+Thirdly, categorize the instruction into one of the categories defined above. 
+
+Provide your final response in the following format:
+
+Summary: <summary of the document in {language}>
+Instruction: <{language} instruction for which the answer is in the document above> 
+Category: <one of the categories above>
+
+NOTE: “Summary:”, “Instruction:” and “Category:” keywords must be kept in English without any change while the generated summary and instruction should be in {language}.
+
+DO NOT provide the actual response to the instruction and make sure the instruction is in {language} even if the document is not in the same language/variant!

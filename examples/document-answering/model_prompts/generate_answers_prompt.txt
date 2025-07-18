@@ -1,0 +1,10 @@
+Consider the following {language} document and the language user’s instruction below: 
+<document> {document} </document>
+
+<instruction> {instruction} </instruction>
+
+Given the above user’s instruction, and the context provided in the document, provide a response to the instruction in language. Your response should include, as much as possible, the information presented in the document while making the flow more clear, useful, relevant and providing a direct response to the instruction. It should be written to be impeccably tailored to the user’s instruction as if written by an AI Assistant, without extraneous information, reflecting expert knowledge, and demonstrating a high-quality, engaging, and insightful answer. Try not to add new facts that are not already in the document.
+
+Since the user does not have access to the document, your answer cannot directly reference the document. The document serves only as supporting context for the instruction.
+
+NOTE: Since the instruction is in language, your response should also be in language. Provide ONLY the response to the instruction.
