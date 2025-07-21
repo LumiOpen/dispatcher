@@ -3,12 +3,14 @@ from typing import Any, Dict, Generator, List, Union
 
 from dispatcher.taskmanager.backend.request import Request, Response
 from dispatcher.taskmanager.task.base import GeneratorTask
+from utils.lang_id import detect_language
 
 __all__ = ["GenerateSamplesFromDocumentsTask"]
 
 
 import random
 import os
+import re
 
 LANGUAGE=os.environ.get("LANGUAGE")
 
@@ -53,14 +55,6 @@ LANGUAGE_NAMES = {
     "no": ["Norwegian", "nob"],
 }
 
-import re
-
-# def extract_instruction(text):
-#     match = re.search(r'INSTRUCTION:\s*(.*?)(?:\n[A-Z]+:|$)', text, re.DOTALL)
-#     if match:
-#         return match.group(1).strip()
-#     return None
-
 class GenerateSamplesFromDocumentsTask(GeneratorTask):
     """Generate a question from a document in some language, the have the model generate an answer to the question."""
 
@@ -75,14 +69,17 @@ class GenerateSamplesFromDocumentsTask(GeneratorTask):
     def task_generator(self) -> Generator[Union[Request, List[Request]], Any, Dict[str, Any]]:
         # self.data is prepopulated with the data from the jsonl row being
         # processed
-        document = self.data.get("document")
+        document = self.data.get("text")
+        lang_id1, lang_id2 = detect_language(document)
+        if lang_id1 != LANGUAGE and lang_id2 != LANGUAGE:
+            print(f"Skipping this document. Document lang is {lang_id1.upper()} or {lang_id2.upper()}, but expected {LANGUAGE.upper()}")
+            return None  # skip documents that are not in the specified language
         gen_instruct_prompt_template = open("model_prompts/generate_instructions_prompt.txt").read().strip()
         gen_instruct_prompt_text = gen_instruct_prompt_template.format(
                         language=LANGUAGE_NAMES.get(LANGUAGE, ["English", "eng"])[0],
                         document=document,
                         category=random.choice(list(INSTRUCTION_CATEGORIES.keys()))
                         )
-        # print(f"\ngen_instruction_prompt_text: {gen_instruct_prompt_text}")
         messages = [
             {
                 "role": "user",
@@ -92,10 +89,18 @@ class GenerateSamplesFromDocumentsTask(GeneratorTask):
 
         # Step 1 – Generate instruction from a document
         instruct_resp: Response = yield Request({"messages": messages, **self.GEN_PARAMS})
-        resp_text = instruct_resp.get_text()
-        match = re.search(r'INSTRUCTION\s*:?([\s\S]*?)CATEGORY', resp_text)
+        instruct_resp_text = instruct_resp.get_text()
+        #print(f"\ninstruct_resp: {instruct_resp_text}")
+        match = re.search(r'INSTRUCTION\s*:?([\s\S]*?)CATEGORY', instruct_resp_text)
+        if match is None:
+            return None
+        #print(f"\nmatch: {match}")
         instruct_text = match.group(1).strip()
-        # print(f"\ninstruct_text: {instruct_text}")
+        lang_id1, lang_id2 = detect_language(instruct_text)
+        if lang_id1 != LANGUAGE and lang_id2 != LANGUAGE:
+            print(f"Skipping this instruction. Instruction lang is {lang_id1.upper()} or {lang_id2.upper()}, but expected {LANGUAGE.upper()}")
+            return None  # skip instructions
+        #print(f"\ninstruct_text: {instruct_text}\n-------------")
 
         gen_answer_prompt_template = open("model_prompts/generate_answers_prompt.txt").read().strip()
         gen_answer_prompt_text = gen_answer_prompt_template.format(
@@ -114,8 +119,10 @@ class GenerateSamplesFromDocumentsTask(GeneratorTask):
         # Step 2 – Generate the answer to the instruction
         answer_resp: Response = yield Request({"messages": messages, **self.GEN_PARAMS})
         answer_text = answer_resp.get_text().strip()
-        # print(f"\nanswer_text: {answer_text}\n-------------")
-
+        lang_id1, lang_id2 = detect_language(answer_text)
+        if lang_id1 != LANGUAGE and lang_id2 != LANGUAGE:
+            print(f"Skipping this answer. Answer lang is {lang_id1.upper()} or {lang_id2.upper()}, but expected {LANGUAGE.upper()}")
+            return None  # skip answers
 
         # return dict can contain anything you wish to record from this task.
         return {

@@ -40,7 +40,7 @@ WORK_TIMEOUT=1800   # time for dispatcher to give up on a work item and reissue 
 # Typically on Lumi 70B = 4 GPUs, 34B = 2 GPUs, 8B = 1 GPU
 # --ntasks-per-node should be int(8 / GPUS_PER_TASK)
 #
-MODEL=meta-llama/Llama-3.3-70B-Instruct
+MODEL=meta-llama/Llama-3.1-8B-Instruct
 GPUS_PER_TASK=4     # enough for the model and large batch size
 MAX_MODEL_LEN=16384 # for efficiency, only as much as you think you need for efficiency
 
@@ -61,9 +61,12 @@ export PYTHONUSERBASE="$(pwd)/pythonuserbase"
 module use /appl/local/csc/modulefiles
 module load pytorch/2.5
 
-source /scratch/project_462000353/zosaelai2/.dispatcher_venv/bin/activate
 export HF_HOME="/scratch/project_462000353/hf_cache"
 export SSL_CERT_FILE=$(python -m certifi)
+
+source /scratch/project_462000353/zosaelai2/.dispatcher_venv/bin/activate
+# pip install git+https://github.com/LumiOpen/dispatcher.git
+# pip install fasttext
 
 # dispatcher server will run on the first node, before we launch the worker
 # tasks.
