@@ -1,0 +1,20 @@
+Review the user’s request and the corresponding response using the additive 5-point scoring system described below. Points are accumulated based on the satisfaction of each criterion:
+
+- Add 1 point if the response is relevant and provides some information related to the user’s inquiry, even if it is incomplete or contains some irrelevant content. 
+- Add another point if the response addresses a substantial portion of the user’s request, but does not completely resolve the query or provide a direct answer. 
+- Award a third point if the response answers the basic elements of the user’s request in a useful way, regardless of whether it seems to have been written by an AI Assistant or if it has elements typically found in blogs or search results. 
+- Grant a fourth point if the response is clearly written from an AI Assistant’s perspective, addressing the user’s request directly and comprehensively, and is well-organized and helpful, even if there is slight room for improvement in clarity, conciseness or focus. 
+- Bestow a fifth point for a response that is impeccably tailored to the user’s request by an AI Assistant, without extraneous information, reflecting expert knowledge, and demonstrating a high-quality, engaging, and insightful answer. 
+
+Evaluation:
+The user's request and the response given are mmediately below in the <request></request> and <response></response> tags, respectively.
+
+<request>{instruction}</request>
+<response>{answer}</response>
+
+After examining the user’s instruction and the response.
+
+- Briefly justify your total score, up to 100 words. 
+- Conclude with the score using the format: \"Score: X/5\"
+
+Remember to assess from the AI Assistant perspective. To evaluate the response in alignment with this additive scoring model, we’ll systematically attribute points based on the outlined criteria.

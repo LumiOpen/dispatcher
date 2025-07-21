@@ -12,6 +12,7 @@ import random
 import os
 import re
 
+SCORE_THRESH = 4  # Quality score threshold for the answer
 LANGUAGE=os.environ.get("LANGUAGE")
 
 INSTRUCTION_CATEGORIES = {
@@ -64,12 +65,19 @@ class GenerateSamplesFromDocumentsTask(GeneratorTask):
         "top_p": 0.95,
         "max_tokens": 4096,
     }
+    
+    # Deterministic parameters for the judge
+    JUDGE_PARAMS: Dict[str, Any] = {
+        "temperature": 0.0,
+        "top_p": 1.0,
+        "max_tokens": 256,
+    }
 
     # --------------- generator ---------------
     def task_generator(self) -> Generator[Union[Request, List[Request]], Any, Dict[str, Any]]:
         # self.data is prepopulated with the data from the jsonl row being
         # processed
-        document = self.data.get("text")
+        document = self.data.get("document")
         lang_id1, lang_id2 = detect_language(document)
         if lang_id1 != LANGUAGE and lang_id2 != LANGUAGE:
             print(f"Skipping this document. Document lang is {lang_id1.upper()} or {lang_id2.upper()}, but expected {LANGUAGE.upper()}")
@@ -124,16 +132,40 @@ class GenerateSamplesFromDocumentsTask(GeneratorTask):
             print(f"Skipping this answer. Answer lang is {lang_id1.upper()} or {lang_id2.upper()}, but expected {LANGUAGE.upper()}")
             return None  # skip answers
 
-        # return dict can contain anything you wish to record from this task.
-        return {
-            "messages": [
-                {
-                    "role": "user",
-                    "content": instruct_text
-                },
-                {
-                    "role": "assistant",
-                    "content": answer_text
-                },
-            ],
-        }
+        # Step 3 - Judge answer quality
+        judge_answer_prompt_template = open("model_prompts/answer_judging_prompt.txt").read()
+        judge_answer_prompt_text = judge_answer_prompt_template.format(
+                    instruction=instruct_text, 
+                    answer=answer_text
+                )
+        messages = [
+            {
+                "role": "user",
+                "content": judge_answer_prompt_text
+            },
+        ]
+        judge_resp = yield Request({"messages": messages, **self.JUDGE_PARAMS})
+        judge_resp_text = judge_resp.get_text()
+        print(f"\njudge_resp: {judge_resp_text}")
+        score_match = re.search(r'Score: (\d+)$', judge_resp_text)
+        if not score_match:
+            return None
+        
+        score = int(score_match.group(1))
+        print(f"\nscore: {score}")
+        if score < SCORE_THRESH:  # Quality score threshold
+            return None  # Skip low-quality answers
+        else:
+            # return dict can contain anything you wish to record from this task.
+            return {
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": instruct_text
+                    },
+                    {
+                        "role": "assistant",
+                        "content": answer_text
+                    },
+                ],
+            }
