@@ -67,37 +67,43 @@ class GenerateSamplesFromDocumentsTask(GeneratorTask):
         # self.data is prepopulated with the data from the jsonl row being
         # processed
         document = self.data.get("document")
-        instruction_template = open("model_prompts/generate_instructions_prompt.txt").read().strip()
-        messages = [
-            {
-                "role": "user",
-                "content": instruction_template.format(
+        prompt_template = open("model_prompts/generate_instructions_prompt.txt").read().strip()
+        gen_instruction_prompt_text = prompt_template.format(
                         document=document,
                         language=LANGUAGE_NAMES.get(LANGUAGE, ["English", "eng"])[0],
                         category=random.choice(list(INSTRUCTION_CATEGORIES.keys())),
                 ),
+        print(f"\ngen_instruction_prompt_text: {gen_instruction_prompt_text}")
+        messages = [
+            {
+                "role": "user",
+                "content": gen_instruction_prompt_text
             },
         ]
 
         # Step 1 – Generate instruction from a document
         instruct_resp: Response = yield Request({"messages": messages, **self.GEN_PARAMS})
         instruction_text = instruct_resp.get_text()
+        print(f"\ninstruction_text: {instruction_text}\n-------------")
 
-        answer_template = open("model_prompts/generate_answer_prompt.txt").read().strip()
-        messages = [
-            {
-                "role": "user",
-                "content": answer_template.format(
+        gen_answer_prompt_template = open("model_prompts/generate_answers_prompt.txt").read().strip()
+        gen_answer_prompt_text = gen_answer_prompt_template.format(
                         language=LANGUAGE_NAMES.get(LANGUAGE, ["English", "eng"])[0],
                         document=document,
                         instruction=instruction_text,
-                ),
+                )
+        print(f"\ngen_answer_prompt_text: {gen_answer_prompt_text}")
+        messages = [
+            {
+                "role": "user",
+                "content": gen_answer_prompt_text
             },
         ]
 
         # Step 2 – Generate the answer to the instruction
         answer_resp: Response = yield Request({"messages": messages, **self.GEN_PARAMS})
         answer_text = answer_resp.get_text().strip()
+        print(f"\nanswer_text: {answer_text}\n-------------")
 
 
         # return dict can contain anything you wish to record from this task.
