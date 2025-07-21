@@ -96,7 +96,7 @@ class DispatcherTaskSource(TaskSource):
             work_item = context
             
             # Set the result on the work item
-            work_item.set_result(json.dumps(result))
+            work_item.set_result(json.dumps(result, ensure_ascii=False))
             
             # Submit back to the dispatcher
             self.client.submit_results([work_item])
