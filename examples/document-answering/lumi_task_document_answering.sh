@@ -1,8 +1,8 @@
 #!/bin/bash
-#SBATCH --job-name=task_inference
-#SBATCH --nodes=4
+#SBATCH --job-name=document_answering
+#SBATCH --nodes=1
 #SBATCH --partition=dev-g
-#SBATCH --time=00-02:00:00
+#SBATCH --time=00:30:00
 #SBATCH --ntasks-per-node=2
 #SBATCH --mem=480G
 #SBATCH --cpus-per-task=7
@@ -16,9 +16,9 @@
 
 ###
 # configure the following.
-export LANGUAGE="en"
-INPUT_FILE=input.jsonl
-OUTPUT_FILE=output.jsonl
+export LANGUAGE="fi"
+INPUT_FILE=/scratch/project_462000353/hplt-data/cleaned/fin_Latn/2.jsonl
+OUTPUT_FILE=output_$LANGUAGE.jsonl
 TASK=document_answering_task.GenerateSamplesFromDocumentsTask
 
 # generation parameters
@@ -61,12 +61,7 @@ export PYTHONUSERBASE="$(pwd)/pythonuserbase"
 module use /appl/local/csc/modulefiles
 module load pytorch/2.5
 
-module use /appl/local/csc/modulefiles
-module load pytorch/2.5
 source /scratch/project_462000353/zosaelai2/.dispatcher_venv/bin/activate
-
-# pip install fasttext
-# pip install git+https://github.com/LumiOpen/dispatcher.git
 export HF_HOME="/scratch/project_462000353/hf_cache"
 export SSL_CERT_FILE=$(python -m certifi)
 
