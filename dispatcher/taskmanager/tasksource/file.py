@@ -91,7 +91,7 @@ class FileTaskSource(TaskSource):
             result, context = task.get_result()
             
             # Write to output file
-            self.output_file.write(json.dumps(result) + "\n")
+            self.output_file.write(json.dumps(result, ensure_ascii=False) + "\n")
             self.output_file.flush()
             
             line_number = context.get("line_number", "unknown")
