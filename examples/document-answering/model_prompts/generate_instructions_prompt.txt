@@ -1,5 +1,5 @@
-## Definition of an “Instruction”:
-In the context of training a large language model (LLM) for an AI assistant, an "instruction" can be characterized as a specific directive or command given to the model to perform a particular task or behave in a certain way. An instruction for training an AI assistant is a clear, concise statement or question that:
+## Definition of an \"Instruction\":
+In the context of training a large language model (LLM) for an AI assistant, an \"instruction\" can be characterized as a specific directive or command given to the model to perform a particular task or behave in a certain way. An instruction for training an AI assistant is a clear, concise statement or question that:
 
 1. Directs the model to perform a specific action or task 
 2. Provides context for the desired behavior or output 
@@ -31,10 +31,10 @@ Thirdly, categorize the instruction into one of the categories defined above.
 
 Provide your final response in the following format:
 
-Summary: <summary of the document in {language}>
-Instruction: <{language} instruction for which the answer is in the document above> 
-Category: <one of the categories above>
+SUMMARY: <summary of the document in {language}>
+INSTRUCTION: <{language} instruction for which the answer is in the document above> 
+CATEGORY: <one of the categories above>
 
-NOTE: “Summary:”, “Instruction:” and “Category:” keywords must be kept in English without any change while the generated summary and instruction should be in {language}.
+NOTE: \"SUMMARY\", \"INSTRUCTION\" and \"CATEGORY\" keywords must be kept in English without any change while the generated summary and instruction should be in {language}.
 
 DO NOT provide the actual response to the instruction and make sure the instruction is in {language} even if the document is not in the same language/variant!
