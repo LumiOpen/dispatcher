@@ -59,7 +59,7 @@ unset PYTHONEXECUTABLE
 mkdir -p logs pythonuserbase
 export PYTHONUSERBASE="$(pwd)/pythonuserbase"
 module use /appl/local/csc/modulefiles
-module load pytorch
+module load pytorch/2.5
 
 # TODO REMOVE
 cd /scratch/project_462000353/jburdge/git/dispatcher
@@ -103,7 +103,7 @@ srun -l \
     echo "Launching task $SLURM_LOCALID (global id: $SLURM_PROCID) with GPU $GPU_IDS on $(hostname)"
 
     module use /appl/local/csc/modulefiles
-    module load pytorch
+    module load pytorch/2.5
     export PYTHONUSERBASE=./pythonuserbase
     PYTHONPATH=. python -m dispatcher.taskmanager.cli \
         --dispatcher ${DISPATCHER_SERVER}:${DISPATCHER_PORT} \
