@@ -63,7 +63,7 @@ unset PYTHONEXECUTABLE
 mkdir -p logs pythonuserbase
 export PYTHONUSERBASE=./pythonuserbase
 module use /appl/local/csc/modulefiles
-module load pytorch
+module load pytorch/2.5
 pip install git+https://github.com/LumiOpen/dispatcher.git
 
 # dispatcher server will run on the first node, before we launch the worker
@@ -102,7 +102,7 @@ srun -l \
     echo "Launching task $SLURM_LOCALID (global id: $SLURM_PROCID) with GPU $GPU_IDS on $(hostname)"
 
     module use /appl/local/csc/modulefiles
-    module load pytorch
+    module load pytorch/2.5
     export PYTHONUSERBASE=./pythonuserbase
     python inference.py \
         --batch_size '"$BATCH_SIZE"' \
