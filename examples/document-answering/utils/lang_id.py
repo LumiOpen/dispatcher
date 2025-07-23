@@ -42,5 +42,5 @@ def detect_language(text):
     # extract 639-2 lang code (three-letter code)
     three_lang_code = lang_code[0].replace("__label__","").replace("_Latn","")
     # map 639-2 to 639-1 code if available
-    two_letter_code = GLOT_LANG_DICT.get(three_lang_code)
+    two_letter_code = GLOT_LANG_DICT.get(three_lang_code, "ERROR")
     return three_lang_code, two_letter_code
