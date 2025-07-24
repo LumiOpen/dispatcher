@@ -52,7 +52,12 @@ This step generates Python verification functions to evaluate instruction follow
 
 3. **Post-processing**:
    - Cross-validates verifier functions using `src/verifiers_cross_validation.py`
-   - Keeps only functions that pass validation criteria (accuracy > 0.8)
+      1. Parse functions and test cases from LLM responses
+      2. Validate function safety (no harmful code patterns)
+      3. Deduplicate test cases
+      4. Filter test cases that pass at least MIN_FUNCTIONS functions
+      5. Keep only functions that meet ACCURACY_THRESHOLD (how many test cases they pass)
+      6. Output results for further processing
    - Output: Filtered verification functions (`data/filtered_verifiers.jsonl`)
 
 4. **Query Augmentation**:
