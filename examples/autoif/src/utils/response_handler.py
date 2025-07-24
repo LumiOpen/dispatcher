@@ -4,6 +4,7 @@ import re
 import numpy as np
 import os
 from src.utils.lang_id import detect_language
+from src.utils.function_executor import FunctionExecutor
 
 LANGUAGE=os.environ.get("LANGUAGE")
 
@@ -34,54 +35,29 @@ def response_verify(response: str, data: Dict[str, Any]) -> Optional[List[Dict[s
         # If language check fails, continue with other verifications
         # Alternative: return None to fail this verification
     
-    # Set up timeout handler
-    def timeout_handler(signum, frame):
-        raise TimeoutError("Function execution timed out")
-    
     # Parse the evaluation functions
     eval_func_data = data.get('eval_func', [])
-    print(f"eval_func_data: {eval_func_data}")
     if not eval_func_data:
         print("No evaluation functions found")
         return None
     
-    # Process eval_func list similar to the original code
-    eval_funcs = []
-    
-    # Handle eval_func in format from original code: list of (func, score) tuples
-    for func, score in eval_func_data:
-        local_vars = {}
-        try:
-            exec(func, globals(), local_vars)
-            if 'evaluate' in local_vars:
-                eval_funcs.append(local_vars['evaluate'])
-        except Exception as e:
-            print(f"Error parsing evaluation function: {e}")
-    
-    if not eval_funcs:
-        print("No valid evaluation functions found")
-        return None
+    # Use FunctionExecutor for safe function execution
+    executor = FunctionExecutor()
     
     # Run each evaluation function and collect results
     acc = []
-    for eval_func in eval_funcs:
+    for func in eval_func_data:
         try:
-            signal.signal(signal.SIGALRM, timeout_handler)
-            signal.alarm(5)  # 5 second timeout
-            res = eval_func(response)
+            # Execute function with timeout protection using the new method
+            result = executor.execute_with_response(func, response, log_errors=True)
+            if result is not None:
+                acc.append(result)
         except Exception as e:
-            print(f"Evaluation error: {e}")
-            res = None
-        finally:
-            signal.alarm(0)  # Disable the alarm
-        
-        if res is not None:
-            try:
-                acc.append(int(res))
-            except:
-                continue
+            print(f"Error executing evaluation function: {e}")
+            continue
     
     # Calculate accuracy as in the original code
+    print(f"Accuracy scores: {acc}")
     acc_value = np.mean(acc) if acc else 0
     
     # Filter out responses with acc <= 0
@@ -110,15 +86,15 @@ Please only provide a score in the format `Score: {{score}}` without any other c
 
     return scoring_messages
 
-def response_score_filter(scored_text: str, score_thresh: float) -> Optional[str]:
+def extract_score(scored_text: str) -> Optional[int]:
     """
-    Extracts the score from the scored text and returns the response if score > 8.
+    Extracts the score from the scored text
     
     Args:
         scored_text: The text containing the score
         
     Returns:
-        The response if score > 8, otherwise None
+        The extracted score
     """
     # Extract the score using regex
     score_match = re.search(r'Score: (\d+)$', scored_text)
@@ -128,8 +104,7 @@ def response_score_filter(scored_text: str, score_thresh: float) -> Optional[str
     
     try:
         score = int(score_match.group(1))
-        if score >= score_thresh:  # Quality score threshold
-            return scored_text
+    except Exception as e:
+        print(f"Error extracting score: {e}")
         return None
-    except:
-        return None
+    return score

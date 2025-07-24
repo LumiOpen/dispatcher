@@ -75,11 +75,12 @@ The final output of Phase 1 includes:
 
 ## Phase 2: Generating Responses and Scoring
 
-> **Note:** This is a prototype that might not function yet. The flow has not been tested and most likely requires some more implementation (data format handling, etc.)
-
 Phase 2 is implemented as a [`GeneratorTask`](src/autoif_generator_task.py) utilizing the multi-step inference functionality of the dispatcher.
 
-The launch script is `src/launch_scripts/launch_generate_query_responses.sh`
+```sh
+cd src
+sbatch launch_generate_query_responses.sh
+```
 
 ### Process Steps
 
@@ -93,10 +94,11 @@ The launch script is `src/launch_scripts/launch_generate_query_responses.sh`
 
 3. **Response Scoring**:
    - Use another LLM generation to score each verified response for relevance and quality
-   - Filter out low-scoring responses
-   - Format final dataset for supervised fine-tuning
-   - Output: `data/filtered_responses.jsonl`
+   - Append the score to the final result
+   - Output: `data/scored_responses.jsonl`
 
+4. **Final Output**:
+   - Run `python3 src/build_sft.py data/scored_responses.jsonl --output data/final_sft.jsonl --score_threshold 8` to build the final output for fine-tuning, scored above 8 out of 10 by an LLM judge.
 
 ## Requirements
 
