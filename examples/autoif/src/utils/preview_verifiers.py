@@ -12,6 +12,9 @@ import os
 import sys
 from pathlib import Path
 from typing import Dict, List, Any
+# Add the parent directory of 'src' to sys.path
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
+from src.utils.response_parser import ResponseParser
 
 
 def format_python_code(code: str) -> str:
@@ -55,6 +58,47 @@ def print_test_cases(cases: List[Dict[str, Any]]) -> None:
         print(f"  Input:  {repr(input_val)}")
         print(f"  Output: {output_val}")
 
+def parse_raw_verifier_data(raw_data: Dict[str, Any]) -> Dict[str, Any]:
+    """Parse raw verifier data into processed format."""
+    parser = ResponseParser()
+    
+    # Extract instruction information from 'original' object
+    original = raw_data.get('original', {})
+    instruction_id = original.get('instruction_id', raw_data.get('instruction_id', ''))
+    instruction = original.get('instruction', raw_data.get('instruction', ''))
+    
+    # Parse responses into eval_funcs and cases
+    responses = raw_data.get('responses', [])
+    eval_funcs = []
+    cases = []
+    
+    for response in responses:
+        parsed_result, _ = parser.parse_function_and_cases(response, instruction_id)
+        if parsed_result:
+            if 'func' in parsed_result:
+                eval_funcs.append(parsed_result['func'])
+            if 'cases' in parsed_result:
+                cases.extend(parsed_result['cases'])
+    
+    # Create processed format
+    processed_data = {
+        'instruction_id': instruction_id,
+        'instruction': instruction,
+        'eval_func': eval_funcs,
+        'cases': cases
+    }
+    
+    # Copy over filtering information if present
+    if 'filtered' in raw_data:
+        processed_data['filtered'] = raw_data['filtered']
+    if 'reason' in raw_data:
+        processed_data['reason'] = raw_data['reason']
+    
+    return processed_data
+
+def is_raw_format(data: Dict[str, Any]) -> bool:
+    """Determine if the data is in raw format (has 'original' and 'responses') or processed format."""
+    return 'original' in data and 'responses' in data
 
 def generate_python_file(verifier_data: Dict[str, Any], output_path: str, max_func: int = None) -> None:
     """Generate a Python file with numbered evaluation functions and test examples."""
@@ -101,18 +145,36 @@ def generate_python_file(verifier_data: Dict[str, Any], output_path: str, max_fu
             for case in cases:
                 input_val = case.get('input', '')
                 output_val = case.get('output', '')
-                f.write(f'        {{"input": {repr(input_val)}, "expected": {output_val}}},\n')
+                f.write(f'        {{"input": {repr(input_val)}, "output": {output_val}}},\n')
             
             f.write('    ]\n\n')
-            
+            f.write(f'    print("Instruction: {instruction}")\n')
             # Generate test code for each function
             for i in range(1, len(eval_funcs) + 1):
-                f.write(f'    print("Testing evaluate_{i}:")\n')
-                f.write('    for case in test_cases:\n')
-                f.write(f'        result = evaluate_{i}(case["input"])\n')
-                f.write('        status = "PASS" if result == case["expected"] else "FAIL"\n')
-                f.write('        print(f"  {case[\\"input\\"][:50]...} -> {result} ({status})")\n')
-                f.write('    print()\n\n')
+                f.write(f'    print("evaluate_{i}")\n')
+                f.write('    passed = 0\n')
+                f.write('    failed = 0\n')
+                f.write('    failed_example = None\n')
+                f.write('    \n')
+                f.write('    for test_idx, case in enumerate(test_cases, 1):\n')
+                f.write('        try:\n')
+                f.write(f'            result = evaluate_{i}(case["input"])\n')
+                f.write('            if result == case["output"]:\n')
+                f.write('                passed += 1\n')
+                f.write('            else:\n')
+                f.write('                failed += 1\n')
+                f.write('                if failed_example is None:\n')
+                f.write('                    failed_example = f"  input={case[\'input\']}, got={result}, expected={case[\'output\']}"\n')
+                f.write('        except Exception as e:\n')
+                f.write('            failed += 1\n')
+                f.write('            if failed_example is None:\n')
+                f.write('                failed_example = f"  input={case[\'input\']}, ERROR: {e}, expected={case[\'output\']}"\n')
+                f.write('    \n')
+                f.write('    print(f"  Test Cases: {passed} passed, {failed} failed")\n')
+                f.write('    if failed_example:\n')
+                f.write('        print("  Example of failure:")\n')
+                f.write('        print(failed_example)\n')
+                f.write('    print()\n')
 
 
 def main():
@@ -157,9 +219,20 @@ def main():
                 
                 try:
                     data = json.loads(line)
-                    if data.get('instruction_id') == args.instruction_id:
-                        verifier_data = data
-                        break
+                    
+                    # Handle both raw and processed formats
+                    if is_raw_format(data):
+                        # Raw format: check instruction_id in 'original'
+                        original = data.get('original', {})
+                        if original.get('instruction_id') == args.instruction_id:
+                            verifier_data = parse_raw_verifier_data(data)
+                            break
+                    else:
+                        # Processed format: check instruction_id directly
+                        if data.get('instruction_id') == args.instruction_id:
+                            verifier_data = data
+                            break
+                            
                 except json.JSONDecodeError as e:
                     print(f"Warning: Invalid JSON on line {line_num}: {e}", file=sys.stderr)
                     continue
@@ -171,7 +244,7 @@ def main():
     if verifier_data is None:
         print(f"Error: No verifier found with instruction_id '{args.instruction_id}'", file=sys.stderr)
         sys.exit(1)
-    
+
     eval_funcs = verifier_data.get('eval_func', [])
     cases = verifier_data.get('cases', [])
     instruction = verifier_data.get('instruction', '')
