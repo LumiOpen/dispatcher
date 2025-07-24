@@ -1,625 +1,463 @@
+"""
+AutoIF Cross-Validation Script
+
+This script performs cross-validation of verification functions and test cases.
+It validates that functions can correctly evaluate test cases with high accuracy.
+
+Cross-validation process:
+1. Parse functions and test cases from LLM responses
+2. Validate function safety (no harmful code patterns)
+3. Deduplicate test cases
+4. Filter test cases that pass at least MIN_FUNCTIONS functions
+5. Keep only functions that meet ACCURACY_THRESHOLD (how many test cases they pass)
+6. Output results for further processing
+
+Author: AutoIF Team
+"""
+
 import os
 import argparse
 import json
-import ast
 import re
-import random
-import signal
-import logging
-from collections import Counter
-from typing import List, Dict, Any, Tuple, Optional
+from typing import List, Dict, Any, Optional
 
-# Set up logging
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
+from src.utils.constants import (
+    REASON_NO_VALID_FUNCTIONS, REASON_NO_VALID_TEST_CASES,
+    REASON_INSUFFICIENT_FUNCTIONS, REASON_INSUFFICIENT_TEST_CASES,
+    REASON_NO_PASSING_TEST_CASES, REASON_NO_FUNCTIONS_MEET_ACCURACY,
+    REASON_PARSE_FAILURE
+)
+from src.utils.logging_utils import CrossValidationLogger
+from src.utils.response_parser import ResponseParser
+from src.utils.function_executor import FunctionExecutor
+from src.utils.lang_id import detect_language
 
-# ---- Constants ----
-# Thresholds
-FUNCTION_TIMEOUT = 5  # seconds
-MIN_FUNCTIONS = 1 # original autoif 3
-MIN_TEST_CASES = 1 # original autoif 10
-ACCURACY_THRESHOLD = 0.8
+# Cross validation configuration, set in parent script ../phase1_pipeline.sh
+MIN_FUNCTIONS = int(os.getenv('MIN_FUNCTIONS', 1))  # Minimum number of functions required
+MIN_TEST_CASES = int(os.getenv('MIN_TEST_CASES', 1))  # Minimum number of test cases required
+ACCURACY_THRESHOLD = float(os.getenv('ACCURACY_THRESHOLD', 0.8))  # Minimum accuracy threshold for functions
+LANGUAGE = os.getenv('LANGUAGE', 'eng')  # Language code for filtering test cases
 
-# ---- Filter reason codes ----
-# Parser errors
-REASON_FUNCTION_PARSE_FAILURE = "function_parse_failure"  # Failed to parse function
-REASON_CASES_PARSE_ERROR = "cases_parse_error"  # Failed to parse test cases
-REASON_PARSE_FAILURE = "parse_failure"  # Failed to parse response for other reason
-
-# Function errors
-REASON_HARMFUL_CODE_DETECTED = "harmful_code_detected"  # Function contains potentially harmful imports/code
-REASON_FUNCTION_EXECUTION_ERROR = "function_execution_error"  # Error when executing function definition
-REASON_MISSING_EVALUATE_FUNCTION = "missing_evaluate_function"  # Function doesn't contain evaluate() function
-REASON_FUNCTION_TIMEOUT = "function_timeout"  # Function execution exceeded time limit
-
-# Test case errors
-REASON_NO_VALID_TEST_CASES = "no_valid_test_cases"  # No valid test cases found
-REASON_INVALID_TEST_CASE_FORMAT = "invalid_test_case_format"  # Test case has invalid format
-REASON_MISSING_TEST_CASE_FIELDS = "missing_test_case_fields"  # Test case missing input or output fields
-REASON_NON_FINNISH_TEST_CASES = "non_finnish_test_cases"  # Test cases aren't in Finnish
-
-# Cross-validation errors
-REASON_NO_VALID_FUNCTIONS = "no_valid_functions"  # No valid functions found at all
-REASON_INSUFFICIENT_FUNCTIONS = "insufficient_functions"  # Not enough valid functions
-REASON_INSUFFICIENT_TEST_CASES = "insufficient_test_cases"  # Not enough valid test cases
-REASON_NO_PASSING_TEST_CASES = "no_passing_test_cases"  # No test cases pass any function
-REASON_LOW_FUNCTION_ACCURACY = "low_function_accuracy"  # Function accuracy below threshold
-REASON_NO_FUNCTIONS_MEET_ACCURACY = "no_functions_meet_accuracy_threshold"  # No functions meet accuracy threshold
-
-# Error tracking stats
-error_stats = {
-    "parsing_errors": {
-        "function": Counter(),
-        "test_case": Counter(),
-    },
-    "function_errors": Counter(),
-    "test_case_errors": Counter(),
-    "cross_validation_errors": Counter(),
-    "details": {},  # Store detailed error messages by category
-    "counts": {
-        "total_functions_attempted": 0,
-        "total_testcases_attempted": 0,
-        "total_function_executions": 0,
-        "total_testcase_validations": 0
-    }
-}
-
-class TimeoutError(Exception):
-    pass
-
-def timeout_handler(signum, frame):
-    """Handler for timeout signal."""
-    raise TimeoutError("Function execution timed out")
-
-def log_error(category: str, reason: str, detail: str = None, subcategory: str = None):
-    """Log an error to both the error stats counter and the detailed log."""
-    if subcategory:
-        if category not in error_stats or subcategory not in error_stats[category]:
-            error_stats[category][subcategory] = Counter()
-        error_stats[category][subcategory][reason] += 1
-        log_prefix = f"{category}:{subcategory}"
-    else:
-        if category not in error_stats:
-            error_stats[category] = Counter()
-        error_stats[category][reason] += 1
-        log_prefix = category
+class CrossValidationResult:
+    """Container for cross-validation results of a single instruction."""
     
-    if detail:
-        if reason not in error_stats["details"]:
-            error_stats["details"][reason] = []
-        # Limit number of detailed messages stored to avoid memory issues
-        if len(error_stats["details"][reason]) < 20:  # Store up to 20 examples per error type
-            error_stats["details"][reason].append(detail)
+    def __init__(self, instruction_id: str, instruction: str):
+        self.instruction_id = instruction_id
+        self.instruction = instruction
+        self.filtered = True
+        self.reason = None
+        # Raw data (all parsed functions and cases before any filtering)
+        self.raw_eval_func = []
+        self.raw_cases = []
+        # Filtered data (functions and cases after cross-validation)
+        self.eval_func = []
+        self.cases = []
     
-    # Log to the error log file with clearer category/subcategory
-    if detail:
-        logger.error(f"{log_prefix} - {reason}: {detail}")
-    else:
-        logger.error(f"{log_prefix} - {reason}")
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for JSON serialization with raw data."""
+        return {
+            'instruction_id': self.instruction_id,
+            'instruction': self.instruction,
+            'filtered': self.filtered,
+            'reason': self.reason,
+            'eval_func': self.raw_eval_func,  # Use raw data for "all" output
+            'cases': self.raw_cases
+        }
+    
+    def to_filtered_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for filtered output with only validated data."""
+        return {
+            'instruction_id': self.instruction_id,
+            'instruction': self.instruction,
+            'eval_func': self.eval_func,
+            'cases': self.cases
+        }
+    
+    def set_raw_data(self, functions: List[str], test_cases: List[Dict[str, Any]]):
+        """Set the raw parsed functions and test cases."""
+        self.raw_eval_func = functions
+        self.raw_cases = test_cases
+    
+    def mark_passed(self, functions: List[str], test_cases: List[Dict[str, Any]]):
+        """Mark the result as passed with valid functions and test cases."""
+        self.filtered = False
+        self.reason = None
+        self.eval_func = functions
+        self.cases = test_cases
 
-def parse_function_and_cases(response: str) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
-    """Parse function and test cases from response string. Returns (data, reason)."""
-    # Track errors for function and cases separately
-    function_errors = []
-    cases_errors = []
+
+class InstructionProcessor:
+    """Processes a single instruction through the cross-validation pipeline."""
     
-    # ---------- Version 2: Parse separate Python and JSON blocks ----------
-    # Extract function from Python code block
-    func_match = re.findall(r'```python(.*?)```', response, re.DOTALL)
-    # Extract test cases from JSON code block
-    json_match = re.findall(r'```json(.*?)```', response, re.DOTALL)
+    def __init__(self, logger: CrossValidationLogger):
+        self.logger = logger
+        self.parser = ResponseParser(logger)
+        self.executor = FunctionExecutor(logger)
     
-    # If we have both blocks, we can process them separately
-    if func_match and json_match:
-        func_str = None
-        cases_data = None
+    def process_instruction(self, data: Dict[str, Any]) -> CrossValidationResult:
+        """
+        Process a single instruction through the complete cross-validation pipeline.
         
-        # Parse function
+        Steps:
+        1. Extract instruction data
+        2. Parse all responses to get functions and test cases
+        3. Check minimum requirements and store raw parsed data
+        4. Validate function safety
+        5. Filter test cases by language
+        6. Deduplicate test cases
+        7. Cross-validate functions against test cases
+        8. Filter by accuracy threshold
+        
+        Note: Raw parsed data (before filtering) is always preserved in the result
+        for the "all" output file, while filtered data is used for validation.
+        
+        Args:
+            data: Instruction data with responses
+            
+        Returns:
+            CrossValidationResult with validation outcome and both raw and filtered data
+        """
         try:
-            func_str = func_match[0].strip()
-        except IndexError as e:
-            function_errors.append(f"Failed to parse Python code block: {str(e)}")
-        
-        # Parse cases
-        if func_str:  # Only try to parse cases if function parsing was successful
-            try:
-                cases_json = json_match[0].strip()
-                cases_data = json.loads(cases_json)
-                
-                if 'cases' not in cases_data:
-                    cases_errors.append("Missing 'cases' key in JSON block")
-                else:
-                    # Both function and cases parsed successfully
-                    return {"func": func_str, "cases": cases_data['cases']}, None
-            except (IndexError, json.JSONDecodeError) as e:
-                cases_errors.append(f"Failed to parse JSON code block: {str(e)}")
-    elif func_match and not json_match:
-        function_errors.append("Found Python block but missing JSON block")
-    elif not func_match and json_match:
-        function_errors.append("Missing Python block")
-    
-    # ---------- Version 1: Try as a complete JSON object ----------
-    try:
-        data = json.loads(response)
-        
-        if 'func' in data and 'cases' in data:
-            return data, None
-        elif 'func' not in data:
-            function_errors.append("Missing 'func' key in JSON")
-        elif 'cases' not in data:
-            cases_errors.append("Missing 'cases' key in JSON")
-    except json.JSONDecodeError as e:
-        function_errors.append(f"Failed to parse response as JSON: {str(e)}")
-        
-    # ---------- Version 1: Parse JSON from markdown block ----------
-    try:
-        json_dict = re.findall(r'```json(.*?)```', response, re.DOTALL)
-        if json_dict:
-            data = json.loads(json_dict[0].strip())
-            if 'func' in data and 'cases' in data:
-                return data, None
-            elif 'func' not in data:
-                function_errors.append("Missing 'func' key in markdown JSON block")
-            elif 'cases' not in data:
-                cases_errors.append("Missing 'cases' key in markdown JSON block")
-    except (IndexError, json.JSONDecodeError) as e:
-        function_errors.append(f"Failed to parse markdown JSON: {str(e)}")
-        
-    # ---------- Version 1: Try regex extraction ----------
-    func_match = re.search(r'"func"\s*:\s*"(.*?)"(?=\s*,|\s*})', response, re.DOTALL)
-    cases_match = re.search(r'"cases"\s*:\s*(\[.*?\])(?=\s*,|\s*})', response, re.DOTALL)
-    
-    if func_match and cases_match:
-        try:
-            func = func_match.group(1)
-            func = func.replace('\\n', '\n').replace('\\"', '"')
-            
-            cases_str = cases_match.group(1)
-            cases = ast.literal_eval(cases_str)
-            return {"func": func, "cases": cases}, None
-        except Exception as e:
-            function_errors.append(f"Failed to extract function with regex: {str(e)}")
-            cases_errors.append(f"Failed to evaluate cases with ast: {str(e)}")
-    elif func_match and not cases_match:
-        function_errors.append("Found function but couldn't extract cases with regex")
-    elif not func_match and cases_match:
-        function_errors.append("Found cases but couldn't extract function with regex")
-    
-    # If we get here, all parsing methods have failed
-    # Log function errors first if we have any
-    if function_errors:
-        combined_error = " | ".join(function_errors)
-        log_error("parsing_errors", REASON_FUNCTION_PARSE_FAILURE, f"Function parse failure: {combined_error}", "function")
-        return None, REASON_FUNCTION_PARSE_FAILURE
-    
-    # Otherwise log cases errors if we have those
-    if cases_errors:
-        combined_error = " | ".join(cases_errors)
-        log_error("parsing_errors", REASON_CASES_PARSE_ERROR, f"Cases parse failure: {combined_error}", "test_case")
-        return None, REASON_CASES_PARSE_ERROR
-    
-    # If we somehow get here with no specific errors (unlikely), use function parse failure as default
-    log_error("parsing_errors", REASON_FUNCTION_PARSE_FAILURE, "Unknown parsing failure", "function")
-    return None, REASON_FUNCTION_PARSE_FAILURE
-
-def is_safe_function(func_str: str) -> Tuple[bool, Optional[str]]:
-    """Check if function contains potentially harmful imports or operations."""
-    unsafe_patterns = ['requests', 'subprocess', 'os.', 'sys.']
-    
-    # Check for unsafe patterns
-    for pattern in unsafe_patterns:
-        if pattern in func_str.lower():
-            log_error("function_errors", REASON_HARMFUL_CODE_DETECTED, f"Found unsafe pattern '{pattern}' in function")
-            return False, REASON_HARMFUL_CODE_DETECTED
-            
-    return True, None
-
-def test_function(func_str: str, test_case: Dict[str, Any], func_idx: int = -1, case_idx: int = -1) -> Tuple[bool, Optional[str]]:
-    """Test if a function passes a test case. Returns (passed, reason)."""
-    id_str = f"func{func_idx}_case{case_idx}" if func_idx >= 0 and case_idx >= 0 else ""
-    
-    error_stats["counts"]["total_testcase_validations"] += 1
-    
-    if not isinstance(test_case, dict):
-        log_error("test_case_errors", REASON_INVALID_TEST_CASE_FORMAT, 
-                 f"{id_str} Test case is not a dict: {type(test_case)}")
-        return False, REASON_INVALID_TEST_CASE_FORMAT
-        
-    if 'input' not in test_case or 'output' not in test_case:
-        log_error("test_case_errors", REASON_MISSING_TEST_CASE_FIELDS, 
-                 f"{id_str} Missing input/output in test case")
-        return False, REASON_MISSING_TEST_CASE_FIELDS
-    
-    # Check if function is safe
-    is_safe, reason = is_safe_function(func_str)
-    if not is_safe:
-        return False, reason
-        
-    try:
-        error_stats["counts"]["total_function_executions"] += 1
-        
-        # Create a namespace for the function
-        namespace = {}
-        
-        # Execute the function definition
-        exec(func_str, namespace)
-        
-        # Get the evaluate function from the namespace
-        evaluate_func = namespace.get('evaluate')
-        if evaluate_func is None:
-            log_error("function_errors", REASON_MISSING_EVALUATE_FUNCTION, 
-                     f"{id_str} No evaluate function found")
-            return False, REASON_MISSING_EVALUATE_FUNCTION
-        
-        # Set up timeout
-        signal.signal(signal.SIGALRM, timeout_handler)
-        signal.alarm(FUNCTION_TIMEOUT)
-        
-        try:
-            # Run the test case
-            result = evaluate_func(test_case['input'])
-            # Normalize expected output
-            expected = test_case['output'] if isinstance(test_case['output'], bool) else test_case['output'].lower() == 'true'
-            
-            return result == expected, None
-        finally:
-            signal.alarm(0)  # Disable the alarm
-            
-    except TimeoutError:
-        log_error("function_errors", REASON_FUNCTION_TIMEOUT, 
-                 f"{id_str} Function timed out after {FUNCTION_TIMEOUT}s")
-        return False, REASON_FUNCTION_TIMEOUT
-    except Exception as e:
-        log_error("function_errors", REASON_FUNCTION_EXECUTION_ERROR, 
-                 f"{id_str} Execution error: {str(e)}")
-        return False, f"{REASON_FUNCTION_EXECUTION_ERROR}: {str(e)}"
-
-def deduplicate_test_cases(cases: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Deduplicate test cases using JSON serialization."""
-    seen = set()
-    result = []
-    for case in cases:
-        case_json = json.dumps(case, sort_keys=True)
-        if case_json not in seen:
-            seen.add(case_json)
-            result.append(case)
-    return result
-
-def cross_validate_verifiers(verifiers_file: str, output_all_file: str, output_filtered_file: str) -> List[Dict]:
-    """Cross-validate verification functions and test cases."""
-    # Initialize language identifier
-    # glot_client = InferenceClient('cis-lmu/glotlid')
-    
-    # Load verifier data
-    verifier_data = []
-    try:
-        with open(verifiers_file, 'r') as f:
-            for line in f:
-                try:
-                    verifier_data.append(json.loads(line))
-                except json.JSONDecodeError as e:
-                    log_error("parsing_errors", REASON_PARSE_FAILURE, f"Failed to parse input line: {str(e)}", "function")
-    except FileNotFoundError:
-        logger.error(f"Error: Verifiers file {verifiers_file} not found")
-        exit(1)
-    
-    # Process each verifier
-    all_results = []
-    filtered_verifiers = []
-    
-    total_count = len(verifier_data)
-    filtered_count = 0
-    
-    logger.info(f"Processing {total_count} verifier entries")
-    
-    for data_idx, data in enumerate(verifier_data):
-        logger.info(f"Processing item {data_idx}/{total_count}")
-            
-        instruction = None
-        instruction_id = None
-        try:
+            # Step 1: Extract instruction information
             original = data['original']
             instruction = original['instruction']
             instruction_id = original['instruction_id']
             
-            # Prepare result object with filtered=True by default
-            result = {
-                'instruction_id': instruction_id,
-                'instruction': instruction,
-                'filtered': True,
-                'reason': None,
-                'eval_func': [],
-                'cases': []
-            }
+            result = CrossValidationResult(instruction_id, instruction)
             
-            # Track reasons for this specific instruction
-            instruction_reasons = {
-                "parsing": [],
-                "function": [],
-                "test_case": [],
-                "cross_validation": []
-            }
+            # Step 2: Parse responses to extract functions and test cases
+            # In this step parsing errors can occur, which will be logged
+            functions, cases = self._parse_responses(data.get('responses', []), instruction_id)
             
-            valid_funcs = []
-            all_test_cases = []
+            # Step 3: Check minimum requirements (also stores raw data)
+            # empty (or too few) functions or test cases will result in an early exit. "Too few" is controlled by MIN_FUNCTIONS and MIN_TEST_CASES.
+            validation_result = self._validate_minimum_requirements(
+                functions, cases, result
+            )
+            if validation_result:
+                # Log the filtering with specific reason
+                self.logger.log_filtered(instruction_id, validation_result.reason)
+                return validation_result
             
-            # Process each response for this instruction
-            response_idx = 0
-            for response in data.get('responses', []):
-                # Count the attempted function parsing
-                error_stats["counts"]["total_functions_attempted"] += 1
-                
-                parsed, parse_reason = parse_function_and_cases(response)
-                
-                # Record parsing failures
-                if parse_reason:
-                    instruction_reasons["parsing"].append(parse_reason)
-                    continue
-                    
-                if not parsed:
-                    instruction_reasons["parsing"].append(REASON_PARSE_FAILURE)
-                    continue
-                
-                try:   
-                    func_str = parsed['func']
-                    test_cases = parsed['cases']
-                
-                    # Skip unsafe functions
-                    is_safe, safety_reason = is_safe_function(func_str)
-                    if not is_safe:
-                        instruction_reasons["function"].append(safety_reason)
-                        continue
-                
-                    # Count the attempted test cases
-                    error_stats["counts"]["total_testcases_attempted"] += len(test_cases)
-                    
-                    # Check if test cases are in Finnish
-                    valid_cases = []
-                    for case_idx, case in enumerate(test_cases):
-                        # if case.get('input') and is_finnish(case['input'], glot_client):
-                        #     valid_cases.append(case)
-                        # else:
-                        #     instruction_reasons["test_case"].append(REASON_NON_FINNISH_TEST_CASES)
-                        #     continue
-                        valid_cases.append(case)
-                    
-                    if not valid_cases:
-                        instruction_reasons["test_case"].append(REASON_NO_VALID_TEST_CASES)
-                        continue
-                        
-                    # Add to collection
-                    valid_funcs.append(func_str)
-                    all_test_cases.extend(valid_cases)
-                    
-                    response_idx += 1
-                    
-                except (KeyError, TypeError) as e:
-                    # Handle the case when the parsed data structure is unexpected
-                    error_msg = f"invalid_data_structure: {str(e)}"
-                    instruction_reasons["parsing"].append(error_msg)
-                    log_error("parsing_errors", "invalid_data_structure", str(e), "function")
-                    continue
+            # Step 4: Check function safety
+            safe_functions = self._filter_safe_fn(functions, instruction_id)
+            if not safe_functions:
+                result.reason = "no_safe_functions"
+                self.logger.log_filtered(instruction_id, "no_safe_functions")
+                return result
+
+            # We are leaving out language identification for test cases - we do not need our test cases to be in the target language
             
-            # Deduplicate test cases
-            all_test_cases = deduplicate_test_cases(all_test_cases)
+            # Step 5: Deduplicate test cases
+            unique_cases = self._deduplicate_test_cases(cases)
+            if not unique_cases:
+                result.reason = "no_test_cases_after_deduplication"
+                self.logger.log_filtered(instruction_id, "no_test_cases_after_deduplication")
+                return result
             
-            # Cross validate functions against test cases
-            if not valid_funcs:
-                # Use collected reasons if available
-                if instruction_reasons["function"]:
-                    result['reason'] = instruction_reasons["function"][0]
-                    log_error("cross_validation_errors", REASON_NO_VALID_FUNCTIONS, f"No valid functions due to function errors")
-                elif instruction_reasons["parsing"]:
-                    result['reason'] = instruction_reasons["parsing"][0]
-                    log_error("cross_validation_errors", REASON_NO_VALID_FUNCTIONS, f"No valid functions due to parsing errors")
-                else:
-                    result['reason'] = REASON_NO_VALID_FUNCTIONS
-                    log_error("cross_validation_errors", REASON_NO_VALID_FUNCTIONS, f"No valid functions found")
-                filtered_count += 1
-                all_results.append(result)
-                continue
-                
-            if not all_test_cases:
-                result['reason'] = REASON_NO_VALID_TEST_CASES
-                log_error("cross_validation_errors", REASON_NO_VALID_TEST_CASES, f"No valid test cases")
-                filtered_count += 1
-                all_results.append(result)
-                continue
-                
-            if len(valid_funcs) < MIN_FUNCTIONS:
-                reason = f"{REASON_INSUFFICIENT_FUNCTIONS}_{len(valid_funcs)}_of_{MIN_FUNCTIONS}"
-                result['reason'] = reason
-                log_error("cross_validation_errors", REASON_INSUFFICIENT_FUNCTIONS, f"Only {len(valid_funcs)} of {MIN_FUNCTIONS} required functions")
-                filtered_count += 1
-                all_results.append(result)
-                continue
-                
-            if len(all_test_cases) < MIN_TEST_CASES:
-                reason = f"{REASON_INSUFFICIENT_TEST_CASES}_{len(all_test_cases)}_of_{MIN_TEST_CASES}"
-                result['reason'] = reason
-                log_error("cross_validation_errors", REASON_INSUFFICIENT_TEST_CASES, f"Only {len(all_test_cases)} of {MIN_TEST_CASES} required test cases")
-                filtered_count += 1
-                all_results.append(result)
-                continue
-                
-            final_funcs = []
-            final_cases = []
+            # Step 6: Cross-validate functions against test cases
+            final_functions, final_cases = self._cross_validate_functions_and_cases(
+                safe_functions, unique_cases, instruction_id
+            )
             
-            # Keep only test cases that pass at least one function
-            # Use function indices in logging
-            for case_idx, case in enumerate(all_test_cases):
-                case_passes = False
-                for func_idx, func in enumerate(valid_funcs):
-                    passed, _ = test_function(func, case, func_idx, case_idx)
-                    if passed:
-                        case_passes = True
-                        break
-                
-                if case_passes:
-                    final_cases.append(case)
+            # Step 7: Check if any functions meet accuracy threshold
+            if not final_functions:
+                result.reason = REASON_NO_FUNCTIONS_MEET_ACCURACY
+                self.logger.log_filtered(instruction_id, REASON_NO_FUNCTIONS_MEET_ACCURACY)
+                return result
             
-            if not final_cases:
-                result['reason'] = REASON_NO_PASSING_TEST_CASES
-                log_error("cross_validation_errors", REASON_NO_PASSING_TEST_CASES, f"No test cases pass any function")
-                filtered_count += 1
-                all_results.append(result)
-                continue
+            # Success: mark as passed
+            result.mark_passed(final_functions, final_cases)
+            return result
             
-            # Keep only functions with accuracy > threshold
-            valid_func_found = False
-            for func_idx, func in enumerate(valid_funcs):
-                if not final_cases:
-                    continue
-                    
-                correct = 0
-                for case_idx, case in enumerate(final_cases):
-                    passed, _ = test_function(func, case, func_idx, case_idx)
-                    if passed:
-                        correct += 1
-                        
-                accuracy = correct / len(final_cases)
-                logger.info(f"Function {func_idx}: {correct}/{len(final_cases)} = {accuracy:.2f} accuracy")
-                
-                if accuracy >= ACCURACY_THRESHOLD:
-                    final_funcs.append(func)
-                    valid_func_found = True
-            
-            if not valid_func_found:
-                result['reason'] = REASON_NO_FUNCTIONS_MEET_ACCURACY
-                log_error("cross_validation_errors", REASON_NO_FUNCTIONS_MEET_ACCURACY, f"No functions meet accuracy threshold")
-                filtered_count += 1
-                all_results.append(result)
-                continue
-            
-            # This verifier passes all checks
-            result['filtered'] = False
-            result['reason'] = None
-            result['eval_func'] = final_funcs
-            result['cases'] = final_cases
-            
-            all_results.append(result)
-            
-            # Add to filtered list
-            filtered_entry = {
-                'instruction_id': instruction_id,
-                'instruction': instruction,
-                'eval_func': final_funcs,
-                'cases': final_cases
-            }
-            filtered_verifiers.append(filtered_entry)
         except Exception as e:
-            # Catch any unexpected errors during processing
-            error_msg = f"Unexpected error processing entry {data_idx}: {str(e)}"
-            logger.error(error_msg)
-            if instruction:
-                result = {
-                    'instruction_id': instruction_id,
-                    'instruction': instruction,
-                    'filtered': True,
-                    'reason': f"unexpected_error: {str(e)}",
-                    'eval_func': [],
-                    'cases': []
-                }
-                all_results.append(result)
-                filtered_count += 1
+            self.logger.log_error(instruction_id or "unknown", f"unexpected_error: {str(e)}")
+            result = CrossValidationResult("unknown", "unknown")
+            result.reason = f"unexpected_error: {str(e)}"
+            # For unexpected errors, try to get instruction_id if available
+            try:
+                instruction_id = data['original']['instruction_id']
+                self.logger.log_filtered(instruction_id, "unexpected_error")
+            except:
+                pass
+            return result
     
-    # Write all results (including filtered ones with reasons)
+    def _parse_responses(self, responses: List[str], instruction_id: str) -> tuple[List[str], List[Dict[str, Any]]]:
+        """
+        Parse all responses to extract functions and cases.
+        Returns:
+            Tuple of (functions, cases)
+        """
+        functions = []
+        cases = []
+        
+        for response in responses:
+            # Parse function and test cases from response
+            parsed_data, parse_reason = self.parser.parse_function_and_cases(response, instruction_id)
+            if parse_reason or not parsed_data:
+                # Error already logged in parser
+                continue
+            if 'func' in parsed_data:
+                functions.append(parsed_data['func'])
+            if 'cases' in parsed_data:
+                cases.extend(parsed_data['cases'])
+            
+        return functions, cases
+
+    def _filter_safe_fn(self, functions: List[str], instruction_id: str) -> List[str]:
+        """
+        Check the safety of each function in the list.
+        
+        Args:
+            functions: List of function strings to validate
+            instruction_id: ID of the instruction for logging
+        
+        Returns:
+            List of safe functions
+        """
+        safe_functions = []
+        for fn_str in functions:
+            # Validate function safety
+            is_safe, safety_reason = self.executor.is_safe_function(fn_str)
+            if not is_safe:
+                self.logger.log_error(instruction_id, f"Unsafe function detected: {safety_reason}")
+                continue
+            safe_functions.append(fn_str)
+        
+        return safe_functions
+
+    def _filter_cases_by_language(self, cases: List[Dict[str, Any]], instruction_id: str) -> List[Dict[str, Any]]:
+        """
+        Filter test cases by the specified language.
+        
+        Args:
+            cases: List of test case dictionaries
+            instruction_id: ID of the instruction for logging
+        
+        Returns:
+            List of test cases that match the specified language
+        """
+        # Validate if the test cases are in the expected language
+        valid_test_cases = []
+        for case in cases:
+            try:
+                lang_code1, lang_code2 = detect_language(case['input'])
+                # lang_cde1 is the three-letter code, lang_code2 is the two-letter code
+                if lang_code1 == LANGUAGE or (lang_code2 is not None and lang_code2 == LANGUAGE):
+                    valid_test_cases.append(case)
+            except Exception as e:
+                self.logger.log_error(instruction_id, f"Language detection error: {str(e)}")
+        
+        return valid_test_cases
+        
+    
+    def _validate_minimum_requirements(self, functions: List[str], test_cases: List[Dict[str, Any]], 
+                                     result: CrossValidationResult) -> Optional[CrossValidationResult]:
+        """Check if minimum requirements for functions and test cases are met."""
+        # Always store raw data, even if validation fails
+        result.set_raw_data(functions, test_cases)
+        
+        if not functions:
+            result.reason = REASON_NO_VALID_FUNCTIONS
+            return result
+        
+        if not test_cases:
+            result.reason = REASON_NO_VALID_TEST_CASES
+            return result
+        
+        if len(functions) < MIN_FUNCTIONS:
+            result.reason = f"{REASON_INSUFFICIENT_FUNCTIONS}_{len(functions)}_of_{MIN_FUNCTIONS}"
+            return result
+        
+        if len(test_cases) < MIN_TEST_CASES:
+            result.reason = f"{REASON_INSUFFICIENT_TEST_CASES}_{len(test_cases)}_of_{MIN_TEST_CASES}"
+            return result
+        
+        return None
+    
+    def _cross_validate_functions_and_cases(self, functions: List[str], test_cases: List[Dict[str, Any]], instruction_id: str) -> tuple[List[str], List[Dict[str, Any]]]:
+        """
+        Cross-validate functions against test cases.
+        
+        Steps:
+        1. Filter test cases that pass at least one function
+        2. Filter functions that meet accuracy threshold
+        
+        Returns:
+            Tuple of (final_functions, final_test_cases)
+        """
+        # Step 1: Keep only test cases that pass at least one function
+        passing_test_cases = self._filter_passing_test_cases(functions, test_cases)
+        
+        if not passing_test_cases:
+            num_functions_tested = len(functions)
+            num_test_cases_verified = len(test_cases)
+            num_failing_tests = len(test_cases)  # All tests failed
+            self.logger.log_cross_validation_error(
+                instruction_id, num_functions_tested, num_test_cases_verified, num_failing_tests
+            )
+            return [], []
+        
+        # Step 2: Keep only functions that meet accuracy threshold
+        accurate_functions = self._filter_accurate_functions(functions, passing_test_cases)
+        
+        return accurate_functions, passing_test_cases
+    
+    def _filter_passing_test_cases(self, functions: List[str], test_cases: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Filter test cases that pass at least one function."""
+        passing_cases = []
+        
+        for case_idx, test_case in enumerate(test_cases):
+            case_passes = False
+            for func_idx, function in enumerate(functions):
+                passed, _ = self.executor.test_function(function, test_case, func_idx, case_idx, log_errors=False)
+                if passed:
+                    case_passes = True
+                    break
+            
+            if case_passes:
+                passing_cases.append(test_case)
+        
+        return passing_cases
+    
+    def _filter_accurate_functions(self, functions: List[str], test_cases: List[Dict[str, Any]]) -> List[str]:
+        """Filter functions that meet the accuracy threshold."""
+        accurate_functions = []
+        
+        for func_idx, function in enumerate(functions):
+            correct = 0
+            for case_idx, test_case in enumerate(test_cases):
+                passed, _ = self.executor.test_function(function, test_case, func_idx, case_idx, log_errors=False)
+                if passed:
+                    correct += 1
+            
+            accuracy = correct / len(test_cases) if test_cases else 0
+            
+            if accuracy >= ACCURACY_THRESHOLD:
+                accurate_functions.append(function)
+        
+        return accurate_functions
+
+    def _deduplicate_test_cases(self, cases: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Deduplicate test cases using JSON serialization.
+        
+        Args:
+            cases: List of test case dictionaries
+            
+        Returns:
+            List of unique test cases
+        """
+        seen = set()
+        result = []
+        for case in cases:
+            case_json = json.dumps(case, sort_keys=True)
+            if case_json not in seen:
+                seen.add(case_json)
+                result.append(case)
+        return result
+
+
+def load_verifier_data(verifiers_file: str, logger: CrossValidationLogger) -> List[Dict[str, Any]]:
+    """Load verifier data from input file."""
+    verifier_data = []
+    line_number = 0
+    try:
+        with open(verifiers_file, 'r') as f:
+            for line in f:
+                line_number += 1
+                try:
+                    data = json.loads(line.strip())
+                    verifier_data.append(data)
+                except json.JSONDecodeError as e:
+                    # Try to extract instruction_id for logging if possible
+                    instruction_id = f"line_{line_number}"
+                    try:
+                        # Attempt partial parsing to get instruction_id
+                        if '"instruction_id"' in line:
+                            match = re.search(r'"instruction_id"\s*:\s*"([^"]+)"', line)
+                            if match:
+                                instruction_id = match.group(1)
+                    except:
+                        pass
+                    
+                    logger.log_error(instruction_id, f"Failed to parse input line {line_number}: {str(e)}")
+    except FileNotFoundError:
+        logger.log_error("unknown", f"Verifiers file {verifiers_file} not found")
+        raise
+    
+    return verifier_data
+
+
+def write_results(all_results: List[CrossValidationResult], filtered_results: List[CrossValidationResult],
+                 output_all_file: str, output_filtered_file: str, logger: CrossValidationLogger):
+    """Write results to output files."""
+    # Write all results with raw parsed data (no filtering applied to eval_func and cases)
     with open(output_all_file, 'w') as f:
         for result in all_results:
-            f.write(json.dumps(result) + '\n')
+            f.write(json.dumps(result.to_dict()) + '\n')
     
-    # Write filtered verifiers to file (only those that passed)
+    # Write only passed verifiers with filtered/validated data
     with open(output_filtered_file, 'w') as f:
-        for verifier in filtered_verifiers:
-            f.write(json.dumps(verifier) + '\n')
-    
-    # Print summary statistics
-    log_error_summary()
-    
-    logger.info(f"Total verifiers: {len(all_results)}")
-    print(f"Total verifiers: {len(all_results)}")
-    logger.info(f"Filtered verifiers: {filtered_count} ({filtered_count/len(all_results)*100:.1f}%)")
-    print(f"Filtered verifiers: {filtered_count} ({filtered_count/len(all_results)*100:.1f}%)")
-    logger.info(f"Passed verifiers: {len(filtered_verifiers)} ({len(filtered_verifiers)/len(all_results)*100:.1f}%)")
-    print(f"Passed verifiers: {len(filtered_verifiers)} ({len(filtered_verifiers)/len(all_results)*100:.1f}%)")
+        for result in filtered_results:
+            f.write(json.dumps(result.to_filtered_dict()) + '\n')
 
-def log_error_summary():
-    """Log a summary of all errors encountered during processing."""
-    total_functions = error_stats["counts"]["total_functions_attempted"]
-    total_test_cases = error_stats["counts"]["total_testcases_attempted"]
-    total_executions = error_stats["counts"]["total_function_executions"]
-    total_validations = error_stats["counts"]["total_testcase_validations"]
-    
-    summary = ["\n===== ERROR SUMMARY =====\n"]
-    
-    # Parsing errors summary
-    summary.append("PARSING ERRORS:")
-    
-    # Function parsing errors
-    func_parsing_errors = sum(error_stats["parsing_errors"]["function"].values())
-    summary.append(f"  Function parsing errors: {func_parsing_errors}/{total_functions} ({func_parsing_errors/total_functions*100:.1f}% failed)")
-    
-    if error_stats["parsing_errors"]["function"]:
-        for reason, count in error_stats["parsing_errors"]["function"].most_common():
-            summary.append(f"    {reason}: {count} ({count/total_functions*100:.1f}%)")
-            # Add examples
-            if reason in error_stats["details"] and error_stats["details"][reason]:
-                summary.append(f"      Examples:")
-                for i, example in enumerate(error_stats["details"][reason][:2]):
-                    summary.append(f"      {i+1}. {example[:100]}...")
-                    
-    # Test case parsing errors
-    test_parsing_errors = sum(error_stats["parsing_errors"]["test_case"].values())
-    summary.append(f"\n  Test case parsing errors: {test_parsing_errors}/{total_test_cases} ({test_parsing_errors/max(1,total_test_cases)*100:.1f}% failed)")
-    
-    if error_stats["parsing_errors"]["test_case"]:
-        for reason, count in error_stats["parsing_errors"]["test_case"].most_common():
-            summary.append(f"    {reason}: {count} ({count/max(1,total_test_cases)*100:.1f}%)")
-            # Add examples
-            if reason in error_stats["details"] and error_stats["details"][reason]:
-                summary.append(f"      Examples:")
-                for i, example in enumerate(error_stats["details"][reason][:2]):
-                    summary.append(f"      {i+1}. {example[:100]}...")
-    
-    # Function errors summary
-    summary.append("\nFUNCTION ERRORS:")
-    func_errors = sum(error_stats["function_errors"].values())
-    if error_stats["function_errors"]:
-        summary.append(f"  Total: {func_errors}/{total_executions} function executions failed ({func_errors/max(1,total_executions)*100:.1f}%)")
-        for reason, count in error_stats["function_errors"].most_common():
-            summary.append(f"    {reason}: {count} ({count/max(1,total_executions)*100:.1f}%)")
-            # Add examples
-            if reason in error_stats["details"] and error_stats["details"][reason]:
-                summary.append(f"      Examples:")
-                for i, example in enumerate(error_stats["details"][reason][:2]):
-                    summary.append(f"      {i+1}. {example[:100]}...")
-    else:
-        summary.append("  None")
-        
-    # Test case errors summary
-    summary.append("\nTEST CASE ERRORS:")
-    test_case_errors = sum(error_stats["test_case_errors"].values())
-    if error_stats["test_case_errors"]:
-        summary.append(f"  Total: {test_case_errors}/{total_validations} test case validations failed ({test_case_errors/max(1,total_validations)*100:.1f}%)")
-        for reason, count in error_stats["test_case_errors"].most_common():
-            summary.append(f"    {reason}: {count} ({count/max(1,total_validations)*100:.1f}%)")
-    else:
-        summary.append("  None")
-        
-    # Cross validation errors summary
-    summary.append("\nCROSS-VALIDATION ERRORS:")
-    if error_stats["cross_validation_errors"]:
-        for reason, count in error_stats["cross_validation_errors"].most_common():
-            summary.append(f"  {reason}: {count}")
-    else:
-        summary.append("  None")
 
-    summary.append("\n============================\n")
+def cross_validate_verifiers(verifiers_file: str, output_all_file: str, output_filtered_file: str):
+    """
+    Main cross-validation function.
     
-    # Log the summary
-    logger.info("\n".join(summary))
+    This function orchestrates the complete cross-validation process:
+    1. Load verifier data from input file
+    2. Process each instruction through the validation pipeline
+    3. Collect results and statistics
+    4. Write results to output files
+    5. Log comprehensive summary
+    """
+    # Set up logging
+    logfile = f"logs/{os.path.basename(output_all_file)}.log"
+    os.makedirs(os.path.dirname(logfile), exist_ok=True)
+    logger = CrossValidationLogger(logfile)
+    
+    # Load input data
+    verifier_data = load_verifier_data(verifiers_file, logger)
+    
+    # Initialize processor
+    processor = InstructionProcessor(logger)
+    
+    # Process each instruction
+    all_results = []
+    passed_results = []
+    
+    for data in verifier_data:
+        instruction_id = data['original']['instruction_id']
+        logger.increment_total_verifiers()
+        
+        result = processor.process_instruction(data)
+        all_results.append(result)
+        
+        if not result.filtered:
+            logger.increment_passed_verifiers()
+            passed_results.append(result)
+    
+    # Write results
+    write_results(all_results, passed_results, output_all_file, output_filtered_file, logger)
+    
+    # Log final summary only
+    logger.log_final_summary()
+    
+    total_count = len(all_results)
+    filtered_count = sum(1 for r in all_results if r.filtered)
+    passed_count = len(passed_results)
+    
+    print(f"Total verifiers: {total_count}")
+    print(f"Filtered verifiers: {filtered_count} ({filtered_count/total_count*100:.1f}%)")
+    print(f"Passed verifiers: {passed_count} ({passed_count/total_count*100:.1f}%)")
+    print(f"Full logfile available at: {logfile}")
+
 
 def main():
+    """Main entry point for the cross-validation script."""
     parser = argparse.ArgumentParser(description='Cross-validate verifiers and concatenate with queries')
     
     parser.add_argument('--verifiers_file', type=str, required=True,
@@ -630,29 +468,13 @@ def main():
                         help='Output file for filtered verifiers')
     
     args = parser.parse_args()
-
-    logfile = f"logs/{os.path.basename(args.output_all_file)}.log"
-
-    # Empty the log file before starting new processing
-    with open(logfile, 'w') as f:
-        # Just open in write mode to clear the file
-        pass
     
-    # Configure file logging
-    logger.handlers = []  # Clear any existing handlers
-    file_handler = logging.FileHandler(logfile)
-    file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
-    logger.addHandler(file_handler)
-    
-    logger.info(f"Starting cross-validation with MIN_FUNCTIONS={MIN_FUNCTIONS}, MIN_TEST_CASES={MIN_TEST_CASES}")
-    
-    # Cross-validate verifiers
+    # Run cross-validation
     cross_validate_verifiers(
         args.verifiers_file, 
         args.output_all_file, 
         args.output_filtered_file,
     )
-    print(f"Full logfile available at: {logfile}")
 
 if __name__ == "__main__":
     main()

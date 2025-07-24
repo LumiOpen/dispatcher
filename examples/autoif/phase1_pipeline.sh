@@ -53,6 +53,12 @@ export HF_HOME="/scratch/project_462000353/hf_cache"
 # Other config
 NUM_OF_AUGMENTED_INSTRUCTIONS=2
 
+# Verifier generation config
+export FUNCTION_TIMEOUT=5  # seconds
+export MIN_FUNCTIONS=1  # original autoif: 3
+export MIN_TEST_CASES=1  # original autoif: 10
+export ACCURACY_THRESHOLD=0.8
+
 # Checkpointing mechanism
 mkdir -p logs
 CHECKPOINT_FILE="logs/phase1_state_tracker.log"
