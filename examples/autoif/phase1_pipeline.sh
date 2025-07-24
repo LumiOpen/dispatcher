@@ -1,27 +1,54 @@
 #!/bin/bash
 
 # Phase 1 Pipeline Script
+RUNID="ifeval"
 
 # Default values
 LANGUAGE="en"
 MODEL="meta-llama/Llama-3.3-70B-Instruct"  # Default model
+SEED_FILE_DEFAULT="data/seed_instructions_${RUNID}.txt"
+AUGMENTED_INSTRUCTIONS_FILE_DEFAULT="data/augmented_instructions_${RUNID}.csv"
 
 # Parse command line arguments
-if [[ $# -eq 1 ]]; then
-    if [[ "$1" == "--help" ]]; then
-        echo "Usage: $0 <path/to/model>"
-        echo "  <path/to/model>    Specify the model to use (default is 'meta-llama/Llama-3.3-70B-Instruct')"
-        exit 0
-    else
-        MODEL="$1"
-    fi
-elif [[ $# -gt 1 ]]; then
-    echo "Error: Too many arguments provided"
-    echo "Usage: $0 <path/to/model>"
-    exit 1
-elif [[ $# -eq 0 ]]; then
-    echo "Using default model: $MODEL"
-fi
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --help)
+            echo "Usage: $0 [OPTIONS] [model_path]"
+            echo "Options:"
+            echo "  --seed <path>           Path to seed instructions file"
+            echo "  --augmented <path>      Path to augmented instructions file"
+            echo "  --help                  Show this help message"
+            echo ""
+            echo "Arguments:"
+            echo "  model_path              Specify the model to use (default: 'meta-llama/Llama-3.3-70B-Instruct')"
+            exit 0
+            ;;
+        --seed)
+            SEED_FILE_CUSTOM="$2"
+            shift 2
+            ;;
+        --augmented)
+            AUGMENTED_INSTRUCTIONS_FILE_CUSTOM="$2"
+            shift 2
+            ;;
+        -*)
+            echo "Error: Unknown option $1"
+            echo "Use --help for usage information"
+            exit 1
+            ;;
+        *)
+            if [[ -z "$MODEL_SET" ]]; then
+                MODEL="$1"
+                MODEL_SET=true
+                shift
+            else
+                echo "Error: Multiple model paths provided"
+                echo "Use --help for usage information"
+                exit 1
+            fi
+            ;;
+    esac
+done
 
 echo "Using model: $MODEL"
 
@@ -29,11 +56,11 @@ echo "Using model: $MODEL"
 VENV_DIR=".venv"
 REQUIREMENTS_FILE="requirements.txt"
 
-RUNID="ifeval"
-
-# Data files
-SEED_FILE="data/seed_instructions_${RUNID}.txt"
-AUGMENTED_INSTRUCTIONS_FILE="data/augmented_instructions_${RUNID}.csv"
+# Data files - use custom paths if provided, otherwise use defaults
+SEED_FILE="${SEED_FILE_CUSTOM:-$SEED_FILE_DEFAULT}"
+AUGMENTED_INSTRUCTIONS_FILE="${AUGMENTED_INSTRUCTIONS_FILE_CUSTOM:-$AUGMENTED_INSTRUCTIONS_FILE_DEFAULT}"
+echo "Using seed instructions file: $SEED_FILE"
+echo "Using augmented instructions file: $AUGMENTED_INSTRUCTIONS_FILE"
 VERIFIERS_ALL_FILE="data/verifiers_all_${RUNID}.jsonl"
 VERIFIERS_FILTERED_FILE="data/verifiers_filtered_${RUNID}.jsonl"
 VERIFIERS_QUERIES_FILE="data/verifiers_queries_${RUNID}.jsonl"
@@ -55,7 +82,7 @@ NUM_OF_AUGMENTED_INSTRUCTIONS=2
 
 # Checkpointing mechanism
 mkdir -p logs
-CHECKPOINT_FILE="logs/phase1_state_tracker.log"
+CHECKPOINT_FILE="logs/phase1_state_tracker_${RUNID}.log"
 touch "$CHECKPOINT_FILE"
 
 # Function to check if a step has been completed
