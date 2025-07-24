@@ -20,7 +20,6 @@ REASON_FUNCTION_TIMEOUT = "function_timeout"
 REASON_NO_VALID_TEST_CASES = "no_valid_test_cases"
 REASON_INVALID_TEST_CASE_FORMAT = "invalid_test_case_format"
 REASON_MISSING_TEST_CASE_FIELDS = "missing_test_case_fields"
-REASON_NON_FINNISH_TEST_CASES = "non_finnish_test_cases"
 
 # ---- Cross-Validation Error Reason Codes ----
 REASON_NO_VALID_FUNCTIONS = "no_valid_functions"
