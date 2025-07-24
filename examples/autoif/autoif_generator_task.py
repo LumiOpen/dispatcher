@@ -4,7 +4,7 @@ from typing import Any, Dict, Generator, List, Union
 from dispatcher.taskmanager.backend.request import Request, Response
 from dispatcher.taskmanager.task.base import GeneratorTask
 
-from src.utils.response_handler import response_verify, response_score_filter
+from src.utils.response_handler import response_verify, extract_score
 
 __all__ = ["GenerateQueryResponsesTask"]
 
@@ -25,8 +25,11 @@ class GenerateQueryResponsesTask(GeneratorTask):
         # processed
         # these are queries with verifiers of format
         # {
+        #     'instruction_id': instruction_id,
         #     'instruction': instruction,
         #     'query': query,
+        #     'query_response': query_response,
+        #     'query_metadata': query_metadata,
         #     'eval_func': 'def evaluate():...',
         #     'cases': [{'input', 'output'}],
         #     'prompt': prompt
@@ -49,34 +52,37 @@ class GenerateQueryResponsesTask(GeneratorTask):
         # based on by AutoIF/code/7_query_verification.py
         # the output can be None if the response did not pass the verification
         query_scoring_msgs = response_verify(queries_resp.get_text(), self.data)
+        response_text = queries_resp.get_text()
 
-        if query_scoring_msgs is None:
-            return None
-            # self.data['response'] = None
-            # return self.data
+        score = None
+        if query_scoring_msgs is not None:
+            # Step 2 - score query response
+            scored_resp: Response = yield Request({"messages": query_scoring_msgs, **self.GEN_PARAMS})
+            # this function extracts the score from the response
+            score = extract_score(scored_resp.get_text())
         
-        # Step 2 - score query response
-        # TODO Should this be multiple identical generations?
-        scored_resp: Response = yield Request({"messages": query_scoring_msgs, **self.GEN_PARAMS})
-        # Filter responses based on scores
-        # this function checks the scores and returns the response
-        # or returns None if the response does not pass the filter
-        filtered_response = response_score_filter(scored_resp.get_text(), score_thresh=8)
+        messages = [
+            {
+                "role": "user", 
+                "content": self.data.get("prompt")
+            },
+            {
+                "role": "assistant", 
+                "content": response_text
+                
+            },
+        ]
 
-        if filtered_response is None:
-            return None
-        else:
-            response_text = queries_resp.get_text()
-            return {"messages": 
-                    [
-                        {
-                            "role": "user", 
-                            "content": self.data.get("prompt")
-                        },
-                        {
-                            "role": "assistant", 
-                            "content": response_text
-                            
-                        },
-                    ],
-                }
+        return {
+            'instruction_id': self.data.get("instruction_id"),
+            'instruction': self.data.get("instruction"),
+            'query': self.data.get("query"),
+            'query_response': self.data.get("query_response"),
+            'query_metadata': self.data.get("query_metadata"),
+            'response': response_text,
+            'eval_func': self.data.get("eval_func"),
+            'cases': self.data.get("cases"),
+            'prompt': self.data.get("prompt"),
+            'messages': messages,
+            'score': score # None if errors
+        }

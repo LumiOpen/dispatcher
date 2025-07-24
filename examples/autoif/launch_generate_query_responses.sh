@@ -10,15 +10,16 @@
 #SBATCH --hint=nomultithread
 #SBATCH --gpus-per-node=mi250:8
 #SBATCH --account=project_462000353
-#SBATCH --output=logs/%j.out
-#SBATCH --error=logs/%j.err
+#SBATCH --output=logs/%j_responses.out
+#SBATCH --error=logs/%j_responses.err
 
 
 ###
 # configure the following.
 export LANGUAGE=eng
+export FUNCTION_TIMEOUT=5
 INPUT_FILE=data/verifiers_queries_ifeval.jsonl 
-OUTPUT_FILE=data/final_scored_responses.jsonl
+OUTPUT_FILE=data/scored_responses.jsonl
 TASK=autoif_generator_task.GenerateQueryResponsesTask
 
 # generation parameters
@@ -40,7 +41,7 @@ WORK_TIMEOUT=1800   # time for dispatcher to give up on a work item and reissue 
 # Typically on Lumi 70B = 4 GPUs, 34B = 2 GPUs, 8B = 1 GPU
 # --ntasks-per-node should be int(8 / GPUS_PER_TASK)
 #
-MODEL=meta-llama/Llama-3.1-8B-Instruct
+MODEL=meta-llama/Llama-3.3-70B-Instruct
 GPUS_PER_TASK=4     # enough for the model and large batch size
 MAX_MODEL_LEN=16384 # for efficiency, only as much as you think you need for efficiency
 
