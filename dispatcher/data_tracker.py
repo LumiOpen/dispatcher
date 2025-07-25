@@ -24,7 +24,7 @@ class DataTracker:
         self.checkpoint_path = checkpoint_path
         self.work_timeout = work_timeout
         self.checkpoint_interval = checkpoint_interval
-        self.max_retries=max_retries
+        self.max_retries = max_retries
 
         self.last_processed_work_id = -1   # Last contiguous work id written.
         self.next_work_id = 0              # Next work id to assign.
@@ -33,7 +33,7 @@ class DataTracker:
         self.last_checkpoint_time = time.time()
         self.expired_reissues = 0
 
-        self.issued = {}            # work_id -> (content, input_offset)
+        self.issued = {}            # work_id -> (content, input_offset, retry_count)
         self.issued_heap = []       # min-heap of (timestamp, work_id); uses lazy deletion
         self.pending_write = {}     # work_id -> result
 
@@ -95,16 +95,41 @@ class DataTracker:
             # check first for expired work needing to be reissued
             while self.issued_heap and len(batch) < batch_size:
                 heap_ts, work_id = self.issued_heap[0]
-                # lazy deleteion
-                if work_id not in self.issued:
+                
+                # Perform lazy deletion of stale entries from the timeout heap.
+                # An item is stale if it's already been written to disk (and thus
+                # is no longer in `self.issued`) or if it's safely completed
+                # and just waiting in the `pending_write` buffer.
+                if work_id not in self.issued or work_id in self.pending_write:
                     heapq.heappop(self.issued_heap)
                     continue
-                # see if the oldest iten in minheap needs to be reissued
-                if now - heap_ts > self.work_timeout:
+                
+                # If we are here, the item is genuinely in-flight. Check if it has expired.
+                if now - self.work_timeout > heap_ts:
                     heapq.heappop(self.issued_heap)
-                    content, input_offset = self.issued[work_id]
+                    content, input_offset, retry_count = self.issued[work_id]
+
+                    # Check if the item has exceeded its max retries.
+                    if self.max_retries != -1 and retry_count >= self.max_retries:
+                        logging.warning(f"Work item {work_id} exceeded max_retries ({self.max_retries}). Writing tombstone.")
+                        
+                        tombstone = {
+                            "__ERROR__": {
+                                "error": "max_retries_exceeded",
+                                "work_id": work_id,
+                                "original_content": content.strip()
+                            }
+                        }
+                        # Use the non-locking internal method to complete the work,
+                        # since we already hold the lock.
+                        self._complete_work_batch([(work_id, json.dumps(tombstone))])
+                        continue # Move to the next item in the heap.
+
+                    # If not discarded, reissue the work. This will increment its retry count.
                     batch.append(self._track_issued_work(now, content, input_offset, work_id))
                     continue
+                
+                # The oldest item on the heap has not expired, so we can stop checking.
                 break
 
             while len(batch) < batch_size:
@@ -123,37 +148,54 @@ class DataTracker:
 
     def _track_issued_work(self, when, content, input_offset, work_id=None):
         if work_id is None:
+            # This is brand new work.
             work_id = self.next_work_id
             self.next_work_id += 1
-            self.issued[work_id] = (content, input_offset)
+            retry_count = 0
+            self.issued[work_id] = (content, input_offset, retry_count)
         else:
-            # this is reissued work
+            # This is reissued work.
             self.expired_reissues += 1
             logging.info(f"Reissuing {work_id} after expiration ({self.expired_reissues=}).")
             assert(work_id in self.issued)
+            # Retrieve the old data and increment the retry count.
+            _content, _input_offset, retry_count = self.issued[work_id]
+            retry_count += 1
+            self.issued[work_id] = (_content, _input_offset, retry_count)
+
         heapq.heappush(self.issued_heap, (when, work_id))
         return work_id, content
 
 
+    def _complete_work_batch(self, batch):
+        """
+        Internal work completion logic. Assumes the caller holds the state lock.
+        """
+        for work_id, result in batch:
+            if work_id <= self.last_processed_work_id or work_id in self.pending_write:
+                logging.warning(f"Duplicate completion for row {work_id}; discarding.")
+            elif work_id not in self.issued:
+                logging.warning(f"Completion for row {work_id} not issued; discarding.")
+            else:
+                self.pending_write[work_id] = result
+        self._flush_pending_writes()
+            
+        now = time.time()
+        if now - self.last_checkpoint_time >= self.checkpoint_interval:
+            self._write_checkpoint()
+            self.last_checkpoint_time = now
+            logging.info(f"Checkpoint: last_processed_work_id={self.last_processed_work_id}, "
+                         f"input_offset={self.input_offset}, output_offset={self.outfile.tell()}, "
+                         f"issued={len(self.issued)}, pending={len(self.pending_write)}, "
+                         f"heap_size={len(self.issued_heap)}, expired_reissues={self.expired_reissues}")
+
     def complete_work_batch(self, batch):
+        """
+        Public method for completing a batch of work. Acquires the lock before
+        calling the internal implementation.
+        """
         with self._state_lock:
-            for work_id, result in batch:
-                if work_id <= self.last_processed_work_id or work_id in self.pending_write:
-                    logging.warning(f"Duplicate completion for row {work_id}; discarding.")
-                elif work_id not in self.issued:
-                    logging.warning(f"Completion for row {work_id} not issued; discarding.")
-                else:
-                    self.pending_write[work_id] = result
-            self._flush_pending_writes()
-                
-            now = time.time()
-            if now - self.last_checkpoint_time >= self.checkpoint_interval:
-                self._write_checkpoint()
-                self.last_checkpoint_time = now
-                logging.info(f"Checkpoint: last_processed_work_id={self.last_processed_work_id}, "
-                             f"input_offset={self.input_offset}, output_offset={self.outfile.tell()}, "
-                             f"issued={len(self.issued)}, pending={len(self.pending_write)}, "
-                             f"heap_size={len(self.issued_heap)}, expired_reissues={self.expired_reissues}")
+            self._complete_work_batch(batch)
 
 
     def _flush_pending_writes(self):
@@ -162,7 +204,8 @@ class DataTracker:
         while next_id in self.pending_write:
             result = self.pending_write.pop(next_id)
             self.last_processed_work_id = next_id
-            _, self.input_offset = self.issued[next_id]
+            
+            _, self.input_offset, _ = self.issued[next_id]
             del self.issued[next_id]
 
             output = result + "\n"
