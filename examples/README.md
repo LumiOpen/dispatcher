@@ -75,6 +75,28 @@ your task, configure it for your environment, and launch it.
 
 Some common failure modes and how to resolve them.
 
+## Understanding Tombstone Entries in Output
+
+To prevent a single problematic line in your input file from stalling an entire
+multi-node job, the Dispatcher server has a self-healing mechanism. If a work
+item fails to complete and is reissued multiple times (by default, 3 times),
+the server will stop trying and write a "tombstone" error to the corresponding
+line in the output file.
+
+This ensures the job can always make progress. If you see an entry like this in
+your `output.jsonl`, it means the input line at the same position could not be
+processed:
+
+```json
+{"__ERROR__": {"error": "max_retries_exceeded", "work_id": 1234,
+"original_content": "{\"prompt\": \"This was the problematic input...\"}"}}
+```
+
+The original_content key contains the exact input that failed, which is useful
+for debugging. You can control this behavior with the --max-retries flag when
+starting the dispatcher-server.
+
+
 ## OOM errors
 
 If you get OOM killed while VLLM is loading and you are using a converted
@@ -109,4 +131,6 @@ from huggingface_hub import hf_hub_download
 
 path = hf_hub_download(repo_id="meta-llama/Llama-2-7b-hf", filename="config.json")
 print("Cache path:", path)
+
+
 ```
