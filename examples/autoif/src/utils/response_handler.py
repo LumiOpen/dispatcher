@@ -65,16 +65,8 @@ def response_verify(response: str, data: Dict[str, Any]) -> Optional[List[Dict[s
         return None
     
     # If passed verification, construct the scoring prompt
-    prompt_template = """You are an expert that is good at judging whether a response is following the instruction and query.
-[Instruction] {instruction}
-[Query] {query}
-[Response] {response}
-Please notice that the response may not be helpful as it needs to strictly follow the requirements in the Instruction.
-You need to judge whether the response answers the query. Please first provide a detailed analysis and then give a score ranking from 0 to 10 at the last line.
-Scoring 0 means the response is totally unrelated to the query, while scoring 10 means the response is helpful and highly related to the query.
-Please only provide a score in the format `Score: {{score}}` without any other contents at the last line."""
-    
-    scoring_prompt = prompt_template.format(
+    scoring_prompt = open("model_prompts/scoring_prompt.txt").read().strip()
+    scoring_prompt = scoring_prompt.format(
         instruction=data.get('instruction', ''),
         query=data.get('query', ''),
         response=response
