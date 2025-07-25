@@ -123,6 +123,8 @@ The main use for this utility is to display the python code of the verification 
 python src/utils/preview_verifiers.py <path/to/verifiers/file.jsonl> --instruction_id <id> [ --max_func <max_func> ] [ --tofile ]
 ```
 
+<path/to/verifiers/file.jsonl> can be either the raw verifiers output file from dispatcher or the files resulting from cross-validation (filtered/all verifiers). However, note that the processed files do not  The `--instruction_id` is the id of the instruction to preview.
+
 This will display all or `--max_func` python functions from the "eval_func" list, along with usage examples in "cases" list. If `--max_func` not supplied, print all.
 
 Each evaluation function is a string with a python code. This utility will format the code and print it out in the console. 
