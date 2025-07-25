@@ -9,7 +9,7 @@ logging.basicConfig(level=logging.INFO)
 
 class DataTracker:
     def __init__(self, infile_path, outfile_path, checkpoint_path,
-                 work_timeout=900, checkpoint_interval=60):
+                 work_timeout=900, checkpoint_interval=60, max_retries=3):
         """
         Parameters:
           - infile_path: Path to the input JSONL file.
@@ -17,12 +17,14 @@ class DataTracker:
           - checkpoint_path: Path to the checkpoint file.
           - work_timeout: Seconds after which issued work is considered expired.
           - checkpoint_interval: Seconds between checkpoint writes.
+          - max_retries: Number of reissues before an item is discarded. -1 means infinite.
         """
         self.infile_path = infile_path
         self.outfile_path = outfile_path
         self.checkpoint_path = checkpoint_path
         self.work_timeout = work_timeout
         self.checkpoint_interval = checkpoint_interval
+        self.max_retries=max_retries
 
         self.last_processed_work_id = -1   # Last contiguous work id written.
         self.next_work_id = 0              # Next work id to assign.
