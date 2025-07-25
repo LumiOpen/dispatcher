@@ -16,24 +16,24 @@
 
 ###
 # configure the following.
-export LANGUAGE=eng
-export FUNCTION_TIMEOUT=5
-INPUT_FILE=data/verifiers_queries_ifeval.jsonl 
-OUTPUT_FILE=data/scored_responses.jsonl
+export LANGUAGE=${LANGUAGE:-eng}
+export FUNCTION_TIMEOUT=${FUNCTION_TIMEOUT:-5}
+INPUT_FILE=${VERIFIERS_QUERIES_FILE:-data/verifiers_queries_ifeval.jsonl}
+OUTPUT_FILE=${SCORED_RESPONSES_FILE:-data/scored_responses.jsonl}
 TASK=autoif_generator_task.GenerateQueryResponsesTask
 
 # generation parameters
 # These should be tuned so that you do not overload your backend vllm server,
 # or run into any timeouts.  timeouts greatly affect the efficiency of the
 # workflow.
-WORKERS=32          # number of simultaneous backend requests
+WORKERS=${RESP_WORKERS:-32}          # number of simultaneous backend requests
 BATCH_SIZE=1        # amount of work to request from dispatcher. 1 is usually fine.
 
 # Timeouts are safety valves and you should not hit them in the normal course
 # of your workflow.  if you do, it suggests you need to change something about
 # your configuration--tasks are usually written to expect success.
-REQUEST_TIMEOUT=600 # adjust as needed for your task so that you do not hit
-WORK_TIMEOUT=1800   # time for dispatcher to give up on a work item and reissue it.  ideally this should never be hit.
+REQUEST_TIMEOUT=${RESP_REQUEST_TIMEOUT:-600} # adjust as needed for your task so that you do not hit
+WORK_TIMEOUT=${RESP_WORK_TIMEOUT:-1800}   # time for dispatcher to give up on a work item and reissue it.  ideally this should never be hit.
 
 #
 # If you are changing the model, be sure to update GPUS_PER_TASK and the
@@ -41,7 +41,7 @@ WORK_TIMEOUT=1800   # time for dispatcher to give up on a work item and reissue 
 # Typically on Lumi 70B = 4 GPUs, 34B = 2 GPUs, 8B = 1 GPU
 # --ntasks-per-node should be int(8 / GPUS_PER_TASK)
 #
-MODEL=meta-llama/Llama-3.3-70B-Instruct
+MODEL=${MODEL:-meta-llama/Llama-3.3-70B-Instruct}
 GPUS_PER_TASK=4     # enough for the model and large batch size
 MAX_MODEL_LEN=16384 # for efficiency, only as much as you think you need for efficiency
 
@@ -66,7 +66,7 @@ source .venv/bin/activate
 
 # pip install fasttext
 # pip install git+https://github.com/LumiOpen/dispatcher.git
-export HF_HOME="/scratch/project_462000353/hf_cache"
+export HF_HOME="${HF_HOME:-/scratch/project_462000353/hf_cache}"
 export SSL_CERT_FILE=$(python -m certifi)
 
 # dispatcher server will run on the first node, before we launch the worker
