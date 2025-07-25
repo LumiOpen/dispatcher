@@ -344,7 +344,10 @@ if ! step_completed $VER_QUERIES_CONCATED; then
         --verifiers_file $VERIFIERS_FILTERED_FILE \
         --output_file $VERIFIERS_QUERIES_FILE \
         --queries_dataset $QUERIES_DATASET \
-        --queries_per_instruction 16
+        --query_column_name "instruction" \
+        --response_column_name "response" \
+        --query_max_len "200" \
+        --queries_per_instruction 1
     if [ $? -ne 0 ]; then
         echo "Concat queries failed!"
         exit 1
