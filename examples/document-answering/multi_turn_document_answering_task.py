@@ -79,19 +79,19 @@ class GenerateConversationFromDocumentsTask(GeneratorTask):
     def task_generator(self) -> Generator[Union[Request, List[Request]], Any, Dict[str, Any]]:
         # self.data is prepopulated with the data from the jsonl row being
         # processed
-        return_message = {
-                        "messages": []
+        error_return = {
+                        "messages": [{"error": ""}]
                 }
         document = self.data.get("text")
         lang_id1, lang_id2 = detect_language(document)
-        # print("Checking document language")
+        # self.logger.info("Checking document language")
         if lang_id1 != LANGUAGE and lang_id2 != LANGUAGE:
             error_message = f"Skipping this document. Document lang is {lang_id1.upper()} or {lang_id2.upper()}, but expected {LANGUAGE.upper()}"
             self.logger.error(error_message)
-            return return_message["messages"].append({ "error": error_message })
+            return error_return
         # draw two random categories without replacement
         categories = random.sample(list(INSTRUCTION_CATEGORIES.keys()), 2)
-        gen_instruct_prompt_template = open("model_prompts/generate_instructions_prompt.txt").read().strip()
+        gen_instruct_prompt_template = open("model_prompts/generate_instructions_prompt.txt").read()
         gen_instruct_prompt_text = gen_instruct_prompt_template.format(
                         language=LANGUAGE_NAMES.get(LANGUAGE, ["English", "eng"])[0],
                         document=document,
@@ -105,20 +105,22 @@ class GenerateConversationFromDocumentsTask(GeneratorTask):
         ]
 
         # Step 1 – Generate instruction from a document
+        # self.logger.info("Generate first-turn instruction from a document")
         instruct_resp: Response = yield Request({"messages": messages, **self.GEN_PARAMS})
         instruct_resp_text = instruct_resp.get_text()
+        # self.logger.info(f"\ninstruct_resp_text: {instruct_resp_text}\n")
         match = re.search(r'INSTRUCTION\s*:?([\s\S]*?)CATEGORY', instruct_resp_text)
         if match is None:
             error_message = f"Could not find keyword INSTRUCTION for the first-turn"
             self.logger.error(error_message)
-            return return_message["messages"].append({ "error": error_message })
+            return error_return
         instruct_text = match.group(1).strip()
 
         lang_id1, lang_id2 = detect_language(instruct_text)
         if lang_id1 != LANGUAGE and lang_id2 != LANGUAGE:
             error_message = f"Skipping this Instruction. Instruction lang is {lang_id1.upper()} or {lang_id2.upper()}, but expected {LANGUAGE.upper()}"
             self.logger.error(error_message)
-            return return_message["messages"].append({ "error": error_message })
+            return error_return
         gen_answer_prompt_template = open("model_prompts/generate_answers_prompt.txt").read().strip()
         gen_answer_prompt_text = gen_answer_prompt_template.format(
                         language=LANGUAGE_NAMES.get(LANGUAGE, ["English", "eng"])[0],
@@ -133,6 +135,7 @@ class GenerateConversationFromDocumentsTask(GeneratorTask):
         ]
 
         # Step 2 – Generate the answer to the instruction
+        # self.logger.info("Generate the answer to the first-turn instruction")
         answer_resp: Response = yield Request({"messages": messages, **self.GEN_PARAMS})
         answer_text = answer_resp.get_text().strip()
         # print("Checking answer language")
@@ -140,9 +143,10 @@ class GenerateConversationFromDocumentsTask(GeneratorTask):
         if lang_id1 != LANGUAGE and lang_id2 != LANGUAGE:
             error_message = f"Skipping this answer. Answer lang is {lang_id1.upper()} or {lang_id2.upper()}, but expected {LANGUAGE.upper()}"
             self.logger.error(error_message)
-            return return_message["messages"].append({ "error": error_message })
+            return error_return
     
         # Step 3 - Generate second-turn instruction
+        # self.logger.info("Generate second-turn instruction")
         gen_next_turn_prompt_template = open("model_prompts/generate_next_turn_instruct_prompt.txt").read()
         gen_next_turn_text = gen_next_turn_prompt_template.format(
             language=LANGUAGE_NAMES.get(LANGUAGE, ["English", "eng"])[0],
@@ -163,14 +167,14 @@ class GenerateConversationFromDocumentsTask(GeneratorTask):
         if match is None:
             error_message = "Could not find keyword INSTRUCTION for the second turn"
             self.logger.error(error_message)
-            return return_message["messages"].append({ "error": error_message })
+            return error_return
         
         next_turn_instruct_text = match.group(1).strip()
         lang_id1, lang_id2 = detect_language(next_turn_instruct_text)
         if lang_id1 != LANGUAGE and lang_id2 != LANGUAGE:
             error_message = f"Skipping this instruction. Instruction lang is {lang_id1.upper()} or {lang_id2.upper()}, but expected {LANGUAGE.upper()}"
             self.logger.error(error_message)
-            return return_message["messages"].append({ "error": error_message })
+            return error_return
 
         # Step 4 - Generate answer to second-turn instruction
         gen_answer_prompt_template = open("model_prompts/generate_next_turn_answers_prompt.txt").read().strip()
@@ -193,8 +197,9 @@ class GenerateConversationFromDocumentsTask(GeneratorTask):
         if lang_id1 != LANGUAGE and lang_id2 != LANGUAGE:
             error_message = f"Skipping this answer. Answer lang is {lang_id1.upper()} or {lang_id2.upper()}, but expected {LANGUAGE.upper()}"
             self.logger.error(error_message)
-            return return_message["messages"].append({ "error": error_message })
+            return error_return
         else:
+            # self.logger.info("Returning valid conversation")
             return {
                 "messages": [
                     {
