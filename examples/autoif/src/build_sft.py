@@ -7,7 +7,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("input_file")
     parser.add_argument("--output", required=True)
-    parser.add_argument("--score_threshold", type=int, required=True)
+    parser.add_argument("--score_threshold", type=int, default=4, required=True)
     args = parser.parse_args()
     
     with open(args.input_file, 'r') as f_in, open(args.output, 'w') as f_out:

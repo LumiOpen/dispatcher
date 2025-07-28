@@ -103,7 +103,7 @@ sbatch launch_generate_query_responses.sh
    - Output: `data/scored_responses.jsonl`
 
 4. **Final Output**:
-   - Run `python3 src/build_sft.py data/scored_responses.jsonl --output data/final_sft.jsonl --score_threshold 8` to build the final output for fine-tuning, scored above 8 out of 10 by an LLM judge.
+   - Run `python3 src/build_sft.py data/scored_responses.jsonl --output data/final_sft.jsonl --score_threshold 4` to build the final output for fine-tuning, scored at least with a score of 4 out of 5 by an LLM judge.
 
 ## Requirements
 
