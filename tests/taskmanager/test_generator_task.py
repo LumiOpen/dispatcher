@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import random
+import unittest
 from typing import Any, Dict, List, Union, Generator
 
 from dispatcher.taskmanager.task.base import GeneratorTask
@@ -14,8 +15,7 @@ from dispatcher.taskmanager.backend.request import Request, Response
 random.seed(0)
 
 # ---------------------------------------------------------------------------
-# Helpers to fabricate mock backend responses (the tests import these helpers,
-# so their public signatures must stay exactly the same).
+# Helpers to fabricate mock backend responses.
 # ---------------------------------------------------------------------------
 
 def _make_success_content(label: str, mode: str = "chat") -> Dict[str, Any]:
@@ -61,7 +61,7 @@ def _create_error_response(request: Request) -> Response:
 
 
 # ---------------------------------------------------------------------------
-# Concrete MockGeneratorTask used across the unit‑ and integration‑tests.
+# Mock Task for Integration Testing
 # ---------------------------------------------------------------------------
 
 class MockGeneratorTask(GeneratorTask):
@@ -71,7 +71,6 @@ class MockGeneratorTask(GeneratorTask):
         self.mode = mode
         super().__init__(data, context)
 
-    # ---------------------------- helpers -----------------------------
     @staticmethod
     def _to_text(resp: Response) -> Union[str, Dict[str, Any]]:
         """Coerce *any* Response into a value expected by the tests."""
@@ -84,21 +83,16 @@ class MockGeneratorTask(GeneratorTask):
         # error path
         return {"error": str(resp.error)}
 
-    # --------------------------- generator ---------------------------
     def task_generator(self) -> Generator[Union[Request, List[Request]], Any, Dict[str, Any]]:
-        # ---------------- empty ----------------
         if self.mode == "empty":
-            # Yield once (empty list) so the base‑class initialisation succeeds.
-            _ = yield []  # TaskManager immediately echoes an empty list back.
+            _ = yield []
             return {"status": "empty"}
 
-        # ---------------- single --------------
         if self.mode == "single":
             prompt = self.data.get("prompt1", self.data.get("p", "p1"))
             resp: Response = yield Request({"prompt": prompt})
             return {"final": self._to_text(resp), "source": "single"}
 
-        # ------------- sequential -------------
         if self.mode == "sequential":
             p1 = self.data.get("prompt1", self.data.get("p1", "first"))
             p2 = self.data.get("prompt2", self.data.get("p2", "second"))
@@ -107,21 +101,17 @@ class MockGeneratorTask(GeneratorTask):
             resp2: Response = yield Request({"prompt": f"Based on {v1}, ask: {p2}"})
             return {"step1": v1, "step2": self._to_text(resp2), "source": "sequential"}
 
-        # ---------------- batch ---------------
         if self.mode == "batch":
             pa = self.data.get("prompt_a", self.data.get("a", "A"))
             pb = self.data.get("prompt_b", self.data.get("b", "B"))
             resps: List[Response] = yield [Request({"prompt": pa}), Request({"prompt": pb})]
             batch_res = [self._to_text(r) for r in resps]
-            # Historical + new tests reference different keys; expose both.
             return {"batch": batch_res, "final_batch": batch_res, "source": "batch"}
 
-        # ------------- single_error ----------
         if self.mode == "single_error":
             resp: Response = yield Request({"prompt": "err"})
             return {"error": str(resp.error) if not resp.is_success else "unexpected"}
 
-        # ------------- batch_mixed -----------
         if self.mode == "batch_mixed":
             pa = self.data.get("prompt_a", "A")
             pb = self.data.get("prompt_b", "B")
@@ -130,10 +120,70 @@ class MockGeneratorTask(GeneratorTask):
             return {"mixed_results": mixed, "source": "batch_mixed"}
 
         raise ValueError("unknown mode")
+        yield
 
 
 # ---------------------------------------------------------------------------
-# Re‑export helpers so existing import‑sites remain valid.
+# Mock Task and Tests for Unit Testing the Constructor/Lifecycle
+# ---------------------------------------------------------------------------
+
+class MockGeneratorTaskForLifecycle(GeneratorTask):
+    """A mock task specifically for testing initialization behavior."""
+
+    def __init__(self, data: Dict[str, Any], mode: str, context: Any = None):
+        self.mode = mode
+        super().__init__(data, context)
+
+    def task_generator(self) -> Generator[Union[Request, List[Request]], Any, Dict[str, Any]]:
+        if self.mode == "immediate_return":
+            return {"status": "immediate_return", "data": self.data}
+
+        if self.mode == "yield_first":
+            yield Request({"prompt": "test_prompt"})
+            return {"status": "finished_normally"}
+        
+        yield # Unreachable, for linter
+
+
+class TestGeneratorTaskLifecycle(unittest.TestCase):
+    """
+    Unit tests for the GeneratorTask's initialization and state transitions.
+    """
+
+    def test_initializes_correctly_when_yielding_first(self):
+        """
+        Ensures a standard task that yields at least once initializes correctly
+        and is not immediately marked as done.
+        """
+        task = MockGeneratorTaskForLifecycle(data={}, mode="yield_first")
+        
+        self.assertFalse(task.is_done(), "Task should not be done immediately after initialization.")
+        self.assertIsNotNone(task.get_next_request(), "Task should have a pending request after initialization.")
+
+    def test_handles_generator_that_returns_before_first_yield(self):
+        """
+        Verifies a task that returns a value before its first yield is handled
+        gracefully, is marked as done, and contains the correct final result.
+        """
+        context = "context_for_immediate_return"
+        task_data = {"id": 123}
+        
+        task = MockGeneratorTaskForLifecycle(
+            data=task_data, 
+            context=context, 
+            mode="immediate_return"
+        )
+
+        self.assertTrue(task.is_done(), "Task that returns immediately should be marked as done.")
+        result, res_context = task.get_result()
+        
+        self.assertEqual(res_context, context)
+        self.assertEqual(result, {"status": "immediate_return", "data": task_data})
+        self.assertIsNone(task.get_next_request(), "A finished task should have no more requests.")
+
+
+# ---------------------------------------------------------------------------
+# Exports for use in other test modules
 # ---------------------------------------------------------------------------
 __all__ = [
     "MockGeneratorTask",
@@ -141,8 +191,3 @@ __all__ = [
     "_create_success_response",
     "_create_error_response",
 ]
-
-if __name__ == "__main__":  # pragma: no cover
-    import unittest
-    unittest.main()
-
