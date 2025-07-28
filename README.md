@@ -44,15 +44,14 @@ dispatcher works on a line-per-line basis, each nth line of input will
 correspond with the nth line of output. On restarting, we only need to
 determine where we left off to begin again.
 
-This means the dispatcher must cache out of order work until the work can be
-written contiguously in the output file. Work that has been issued but not
-completed will be reissued again after a timeout to avoid unbounded memory
-growth, but in certain pathological situations (a "query of death") this could
-still cause an out of memory situation.
-
-Probably we should time out incomplete work after a certain number of retries
-and write it to a rejected file, but that is not yet implemented.
-
+This means the dispatcher must cache out of order work until it can be written
+contiguously to the output file. To prevent a single pathological entry (a
+"query of death") from stalling the entire job, work that is reissued more than
+a configurable number of times (default: 3) will be considered un-processable.
+When this limit is reached, a "tombstone" entry containing an error is written
+to the output file in place of a valid result. This preserves the 1-to-1 line
+mapping between the input and output files while allowing the rest of the job
+to proceed.
 
 ## To Develop
 
