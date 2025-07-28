@@ -4,7 +4,7 @@ import random
 import unittest
 from typing import Any, Dict, List, Union, Generator
 
-from dispatcher.taskmanager.task.base import GeneratorTask
+from dispatcher.taskmanager.task.base import GeneratorTask, TaskFailed
 from dispatcher.taskmanager.backend.request import Request, Response
 
 # ---------------------------------------------------------------------------
@@ -46,7 +46,6 @@ def _make_success_content(label: str, mode: str = "chat") -> Dict[str, Any]:
             "model": "mock_model",
             "created": 123,
         }
-    # fallback raw/dict style (used by MockBackendManager transform_fn)
     return {"result": f"Result for {label}"}
 
 
@@ -78,9 +77,7 @@ class MockGeneratorTask(GeneratorTask):
             txt = resp.get_text()
             if txt is not None:
                 return txt
-            # MockBackendManager default transform_fn returns {"result": ...}
             return resp.content
-        # error path
         return {"error": str(resp.error)}
 
     def task_generator(self) -> Generator[Union[Request, List[Request]], Any, Dict[str, Any]]:
@@ -138,10 +135,13 @@ class MockGeneratorTaskForLifecycle(GeneratorTask):
         if self.mode == "immediate_return":
             return {"status": "immediate_return", "data": self.data}
 
+        if self.mode == "immediate_fail":
+            raise TaskFailed(message="immediate failure from test")
+
         if self.mode == "yield_first":
             yield Request({"prompt": "test_prompt"})
             return {"status": "finished_normally"}
-        
+
         yield # Unreachable, for linter
 
 
@@ -156,7 +156,7 @@ class TestGeneratorTaskLifecycle(unittest.TestCase):
         and is not immediately marked as done.
         """
         task = MockGeneratorTaskForLifecycle(data={}, mode="yield_first")
-        
+
         self.assertFalse(task.is_done(), "Task should not be done immediately after initialization.")
         self.assertIsNotNone(task.get_next_request(), "Task should have a pending request after initialization.")
 
@@ -167,19 +167,41 @@ class TestGeneratorTaskLifecycle(unittest.TestCase):
         """
         context = "context_for_immediate_return"
         task_data = {"id": 123}
-        
+
         task = MockGeneratorTaskForLifecycle(
-            data=task_data, 
-            context=context, 
+            data=task_data,
+            context=context,
             mode="immediate_return"
         )
 
         self.assertTrue(task.is_done(), "Task that returns immediately should be marked as done.")
         result, res_context = task.get_result()
-        
+
         self.assertEqual(res_context, context)
         self.assertEqual(result, {"status": "immediate_return", "data": task_data})
         self.assertIsNone(task.get_next_request(), "A finished task should have no more requests.")
+
+    def test_handles_generator_that_fails_before_first_yield(self):
+        """
+        Verifies a task that raises TaskFailed before its first yield is handled
+        gracefully, is marked as done, and contains a valid error payload.
+        """
+        context = "context_for_immediate_fail"
+        task_data = {"id": 456}
+
+        task = MockGeneratorTaskForLifecycle(
+            data=task_data,
+            context=context,
+            mode="immediate_fail"
+        )
+
+        self.assertTrue(task.is_done(), "Task that fails immediately should be marked as done.")
+        result, res_context = task.get_result()
+
+        self.assertEqual(res_context, context)
+        self.assertIn("__ERROR__", result)
+        self.assertEqual(result["__ERROR__"]["message"], "immediate failure from test")
+        self.assertEqual(result["__ERROR__"]["task_data"], task_data)
 
 
 # ---------------------------------------------------------------------------
