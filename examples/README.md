@@ -58,6 +58,43 @@ A few caveats for task design:
 - Tasks are required to have work available (yield requests) immediately after creation.  This simplifies TaskManager's logic substantially, but means that if a task is created and does not yield requests to process, TaskManager will continue to request work and creating new tasks from the dispatcher server, in an attempt to keep the backend vllm server busy.
 - Tasks are only intended to do lightweight processing between requests; if they run slowly, this will prevent TaskManager from keeping the backend vllm server busy.  This requirement could be removed with some modifications to the taskmanager architecture, but there has not yet been a need to do this work.
 
+### Graceful Failure Reporting in Tasks
+
+Sometimes, a task cannot be completed due to invalid input data or an unexpected result from an intermediate step. Instead of returning a custom error dictionary, the preferred way to handle this is to raise the `TaskFailed` exception.
+
+This halts the task's execution immediately and ensures a standardized `__ERROR__` payload is written as the task's final result, which is invaluable for downstream monitoring and debugging.
+
+**Example:**
+
+Suppose a model is expected to return "A" or "B", but returns something else.
+
+```python
+# In your task's task_generator method:
+from dispatcher.taskmanager.task import TaskFailed
+
+# ... get a response from a model ...
+judge_text = judge_resp.get_text()
+
+if judge_text not in ["A", "B"]:
+    # This is a controlled failure. Raise the exception.
+    raise TaskFailed(
+        message=f"Judge model returned an invalid response: '{judge_text}'",
+        error_type="judge_response_invalid"
+    )```
+
+This will produce the following clean, standardized error in your `output.jsonl` file, allowing you to easily find and analyze all failed tasks:
+
+```json
+{
+  "__ERROR__": {
+    "error": "judge_response_invalid",
+    "message": "Judge model returned an invalid response: 'C'",
+    "task_data": {
+      "messages": [{"role": "user", "content": "..."}]
+    }
+  }
+}
+
 ### Running the example task
 
 As in the `inference.py` example above, we'll prepare the prompt dataset in a

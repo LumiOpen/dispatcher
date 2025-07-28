@@ -11,6 +11,20 @@ from typing import Any, Dict, List, Optional, Tuple, Union, Generator
 
 from ..backend.request import Request, Response
 
+
+class TaskFailed(Exception):
+    """
+    Exception to be raised by a task to signal a controlled failure.
+    
+    This allows a task to terminate itself gracefully and provide a structured
+    error payload that will be recorded as its final result.
+    """
+    def __init__(self, message: str, error_type: str = "task_logic_error"):
+        self.message = message
+        self.error_type = error_type
+        super().__init__(f"[{self.error_type}] {self.message}")
+
+
 ###############################################################################
 # Abstract base task
 ###############################################################################
@@ -65,10 +79,29 @@ class GeneratorTask(Task):
         self._collected: List[Response] = []         # responses for current yield
         self._result: Optional[Dict[str, Any]] = None
 
-        # User coroutine must yield at least once
+        # Start the generator and get the first yielded request.
         self._gen = self.task_generator()
-        first = next(self._gen)
-        self._enqueue(first)
+        try:
+            first = next(self._gen)
+            self._enqueue(first)
+        except StopIteration as stop:
+            # Handle the edge case where the generator returns immediately
+            # without yielding any requests.
+            if not hasattr(stop, "value") or stop.value is None:
+                raise RuntimeError(
+                    "task_generator finished on first call without returning a result dict"
+                ) from None
+            self._result = stop.value
+        except TaskFailed as e:
+            # Handle a deliberate failure during initialization.
+            self._result = {
+                "__ERROR__": {
+                    "error": e.error_type,
+                    "message": e.message,
+                    "task_data": self.data
+                }
+            }
+
 
     # ------------------------------------------------------------------
     # User‑supplied coroutine signature
@@ -133,4 +166,12 @@ class GeneratorTask(Task):
                     "task_generator finished without returning a result dict"
                 ) from None
             self._result = stop.value
-
+        except TaskFailed as e:
+            # The task has deliberately failed. Set its final result to the error.
+            self._result = {
+                "__ERROR__": {
+                    "error": e.error_type,
+                    "message": e.message,
+                    "task_data": self.data
+                }
+            }
