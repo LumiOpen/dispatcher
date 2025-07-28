@@ -2,7 +2,7 @@
 from typing import Any, Dict, Generator, List, Union
 
 from dispatcher.taskmanager.backend.request import Request, Response
-from dispatcher.taskmanager.task import GeneratorTask, TaskFailed
+from dispatcher.taskmanager.task.base import GeneratorTask, TaskFailed
 
 __all__ = ["CompareTwoResponsesTask"]
 
