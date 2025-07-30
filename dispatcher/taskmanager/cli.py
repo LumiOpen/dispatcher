@@ -94,6 +94,7 @@ def run(
     port: int = 8000,
     launch_vllm: bool = True,
     tensor_parallel: int = 1,
+    chat_template: Optional[str] = None, 
     max_model_len: int = 16_384,
     startup_timeout: int = 1500,
     request_timeout: int = 600,
@@ -131,6 +132,7 @@ def run(
         port=port,
         launch_server=launch_vllm,
         tensor_parallel_size=tensor_parallel,
+        chat_template=chat_template,
         max_model_len=max_model_len,
         startup_timeout=startup_timeout,
         request_timeout=request_timeout,
@@ -174,6 +176,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--port", type=int, default=8000, help="Bind port")
     p.add_argument("--no-launch", action="store_true", help="Do not start a vLLM server (connect only)")
     p.add_argument("--tensor-parallel", type=int, default=1, help="Tensor parallel degree")
+    p.add_argument("--chat-template", type=str, default=None, help="Path to a Jinja chat template file for vLLM.")
     p.add_argument("--max-model-len", type=int, default=16_384, help="Max context length override")
     p.add_argument("--startup-timeout", type=int, default=1500, help="Maximum time to wait for vllm server to start")
     p.add_argument("--request-timeout", type=int, default=600, help="Maximum time to wait for a request")
@@ -205,6 +208,7 @@ def main(argv: Optional[list[str]] = None):
         port=args.port,
         launch_vllm=not args.no_launch,
         tensor_parallel=args.tensor_parallel,
+        chat_template=args.chat_template,
         max_model_len=args.max_model_len,
         startup_timeout=args.startup_timeout,
         request_timeout=args.request_timeout,
