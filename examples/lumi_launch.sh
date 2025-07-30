@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=inference
-#SBATCH --nodes=4
+#SBATCH --nodes=1
 #SBATCH --partition=dev-g
 #SBATCH --time=00-02:00:00
 #SBATCH --ntasks-per-node=2
@@ -82,6 +82,9 @@ sleep 10
 
 srun -l \
     bash -c '
+    echo ROCR=$ROCR_VISIBLE_DEVICES
+    echo CUDA=$CUDA_VISIBLE_DEVICES
+    echo HIP=$HIP_VISIBLE_DEVICES
     # Compute the starting GPU index for this task.
     # SLURM_LOCALID is the index of the task on this node.
     start_gpu=$(( SLURM_LOCALID * '"$GPUS_PER_TASK"' ))
