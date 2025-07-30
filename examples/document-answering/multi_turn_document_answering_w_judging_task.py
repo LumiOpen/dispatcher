@@ -3,6 +3,7 @@ from typing import Any, Dict, Generator, List, Union
 
 from dispatcher.taskmanager.backend.request import Request, Response
 from dispatcher.taskmanager.task.base import GeneratorTask
+from dispatcher.taskmanager.task import TaskFailed
 from utils.lang_id import detect_language
 
 import random
@@ -24,7 +25,7 @@ INSTRUCTION_CATEGORIES = {
     "Roleplay and Simulation": "Inhabiting a character/persona",
     "Advisory": "Asking for advice",
     "Domain-Specific Knowledge": "Humanity, history, and social studies, Other (specific domains could be added here as needed)",
-    "General": ""
+    "General": "General knowledge questions"
 }
 
 LANGUAGE_NAMES = {
@@ -61,7 +62,7 @@ class GenerateConversationJudgingFromDocumentsTask(GeneratorTask):
 
     # Fixed generation hyper‑parameters for candidate answers
     GEN_PARAMS: Dict[str, Any] = {
-        "temperature": 0.6,
+        "temperature": 0.8,
         "top_p": 0.9,
         "max_tokens": 4096,
     }
@@ -87,8 +88,10 @@ class GenerateConversationJudgingFromDocumentsTask(GeneratorTask):
         # print("Checking document language")
         if lang_id1 != LANGUAGE and lang_id2 != LANGUAGE:
             error_message = f"Skipping this document. Document lang is {lang_id1.upper()} or {lang_id2.upper()}, but expected {LANGUAGE.upper()}"
-            self.logger.error(error_message)
-            return error_return
+            raise TaskFailed(
+                message=error_message,
+                error_type="judge_response_invalid"
+            )
         # draw two random categories without replacement
         categories = random.sample(list(INSTRUCTION_CATEGORIES.keys()), 2)
         gen_instruct_prompt_template = open("model_prompts/generate_instructions_prompt.txt").read().strip()
@@ -110,8 +113,10 @@ class GenerateConversationJudgingFromDocumentsTask(GeneratorTask):
         match = re.search(r'INSTRUCTION\s*:?([\s\S]*?)CATEGORY', instruct_resp_text)
         if match is None:
             error_message = f"Could not find keyword INSTRUCTION for the first-turn"
-            self.logger.error(error_message)
-            return error_return
+            raise TaskFailed(
+                message=error_message,
+                error_type="judge_response_invalid"
+            )
         instruct_text = match.group(1).strip()
 
         lang_id1, lang_id2 = detect_language(instruct_text)
