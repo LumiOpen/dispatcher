@@ -60,6 +60,7 @@ class CompareTwoResponsesTask(GeneratorTask):
         ]
         judge_resp: Response = yield Request({"messages": judge_messages, **self.JUDGE_PARAMS})
         judge_text = judge_resp.get_text()
+        judge_model = judge_resp.model_name
 
         if not judge_text:
             raise TaskFailed(
@@ -88,4 +89,5 @@ class CompareTwoResponsesTask(GeneratorTask):
             "messages": messages,
             "preferred_text": pref_resp.get_text(),
             "dispreferred_text": dis_resp.get_text(),
+            "judge_model": judge_model,
         }

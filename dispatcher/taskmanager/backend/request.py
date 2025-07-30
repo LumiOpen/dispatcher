@@ -1,3 +1,7 @@
+"""
+This file defines the Request and Response classes used for communication
+between the TaskManager and a backend processing service.
+"""
 import copy
 from typing import Any, Dict, Optional
 
@@ -30,7 +34,8 @@ class Response:
     def __init__(self, 
                  request: Request,
                  content: Optional[Dict[str, Any]] = None, 
-                 error: Optional[Exception] = None):
+                 error: Optional[Exception] = None,
+                 model_name: Optional[str] = None):
         """
         Initialize a response.
         
@@ -38,10 +43,12 @@ class Response:
             request: The original request that generated this response
             content: Dictionary containing the response data
             error: Exception if an error occurred during processing
+            model_name: The name of the model that processed the request.
         """
         self.request = request
         self.content = content
         self.error = error
+        self.model_name = model_name
     
     @property
     def is_success(self) -> bool:
@@ -49,9 +56,9 @@ class Response:
         return self.error is None and self.content is not None
     
     @classmethod
-    def from_error(cls, request: Request, error: Exception) -> 'Response':
+    def from_error(cls, request: Request, error: Exception, model_name: Optional[str] = None) -> 'Response':
         """Create a response representing an error."""
-        return cls(request=request, content=None, error=error)
+        return cls(request=request, content=None, error=error, model_name=model_name)
 
     def get_text(self) -> Optional[str]:
         """Extracts model response text from standard response formats.
