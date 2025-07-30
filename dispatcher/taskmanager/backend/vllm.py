@@ -56,7 +56,6 @@ class VLLMServerManager:
         disable_log_requests: bool = True,
         disable_output: bool = False,
         enforce_eager: bool = False,
-        chat_template: Optional[str] = None,
     ) -> 'VLLMServerManager':
         """
         Launches the vLLM OpenAI API server and waits for it to become healthy.
@@ -72,8 +71,6 @@ class VLLMServerManager:
             max_model_len: Optional max model length override.
             startup_timeout: Max seconds to wait for the server to pass health check.
             disable_log_requests: Whether to add --disable-log-requests flag.
-            enforce_eager: use eager mode for vllm
-            chat_template: specify the chat template to use (jinja file)
 
         Returns:
             An instance of VLLMServerManager managing the launched process.
@@ -104,8 +101,6 @@ class VLLMServerManager:
 
         if enforce_eager:
             cmd.extend(["--enforce-eager"])
-        if chat_template:
-            cmd.extend(["--chat-template", chat_template])
 
         stdout, stderr = subprocess.DEVNULL, subprocess.DEVNULL
         if not disable_output:
@@ -186,8 +181,7 @@ class VLLMBackendManager(BackendManager):
                  request_timeout: int = 300,
                  health_check_interval: int = 60,
                  disable_output: bool = False,
-                 enforce_eager: bool = False,
-                 chat_template: Optional[str] = None):
+                 enforce_eager: bool = False):
         """
         Initialize a VLLM backend manager.
         
@@ -206,7 +200,6 @@ class VLLMBackendManager(BackendManager):
             health_check_interval: How often to perform health checks (in seconds)
             disable_output: Redirect vllm output to /dev/null
             enforce_eager: run vllm in eager mode
-            chat_template: specify chat template file
         """
         self.model_name = model_name
         self.host = host
@@ -237,7 +230,6 @@ class VLLMBackendManager(BackendManager):
                     disable_log_requests=True,
                     disable_output=disable_output,
                     enforce_eager=enforce_eager,
-                    chat_template=chat_template,
                 )
                 self.logger.info(f"Launched vLLM server for model {model_name}")
             except Exception as e:

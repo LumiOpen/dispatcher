@@ -99,7 +99,6 @@ def run(
     request_timeout: int = 600,
     silence_vllm_logs: bool = False,
     enforce_eager: bool = False, 
-    chat_template: Optional[str] = None,
     # task manager params
     workers: int = 16,
     batch_size: int = 4,
@@ -137,7 +136,6 @@ def run(
         request_timeout=request_timeout,
         disable_output=silence_vllm_logs,
         enforce_eager=enforce_eager,
-        chat_template=chat_template,
     )
 
     _install_signal_handlers(backend)
@@ -181,9 +179,8 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--request-timeout", type=int, default=600, help="Maximum time to wait for a request")
     p.add_argument("--silence-vllm-logs", action="store_true", help="Suppress all logging from vllm")
 
-    # additional vllm args
+    # vllm tuning
     p.add_argument("--enforce-eager", action="store_true", help="Force vLLM to run in eager mode")
-    p.add_argument("--chat-template", type=str, default=None, help="Path to a Jinja chat template for vLLM")
 
     # manager & batches
     p.add_argument("--workers", type=int, default=16)
@@ -213,7 +210,6 @@ def main(argv: Optional[list[str]] = None):
         request_timeout=args.request_timeout,
         silence_vllm_logs=args.silence_vllm_logs,
         enforce_eager=args.enforce_eager,
-        chat_template=args.chat_template,
         workers=args.workers,
         batch_size=args.batch_size,
     )
