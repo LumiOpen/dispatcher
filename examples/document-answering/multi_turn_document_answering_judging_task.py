@@ -16,6 +16,16 @@ __all__ = ["GenerateConversationJudgingFromDocumentsTask"]
 SCORE_THRESH = 4  # Quality score threshold for the answer
 LANGUAGE=os.environ.get("LANGUAGE")
 
+MIN_DOC_LEN = 100
+MAX_DOC_LEN = 30000
+
+ERROR_TYPES = {
+    "document_len": "document_length_error",
+    "language": "language_error",
+    "instruction_format": "instruction_format_error",
+    "score_format": "score_format_error",
+}
+
 INSTRUCTION_CATEGORIES = {
     "Problem Solving" : "Coding, Mathematical reasoning, Knowledge and reasoning", 
     "Creative Tasks" : "Creative writing, Brainstorming",
@@ -84,13 +94,25 @@ class GenerateConversationJudgingFromDocumentsTask(GeneratorTask):
                         "messages": [{"error": ""}]
                 }
         document = self.data.get("text")
+        doc_id = self.data.get("id")
         lang_id1, lang_id2 = detect_language(document)
-        # print("Checking document language")
+        if len(document.split()) < MIN_DOC_LEN:
+            error_message = f"Document too short. Document length is {len(document.split())}. Min length is {MIN_DOC_LEN}."
+            raise TaskFailed(
+                message=error_message,
+                error_type=ERROR_TYPES["document_len"]
+            )
+        if len(document.split()) > MAX_DOC_LEN:
+            error_message = f"Document too long. Document length is {len(document.split())}. Max length is {MAX_DOC_LEN}."
+            raise TaskFailed(
+                message=error_message,
+                error_type=ERROR_TYPES["document_len"]
+            )
         if lang_id1 != LANGUAGE and lang_id2 != LANGUAGE:
             error_message = f"Skipping this document. Document lang is {lang_id1.upper()} or {lang_id2.upper()}, but expected {LANGUAGE.upper()}"
             raise TaskFailed(
                 message=error_message,
-                error_type="judge_response_invalid"
+                error_type=ERROR_TYPES['language']
             )
         # draw two random categories without replacement
         categories = random.sample(list(INSTRUCTION_CATEGORIES.keys()), 2)
@@ -115,15 +137,17 @@ class GenerateConversationJudgingFromDocumentsTask(GeneratorTask):
             error_message = f"Could not find keyword INSTRUCTION for the first-turn"
             raise TaskFailed(
                 message=error_message,
-                error_type="judge_response_invalid"
+                error_type=ERROR_TYPES['instruction_format']
             )
         instruct_text = match.group(1).strip()
 
         lang_id1, lang_id2 = detect_language(instruct_text)
         if lang_id1 != LANGUAGE and lang_id2 != LANGUAGE:
             error_message = f"Skipping this Instruction. Instruction lang is {lang_id1.upper()} or {lang_id2.upper()}, but expected {LANGUAGE.upper()}"
-            self.logger.error(error_message)
-            return error_return
+            raise TaskFailed(
+                message=error_message,
+                error_type=ERROR_TYPES['language']
+            )
         gen_answer_prompt_template = open("model_prompts/generate_answers_prompt.txt").read().strip()
         gen_answer_prompt_text = gen_answer_prompt_template.format(
                         language=LANGUAGE_NAMES.get(LANGUAGE, ["English", "eng"])[0],
@@ -143,9 +167,10 @@ class GenerateConversationJudgingFromDocumentsTask(GeneratorTask):
         # print("Checking answer language")
         lang_id1, lang_id2 = detect_language(answer_text)
         if lang_id1 != LANGUAGE and lang_id2 != LANGUAGE:
-            error_message = f"Skipping this answer. Answer lang is {lang_id1.upper()} or {lang_id2.upper()}, but expected {LANGUAGE.upper()}"
-            self.logger.error(error_message)
-            return error_return
+            raise TaskFailed(
+                message=error_message,
+                error_type=ERROR_TYPES['language']
+            )
 
         # Step 3 - Judge first-turn answer 
         judge_answer_prompt_template = open("model_prompts/answer_judging_prompt.txt").read()
@@ -159,22 +184,15 @@ class GenerateConversationJudgingFromDocumentsTask(GeneratorTask):
                 "content": judge_answer_prompt_text
             },
         ]
-        # self.logger.info(f"First-turn judging prompt: {judge_answer_prompt_text}")
         judge_resp = yield Request({"messages": messages, **self.JUDGE_PARAMS})
         judge_resp_text = judge_resp.get_text()
-        # self.logger.info(f"\nFirst-turn judge response: {judge_resp_text}")
         score_match = re.search(r'Score:\s*(\d+)/\d+', judge_resp_text)
         if not score_match:
-            error_message = "Could not find Score"
-            self.logger.error(error_message)
-            return error_return
+            raise TaskFailed(
+                message=error_message,
+                error_type=ERROR_TYPES['score_format']
+            )
         first_turn_score = int(score_match.group(1))
-        # self.logger.info(f"First-turn score={first_turn_score}")
-        # if score < SCORE_THRESH:  # Quality score threshold
-        #     error_message = f"First-turn score={score} is too low. Skipping this sample."
-        #     self.logger.error(error_message)
-        #     return error_return
-
         # Step 4 - Generate second-turn instruction
         gen_next_turn_prompt_template = open("model_prompts/generate_next_turn_instruct_prompt.txt").read()
         gen_next_turn_text = gen_next_turn_prompt_template.format(
@@ -194,16 +212,18 @@ class GenerateConversationJudgingFromDocumentsTask(GeneratorTask):
         next_turn_instruct_resp_text = next_turn_instruct_resp.get_text()
         match = re.search(r'INSTRUCTION\s*:?([\s\S]*?)CATEGORY', next_turn_instruct_resp_text)
         if match is None:
-            error_message = "Could not find keyword INSTRUCTION for the second turn"
-            self.logger.error(error_message)
-            return error_return
-        
+            raise TaskFailed(
+                message=error_message,
+                error_type=ERROR_TYPES['instruction_format']
+            )
         next_turn_instruct_text = match.group(1).strip()
         lang_id1, lang_id2 = detect_language(next_turn_instruct_text)
         if lang_id1 != LANGUAGE and lang_id2 != LANGUAGE:
             error_message = f"Skipping this instruction. Instruction lang is {lang_id1.upper()} or {lang_id2.upper()}, but expected {LANGUAGE.upper()}"
-            self.logger.error(error_message)
-            return error_return
+            raise TaskFailed(
+                message=error_message,
+                error_type=ERROR_TYPES['language']
+            )
 
         # Step 5 - Generate answer to second-turn answer
         gen_answer_prompt_template = open("model_prompts/generate_next_turn_answers_prompt.txt").read().strip()
@@ -225,8 +245,10 @@ class GenerateConversationJudgingFromDocumentsTask(GeneratorTask):
         lang_id1, lang_id2 = detect_language(next_turn_answer_text)
         if lang_id1 != LANGUAGE and lang_id2 != LANGUAGE:
             error_message = f"Skipping this answer. Answer lang is {lang_id1.upper()} or {lang_id2.upper()}, but expected {LANGUAGE.upper()}"
-            self.logger.error(error_message)
-            return error_return
+            raise TaskFailed(
+                message=error_message,
+                error_type=ERROR_TYPES['language']
+            )
         
         # Step 6 - Judge second-turn answer
         judge_answer_prompt_text = judge_answer_prompt_template.format(
@@ -239,25 +261,21 @@ class GenerateConversationJudgingFromDocumentsTask(GeneratorTask):
                 "content": judge_answer_prompt_text
             },
         ]
-        # self.logger.info(f"Second-turn judging prompt: {judge_answer_prompt_text}")
+
         judge_resp = yield Request({"messages": messages, **self.JUDGE_PARAMS})
         judge_resp_text = judge_resp.get_text()
-        # self.logger.info(f"\nSecond-turn judge response: {judge_resp_text}")
         score_match = re.search(r'Score:\s*(\d+)/\d+', judge_resp_text)
         if not score_match:
             error_message = "Could not find Score"
-            self.logger.error(error_message)
-            return error_return
-        
+            raise TaskFailed(
+                message=error_message,
+                error_type=ERROR_TYPES['score_format']
+            )
         second_turn_score = int(score_match.group(1))
-        # self.logger.info(f"Second-turn score={second_turn_score}")
-        # if score < SCORE_THRESH:  # Quality score threshold
-        #     error_message = f"Second-turn score={score} is too low. Skipping this sample."
-        #     self.logger.error(error_message)
-        #     return error_return
         
         # else:
         return {
+            "id": doc_id,
             "messages": [
                 {
                     "role": "user",
