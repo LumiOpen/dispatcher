@@ -6,17 +6,24 @@ The implementation is divided into two phases:
 1. **Phase 1**: Generate verification functions (verifiers) that can evaluate whether responses follow instructions
 2. **Phase 2**: Generate responses to queries, verify them with the functions, and create high-quality instruction-following data for fine-tuning
 
-## Phase 1: Generating Verifiers
+## Running the Complete Pipeline
 
-Phase 1 is implemented as a multi-step process with pre/post-processing steps and inference using the dispatcher. The pipeline utilizes a checkpointing mechanism (stored in `logs/phase1_checkpoint.log`) to enable restart and development.
-
-### Entry Point
-
-Run this script if you want to trigger execution of the full phase1. The checkpointing file `logs/phase1_checkpoint.log` will keep track of which step has already been executed and has logic to wait for the generation task to complete or restart if it failed.
+The entire AutoIF pipeline (both Phase 1 and Phase 2) can be executed with a single command:
 
 ```bash
-./phase1_pipeline.sh
+sh pipeline.sh [ model/path ]
 ```
+Model defaults to `meta-llama/Llama-3.3-70B-Instruct`.
+
+The pipeline utilizes a robust checkpointing mechanism (stored in `logs/state_tracker.log`) that tracks completion of each step, enabling safe restarts if any step fails or needs to be rerun.
+
+## Pipeline Structure
+
+### Phase 1: Generating Verifiers
+
+Run with ```sh phase1_pipeline.sh```
+
+Phase 1 is implemented as a multi-step process with pre/post-processing steps and inference using the dispatcher.
 
 ### Step 1: Augment Instructions
 
