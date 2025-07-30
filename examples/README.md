@@ -58,6 +58,43 @@ A few caveats for task design:
 - Tasks are required to have work available (yield requests) immediately after creation.  This simplifies TaskManager's logic substantially, but means that if a task is created and does not yield requests to process, TaskManager will continue to request work and creating new tasks from the dispatcher server, in an attempt to keep the backend vllm server busy.
 - Tasks are only intended to do lightweight processing between requests; if they run slowly, this will prevent TaskManager from keeping the backend vllm server busy.  This requirement could be removed with some modifications to the taskmanager architecture, but there has not yet been a need to do this work.
 
+### Graceful Failure Reporting in Tasks
+
+Sometimes, a task cannot be completed due to invalid input data or an unexpected result from an intermediate step. Instead of returning a custom error dictionary, the preferred way to handle this is to raise the `TaskFailed` exception.
+
+This halts the task's execution immediately and ensures a standardized `__ERROR__` payload is written as the task's final result, which is invaluable for downstream monitoring and debugging.
+
+**Example:**
+
+Suppose a model is expected to return "A" or "B", but returns something else.
+
+```python
+# In your task's task_generator method:
+from dispatcher.taskmanager.task import TaskFailed
+
+# ... get a response from a model ...
+judge_text = judge_resp.get_text()
+
+if judge_text not in ["A", "B"]:
+    # This is a controlled failure. Raise the exception.
+    raise TaskFailed(
+        message=f"Judge model returned an invalid response: '{judge_text}'",
+        error_type="judge_response_invalid"
+    )```
+
+This will produce the following clean, standardized error in your `output.jsonl` file, allowing you to easily find and analyze all failed tasks:
+
+```json
+{
+  "__ERROR__": {
+    "error": "judge_response_invalid",
+    "message": "Judge model returned an invalid response: 'C'",
+    "task_data": {
+      "messages": [{"role": "user", "content": "..."}]
+    }
+  }
+}
+
 ### Running the example task
 
 As in the `inference.py` example above, we'll prepare the prompt dataset in a
@@ -74,6 +111,28 @@ your task, configure it for your environment, and launch it.
 # Troubleshooting
 
 Some common failure modes and how to resolve them.
+
+## Understanding Tombstone Entries in Output
+
+To prevent a single problematic line in your input file from stalling an entire
+multi-node job, the Dispatcher server has a self-healing mechanism. If a work
+item fails to complete and is reissued multiple times (by default, 3 times),
+the server will stop trying and write a "tombstone" error to the corresponding
+line in the output file.
+
+This ensures the job can always make progress. If you see an entry like this in
+your `output.jsonl`, it means the input line at the same position could not be
+processed:
+
+```json
+{"__ERROR__": {"error": "max_retries_exceeded", "work_id": 1234,
+"original_content": "{\"prompt\": \"This was the problematic input...\"}"}}
+```
+
+The original_content key contains the exact input that failed, which is useful
+for debugging. You can control this behavior with the --max-retries flag when
+starting the dispatcher-server.
+
 
 ## OOM errors
 
@@ -109,4 +168,6 @@ from huggingface_hub import hf_hub_download
 
 path = hf_hub_download(repo_id="meta-llama/Llama-2-7b-hf", filename="config.json")
 print("Cache path:", path)
+
+
 ```

@@ -2,7 +2,7 @@
 from typing import Any, Dict, Generator, List, Union
 
 from dispatcher.taskmanager.backend.request import Request, Response
-from dispatcher.taskmanager.task.base import GeneratorTask
+from dispatcher.taskmanager.task import GeneratorTask, TaskFailed
 
 __all__ = ["CompareTwoResponsesTask"]
 
@@ -59,8 +59,24 @@ class CompareTwoResponsesTask(GeneratorTask):
             },
         ]
         judge_resp: Response = yield Request({"messages": judge_messages, **self.JUDGE_PARAMS})
-        judge_text = judge_resp.get_text().strip().upper()
-        winner_is_a = judge_text.startswith("A")
+        judge_text = judge_resp.get_text()
+
+        if not judge_text:
+            raise TaskFailed(
+                message="Judge model returned an empty empty or invalid response.",
+                error_type="judge_response_invalid"
+            )
+
+        judge_text = judge_text.strip().upper()
+        
+        winner_is_a = False
+        if judge_text.startswith("A"):
+            winner_is_a = True
+        elif not judge_text.startswith("B"):
+            raise TaskFailed(
+                message=f"Judge model returned an unexpected response: '{judge_text}'",
+                error_type="judge_response_invalid"
+            )
 
         if winner_is_a:
             pref_resp, dis_resp = resp_a, resp_b
@@ -72,7 +88,4 @@ class CompareTwoResponsesTask(GeneratorTask):
             "messages": messages,
             "preferred_text": pref_resp.get_text(),
             "dispreferred_text": dis_resp.get_text(),
-            # optionally, return the raw response dict, as well
-            #"preferred_raw": pref_resp.content,
-            #"dispreferred_raw": dis_resp.content,
         }
