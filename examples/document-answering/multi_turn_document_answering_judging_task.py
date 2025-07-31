@@ -227,7 +227,7 @@ class GenerateConversationJudgingFromDocumentsTask(GeneratorTask):
                     language=LANGUAGE_NAMES.get(LANGUAGE, ["English", "eng"])[0],
                     document=document,
                     conversation=existing_conv,
-                    category=categories[1]
+                    category=categories[turn]
                 )
                 # self.logger.info(f"gen_next_turn_text: {gen_next_turn_text}")
                 messages = [
