@@ -1,8 +1,8 @@
 #!/bin/bash
 #SBATCH --job-name=multisynt_judge
-#SBATCH --nodes=1
-#SBATCH --partition=dev-g
-#SBATCH --time=00-02:00:00
+#SBATCH --nodes=64
+#SBATCH --partition=standard-g
+#SBATCH --time=02-00:00:00
 #SBATCH --ntasks-per-node=4
 #SBATCH --mem=480G
 #SBATCH --cpus-per-task=7
@@ -17,8 +17,8 @@
 ###
 # configure the following.
 
-INPUT_FILE=finnish.jsonl
-OUTPUT_FILE=finnish_judged.jsonl
+INPUT_FILE=merged.jsonl
+OUTPUT_FILE=merged_output.jsonl
 TASK=multisynt_judge.MultiSyntJudge
 
 # use this if you need to run from a development/feature branch
