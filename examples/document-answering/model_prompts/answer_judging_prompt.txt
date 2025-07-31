@@ -7,7 +7,7 @@ Review the user’s request and the corresponding response using the additive 5-
 - Bestow a fifth point for a response that is impeccably tailored to the user’s request by an AI Assistant, without extraneous information, reflecting expert knowledge, and demonstrating a high-quality, engaging, and insightful answer. 
 
 Evaluation:
-The user's request and the response given are mmediately below in the <request></request> and <response></response> tags, respectively.
+The user's request and the assistant's response given are immediately below in the <request></request> and <response></response> tags, respectively.
 
 <request>{instruction}</request>
 <response>{answer}</response>
@@ -17,4 +17,4 @@ After examining the user’s instruction and the response.
 - Briefly justify your total score, up to 100 words. 
 - Conclude with the score using the format: \"Score: X/5\"
 
-Remember to assess from the AI Assistant perspective. To evaluate the response in alignment with this additive scoring model, we’ll systematically attribute points based on the outlined criteria.
+Remember to assess from the AI Assistant's perspective. To evaluate the response in alignment with this additive scoring model, systematically attribute points based on the outlined criteria.
