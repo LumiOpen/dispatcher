@@ -17,18 +17,19 @@ Instructions are used to fine-tune the model’s behavior, helping it understand
 6. Roleplay and Simulation: Inhabiting a character/persona
 7. Advisory: Asking for advice
 8. Domain-Specific Knowledge: Humanity, history, and social studies, Other (specific domains could be added here as needed)
-9. General / Miscellaneous
+9. General / Miscellaneous: Questions about general knowledge
 
 ## Definition of a \"Conversation\":
-In the context of an LLM, a conversation is composed of multiple turns where each turn is composed of instruction and an answer. A turn always starts with an instruction.
+In the context of an LLM, a conversation is composed of one or multiple turns where each turn is composed of an instruction from the user and an answer the assisant. A turn always starts with the user's instruction.
 
 ## Task Description:
-Considering the definition of an Instruction and Conversation, analyze the following {language} document and conversation based on the document. Perform a three-step analysis:
-<document>{document}</document>
+Considering the definition of an Instruction and Conversation, analyze the following {language} document and a conversation based on the document. Then perform a three-step analysis:
+<document>
+{document}
+</document>
 
 <conversation>
-    <instruction> {instruction} </instruction>
-    <answer> {answer} </answer>
+{conversation}
 </conversation>
 
 Firstly, try to give a short summary in {language} of the document. This should help you better understand the document.
@@ -40,7 +41,7 @@ Finally, categorize the instruction into one of the categories defined above.
 Provide your final response in the following format:
 
 SUMMARY: <summary of the document in {language}>
-INSTRUCTION: <{language} instruction for which the answer is in the conversation or document above> 
+INSTRUCTION: <{language} instruction for which the answer is in the conversation or the document above> 
 CATEGORY: <one of the categories above>
 
 NOTE: \"SUMMARY\", \"INSTRUCTION\" and \"CATEGORY\" keywords must be kept in English without any change while the generated summary and instruction should be in {language}.

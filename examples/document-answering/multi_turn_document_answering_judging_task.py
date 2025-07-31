@@ -13,11 +13,10 @@ import logging
 
 __all__ = ["GenerateConversationJudgingFromDocumentsTask"]
 
-SCORE_THRESH = 4  # Quality score threshold for the answer
 LANGUAGE=os.environ.get("LANGUAGE")
-
 MIN_DOC_LEN = 100
 MAX_DOC_LEN = 30000
+MAX_TURNS = 4
 
 ERROR_TYPES = {
     "document_len": "document_length_error",
@@ -86,13 +85,20 @@ class GenerateConversationJudgingFromDocumentsTask(GeneratorTask):
     
     logger = logging.getLogger(__name__)
 
+    def convert_conversation_to_string(self, conversation):
+        messages = conversation['messages']
+        string_conv = ""
+        for msg in messages:
+            if msg['role'] == 'assistant':
+                string_conv += f"Assistant: {msg['content']}\n\n"
+            else:
+                string_conv += f"User: {msg['content']}\n"
+        
+        return string_conv.strip()
+
     # --------------- generator ---------------
     def task_generator(self) -> Generator[Union[Request, List[Request]], Any, Dict[str, Any]]:
-        # self.data is prepopulated with the data from the jsonl row being
-        # processed
-        error_return = {
-                        "messages": [{"error": ""}]
-                }
+        # self.data is prepopulated with the data from the jsonl row being processed
         document = self.data.get("text")
         doc_id = self.data.get("id")
         lang_id1, lang_id2 = detect_language(document)
@@ -114,186 +120,195 @@ class GenerateConversationJudgingFromDocumentsTask(GeneratorTask):
                 message=error_message,
                 error_type=ERROR_TYPES['language']
             )
-        # draw two random categories without replacement
-        categories = random.sample(list(INSTRUCTION_CATEGORIES.keys()), 2)
-        gen_instruct_prompt_template = open("model_prompts/generate_instructions_prompt.txt").read().strip()
-        gen_instruct_prompt_text = gen_instruct_prompt_template.format(
-                        language=LANGUAGE_NAMES.get(LANGUAGE, ["English", "eng"])[0],
-                        document=document,
-                        category=categories[0]
+        
+        # draw number of turns
+        turns = random.sample(range(1, MAX_TURNS+1), 1)[0]
+        # draw a random category for each turn without replacement
+        categories = random.sample(list(INSTRUCTION_CATEGORIES.keys()), turns)
+        return_dict = {
+                        "id": doc_id,
+                        "turns": turns,
+                    }
+        for turn in range(turns):
+            if turn == 0:
+                gen_instruct_prompt_template = open("model_prompts/generate_instructions_prompt.txt").read().strip()
+                gen_instruct_prompt_text = gen_instruct_prompt_template.format(
+                            language=LANGUAGE_NAMES.get(LANGUAGE, ["English", "eng"])[0],
+                            document=document,
+                            category=categories[turn]
+                            )
+                messages = [
+                    {
+                        "role": "user",
+                        "content": gen_instruct_prompt_text
+                    },
+                ]
+
+                # Step 1 – Generate instruction from a document
+                instruct_resp: Response = yield Request({"messages": messages, **self.GEN_PARAMS})
+                instruct_resp_text = instruct_resp.get_text()
+                match = re.search(r'INSTRUCTION\s*:?([\s\S]*?)CATEGORY', instruct_resp_text)
+                if match is None:
+                    error_message = f"Could not find keyword INSTRUCTION for the first-turn"
+                    raise TaskFailed(
+                        message=error_message,
+                        error_type=ERROR_TYPES['instruction_format']
+                    )
+                instruct_text = match.group(1).strip()
+
+                lang_id1, lang_id2 = detect_language(instruct_text)
+                if lang_id1 != LANGUAGE and lang_id2 != LANGUAGE:
+                    error_message = f"Skipping this Instruction. Instruction lang is {lang_id1.upper()} or {lang_id2.upper()}, but expected {LANGUAGE.upper()}"
+                    raise TaskFailed(
+                        message=error_message,
+                        error_type=ERROR_TYPES['language']
+                    )
+                gen_answer_prompt_template = open("model_prompts/generate_answers_prompt.txt").read().strip()
+                gen_answer_prompt_text = gen_answer_prompt_template.format(
+                                language=LANGUAGE_NAMES.get(LANGUAGE, ["English", "eng"])[0],
+                                document=document,
+                                instruction=instruct_text,
                         )
-        messages = [
-            {
-                "role": "user",
-                "content": gen_instruct_prompt_text
-            },
-        ]
+                messages = [
+                    {
+                        "role": "user",
+                        "content": gen_answer_prompt_text
+                    },
+                ]
 
-        # Step 1 – Generate instruction from a document
-        instruct_resp: Response = yield Request({"messages": messages, **self.GEN_PARAMS})
-        instruct_resp_text = instruct_resp.get_text()
-        match = re.search(r'INSTRUCTION\s*:?([\s\S]*?)CATEGORY', instruct_resp_text)
-        if match is None:
-            error_message = f"Could not find keyword INSTRUCTION for the first-turn"
-            raise TaskFailed(
-                message=error_message,
-                error_type=ERROR_TYPES['instruction_format']
-            )
-        instruct_text = match.group(1).strip()
+                # Step 2 – Generate the answer to the instruction
+                answer_resp: Response = yield Request({"messages": messages, **self.GEN_PARAMS})
+                answer_text = answer_resp.get_text().strip()
+                # print("Checking answer language")
+                lang_id1, lang_id2 = detect_language(answer_text)
+                if lang_id1 != LANGUAGE and lang_id2 != LANGUAGE:
+                    raise TaskFailed(
+                        message=error_message,
+                        error_type=ERROR_TYPES['language']
+                    )
 
-        lang_id1, lang_id2 = detect_language(instruct_text)
-        if lang_id1 != LANGUAGE and lang_id2 != LANGUAGE:
-            error_message = f"Skipping this Instruction. Instruction lang is {lang_id1.upper()} or {lang_id2.upper()}, but expected {LANGUAGE.upper()}"
-            raise TaskFailed(
-                message=error_message,
-                error_type=ERROR_TYPES['language']
-            )
-        gen_answer_prompt_template = open("model_prompts/generate_answers_prompt.txt").read().strip()
-        gen_answer_prompt_text = gen_answer_prompt_template.format(
-                        language=LANGUAGE_NAMES.get(LANGUAGE, ["English", "eng"])[0],
-                        document=document,
-                        instruction=instruct_text,
+                # Step 3 - Judge first-turn answer 
+                judge_answer_prompt_template = open("model_prompts/answer_judging_prompt.txt").read()
+                judge_answer_prompt_text = judge_answer_prompt_template.format(
+                            instruction=instruct_text, 
+                            answer=answer_text
+                        )
+                messages = [
+                    {
+                        "role": "user",
+                        "content": judge_answer_prompt_text
+                    },
+                ]
+                judge_resp = yield Request({"messages": messages, **self.JUDGE_PARAMS})
+                judge_resp_text = judge_resp.get_text()
+                score_match = re.search(r'Score:\s*(\d+)/\d+', judge_resp_text)
+                if not score_match:
+                    raise TaskFailed(
+                        message=error_message,
+                        error_type=ERROR_TYPES['score_format']
+                    )
+                first_turn_score = int(score_match.group(1))
+                return_dict["messages"] = [
+                            {
+                                "role": "user",
+                                "content": instruct_text
+                            },
+                            {
+                                "role": "assistant",
+                                "content": answer_text,
+                                "score": first_turn_score
+                            }
+                        ]
+            else: 
+                # Step 4 - Generate instruction for the next turn
+                existing_conv = self.convert_conversation_to_string(return_dict)
+                gen_next_turn_prompt_template = open("model_prompts/generate_next_turn_instruct_prompt.txt").read()
+                gen_next_turn_text = gen_next_turn_prompt_template.format(
+                    language=LANGUAGE_NAMES.get(LANGUAGE, ["English", "eng"])[0],
+                    document=document,
+                    conversation=existing_conv,
+                    category=categories[1]
                 )
-        messages = [
-            {
-                "role": "user",
-                "content": gen_answer_prompt_text
-            },
-        ]
+                # self.logger.info(f"gen_next_turn_text: {gen_next_turn_text}")
+                messages = [
+                    {
+                        "role": "user",
+                        "content": gen_next_turn_text
+                    }, 
+                ]
+                next_turn_instruct_resp: Response = yield Request({"messages": messages, **self.GEN_PARAMS})
+                next_turn_instruct_resp_text = next_turn_instruct_resp.get_text()
+                match = re.search(r'INSTRUCTION\s*:?([\s\S]*?)CATEGORY', next_turn_instruct_resp_text)
+                if match is None:
+                    raise TaskFailed(
+                        message=error_message,
+                        error_type=ERROR_TYPES['instruction_format']
+                    )
+                next_turn_instruct_text = match.group(1).strip()
+                lang_id1, lang_id2 = detect_language(next_turn_instruct_text)
+                if lang_id1 != LANGUAGE and lang_id2 != LANGUAGE:
+                    error_message = f"Skipping this instruction. Instruction lang is {lang_id1.upper()} or {lang_id2.upper()}, but expected {LANGUAGE.upper()}"
+                    raise TaskFailed(
+                        message=error_message,
+                        error_type=ERROR_TYPES['language']
+                    )
 
-        # Step 2 – Generate the answer to the instruction
-        answer_resp: Response = yield Request({"messages": messages, **self.GEN_PARAMS})
-        answer_text = answer_resp.get_text().strip()
-        # print("Checking answer language")
-        lang_id1, lang_id2 = detect_language(answer_text)
-        if lang_id1 != LANGUAGE and lang_id2 != LANGUAGE:
-            raise TaskFailed(
-                message=error_message,
-                error_type=ERROR_TYPES['language']
-            )
-
-        # Step 3 - Judge first-turn answer 
-        judge_answer_prompt_template = open("model_prompts/answer_judging_prompt.txt").read()
-        judge_answer_prompt_text = judge_answer_prompt_template.format(
-                    instruction=instruct_text, 
-                    answer=answer_text
+                # Step 5 - Generate answer to the new turn's instruction
+                return_dict["messages"].append(
+                    {
+                        "role": "user",
+                        "content": next_turn_instruct_text
+                    }
                 )
-        messages = [
-            {
-                "role": "user",
-                "content": judge_answer_prompt_text
-            },
-        ]
-        judge_resp = yield Request({"messages": messages, **self.JUDGE_PARAMS})
-        judge_resp_text = judge_resp.get_text()
-        score_match = re.search(r'Score:\s*(\d+)/\d+', judge_resp_text)
-        if not score_match:
-            raise TaskFailed(
-                message=error_message,
-                error_type=ERROR_TYPES['score_format']
-            )
-        first_turn_score = int(score_match.group(1))
-        # Step 4 - Generate second-turn instruction
-        gen_next_turn_prompt_template = open("model_prompts/generate_next_turn_instruct_prompt.txt").read()
-        gen_next_turn_text = gen_next_turn_prompt_template.format(
-            language=LANGUAGE_NAMES.get(LANGUAGE, ["English", "eng"])[0],
-            document=document,
-            instruction=instruct_text,
-            answer=answer_text,
-            category=categories[1]
-        )
-        messages = [
-            {
-                "role": "user",
-                "content": gen_next_turn_text
-            }, 
-        ]
-        next_turn_instruct_resp: Response = yield Request({"messages": messages, **self.GEN_PARAMS})
-        next_turn_instruct_resp_text = next_turn_instruct_resp.get_text()
-        match = re.search(r'INSTRUCTION\s*:?([\s\S]*?)CATEGORY', next_turn_instruct_resp_text)
-        if match is None:
-            raise TaskFailed(
-                message=error_message,
-                error_type=ERROR_TYPES['instruction_format']
-            )
-        next_turn_instruct_text = match.group(1).strip()
-        lang_id1, lang_id2 = detect_language(next_turn_instruct_text)
-        if lang_id1 != LANGUAGE and lang_id2 != LANGUAGE:
-            error_message = f"Skipping this instruction. Instruction lang is {lang_id1.upper()} or {lang_id2.upper()}, but expected {LANGUAGE.upper()}"
-            raise TaskFailed(
-                message=error_message,
-                error_type=ERROR_TYPES['language']
-            )
+                existing_conv = self.convert_conversation_to_string(return_dict)
+                gen_answer_prompt_template = open("model_prompts/generate_next_turn_answers_prompt.txt").read().strip()
+                gen_answer_prompt_text = gen_answer_prompt_template.format(
+                                language=LANGUAGE_NAMES.get(LANGUAGE, ["English", "eng"])[0],
+                                document=document,
+                                conversation=existing_conv
+                        )
+                messages = [
+                    {
+                        "role": "user",
+                        "content": gen_answer_prompt_text
+                    },
+                ]
+                answer_resp: Response = yield Request({"messages": messages, **self.GEN_PARAMS})
+                next_turn_answer_text = answer_resp.get_text().strip()
+                lang_id1, lang_id2 = detect_language(next_turn_answer_text)
+                if lang_id1 != LANGUAGE and lang_id2 != LANGUAGE:
+                    error_message = f"Skipping this answer. Answer lang is {lang_id1.upper()} or {lang_id2.upper()}, but expected {LANGUAGE.upper()}"
+                    raise TaskFailed(
+                        message=error_message,
+                        error_type=ERROR_TYPES['language']
+                    )
+                
+                # Step 6 - Judge second-turn answer
+                judge_answer_prompt_text = judge_answer_prompt_template.format(
+                            instruction=next_turn_instruct_text, 
+                            answer=next_turn_answer_text
+                        )
+                messages = [
+                    {
+                        "role": "user",
+                        "content": judge_answer_prompt_text
+                    },
+                ]
 
-        # Step 5 - Generate answer to second-turn answer
-        gen_answer_prompt_template = open("model_prompts/generate_next_turn_answers_prompt.txt").read().strip()
-        gen_answer_prompt_text = gen_answer_prompt_template.format(
-                        language=LANGUAGE_NAMES.get(LANGUAGE, ["English", "eng"])[0],
-                        document=document,
-                        first_turn_instruction=instruct_text,
-                        first_turn_answer=answer_text,
-                        second_turn_instruction=next_turn_instruct_text
-                )
-        messages = [
-            {
-                "role": "user",
-                "content": gen_answer_prompt_text
-            },
-        ]
-        answer_resp: Response = yield Request({"messages": messages, **self.GEN_PARAMS})
-        next_turn_answer_text = answer_resp.get_text().strip()
-        lang_id1, lang_id2 = detect_language(next_turn_answer_text)
-        if lang_id1 != LANGUAGE and lang_id2 != LANGUAGE:
-            error_message = f"Skipping this answer. Answer lang is {lang_id1.upper()} or {lang_id2.upper()}, but expected {LANGUAGE.upper()}"
-            raise TaskFailed(
-                message=error_message,
-                error_type=ERROR_TYPES['language']
-            )
-        
-        # Step 6 - Judge second-turn answer
-        judge_answer_prompt_text = judge_answer_prompt_template.format(
-                    instruction=next_turn_instruct_text, 
-                    answer=next_turn_answer_text
-                )
-        messages = [
-            {
-                "role": "user",
-                "content": judge_answer_prompt_text
-            },
-        ]
-
-        judge_resp = yield Request({"messages": messages, **self.JUDGE_PARAMS})
-        judge_resp_text = judge_resp.get_text()
-        score_match = re.search(r'Score:\s*(\d+)/\d+', judge_resp_text)
-        if not score_match:
-            error_message = "Could not find Score"
-            raise TaskFailed(
-                message=error_message,
-                error_type=ERROR_TYPES['score_format']
-            )
-        second_turn_score = int(score_match.group(1))
-        
-        # else:
-        return {
-            "id": doc_id,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": instruct_text
-                },
-                {
-                    "role": "assistant",
-                    "content": answer_text,
-                    "score": first_turn_score
-                },
-                {
-                    "role": "user",
-                    "content": next_turn_instruct_text
-                },
-                {
+                judge_resp = yield Request({"messages": messages, **self.JUDGE_PARAMS})
+                judge_resp_text = judge_resp.get_text()
+                score_match = re.search(r'Score:\s*(\d+)/\d+', judge_resp_text)
+                if not score_match:
+                    error_message = "Could not find Score"
+                    raise TaskFailed(
+                        message=error_message,
+                        error_type=ERROR_TYPES['score_format']
+                    )
+                next_turn_score = int(score_match.group(1))
+                return_dict["messages"].append({
                     "role": "assistant",
                     "content": next_turn_answer_text,
-                    "score": second_turn_score
-                }
-            ],
-        }
+                    "score": next_turn_score
+                })
+            
+        return return_dict

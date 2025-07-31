@@ -1,14 +1,14 @@
-Consider the following {language} document and conversation below. The conversation has one complete turn with an instruction and an answer and the start of the second turn with a new instruction.
-<document> {document} </document>
+Consider the following {language} document and conversation below. The conversation has one or more complete turns---a complete turn is composed of a user's instruction and the assistant's answer---and the start of the next turn with a new instruction from the user.
+<document> 
+{document} 
+</document>
 
 <conversation> 
-    <first_turn_instruction> {first_turn_instruction} </first_turn_instruction>
-    <first_turn_answer> {first_turn_answer} </first_turn_answer>
-    <second_turn_instruction> {second_turn_instruction} </second_turn_instruction>
+{conversation}
 </conversation>
 
-Given the above user’s new instruction, and the context provided in the document and in the conversation, provide a response to the second turn instruction in {language}. Your response should include, as much as possible, the information presented in the document and conversation while making the flow more clear, useful, relevant and providing a direct response to the instruction. It should be written to be impeccably tailored to the user’s instruction as if written by an AI Assistant, without extraneous information, reflecting expert knowledge, and demonstrating a high-quality, engaging, and insightful answer. Try not to add new facts that are not already in the document.
+Given the user’s instruction in the next turn, and the context provided in the document and in the previous turns of the conversation, provide a response to the instruction in {language}. Your response should include, as much as possible, the information presented in the document and the conversation while making the flow more clear, useful, relevant and providing a direct response to the instruction. It should be written to be impeccably tailored to the user’s instruction as if written by an AI Assistant, without extraneous information, reflecting expert knowledge, and demonstrating a high-quality, engaging, and insightful answer. Do not add new facts that are not in the document.
 
 Since the user only has access to the conversation but NOT the document, your answer cannot directly reference the document. The document serves only as supporting context for the instruction.
 
-NOTE: Since the instruction is in {language}, your response should also be in {language}. Provide ONLY the response to the second turn instruction.
+NOTE: Since the instruction is in {language}, your response should also be in {language}. Provide ONLY the response to the new instruction.
