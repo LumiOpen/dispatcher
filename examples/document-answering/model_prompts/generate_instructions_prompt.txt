@@ -16,12 +16,14 @@ Instructions are used to fine-tune the model’s behavior, helping it understand
 5. Text Transformation: Rewriting
 6. Roleplay and Simulation: Inhabiting a character/persona
 7. Advisory: Asking for advice
-8. Domain-Specific Knowledge: Humanity, history, and social studies, Other (specific domains could be added here as needed)
-9. General / Miscellaneous
+8. Domain-Specific Knowledge: Humanities, history, social studies, life sciences, natural sciences, art
+9. General: Questions about general knowledge
 
 ## Task Description:
 Considering the definition of an Instruction, analyze the following {language} web document and perform a three-step analysis:
-<document> {document} </document>
+<document> 
+{document} 
+</document>
 
 Firstly, try to give a short summary in {language} of the document. This should help you better understand the document.
 

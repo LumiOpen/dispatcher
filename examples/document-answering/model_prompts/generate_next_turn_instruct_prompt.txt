@@ -16,8 +16,8 @@ Instructions are used to fine-tune the model’s behavior, helping it understand
 5. Text Transformation: Rewriting
 6. Roleplay and Simulation: Inhabiting a character/persona
 7. Advisory: Asking for advice
-8. Domain-Specific Knowledge: Humanity, history, and social studies, Other (specific domains could be added here as needed)
-9. General / Miscellaneous: Questions about general knowledge
+8. Domain-Specific Knowledge: Humanities, history, social studies, life sciences, natural sciences, art
+9. General: Questions about general knowledge
 
 ## Definition of a \"Conversation\":
 In the context of an LLM, a conversation is composed of one or multiple turns where each turn is composed of an instruction from the user and an answer the assisant. A turn always starts with the user's instruction.
