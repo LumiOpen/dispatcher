@@ -28,12 +28,28 @@ def concat_queries(
     
     # Load queries
     queries = []
+    skipped_queries = 0
     if queries_file is not None:
         with open(queries_file, 'r') as f:
             for line in f:
                 line = line.strip()
-                if len(line) < query_max_len:
-                    queries.append(line)
+                if line:  # Skip empty lines
+                    try:
+                        item = json.loads(line)
+                        query = {}
+                        if query_column_name in item and len(item[query_column_name]) < query_max_len:
+                            query['query'] = item[query_column_name]
+                        else:
+                            skipped_queries += 1
+                            continue
+                        if response_column_name in item:
+                            query['response'] = item[response_column_name]
+                        # add the rest as metadata
+                        query['metadata'] = {k: v for k, v in item.items() if k not in ['query', 'response']}
+                        queries.append(query)
+                    except json.JSONDecodeError as e:
+                        print(f"Error parsing JSON line: {e}")
+                        continue
     elif queries_dataset is not None:
         dataset = load_dataset(queries_dataset)
         for item in dataset['train']:
@@ -41,6 +57,7 @@ def concat_queries(
             if query_column_name in item and len(item[query_column_name]) < query_max_len:
                 query['query'] = item[query_column_name]
             else:
+                skipped_queries += 1
                 continue
             if response_column_name in item:
                 query['response'] = item[response_column_name]
@@ -52,22 +69,30 @@ def concat_queries(
         print("No queries file or dataset provided")
         return 0
     
+    print("Skipped queries due to length or missing fields:", skipped_queries)
+    
     # Ensure we have some queries
     if len(queries) < 10:
         print("Warning: Very few queries available")
     
     # Concatenate
     count = 0
+    query_index = 0
     with open(output_file, 'w') as f:
         for verifier in verifiers_list:
             instruction = verifier['instruction']
             instruction_id = verifier['instruction_id']
             
-            # Select queries for this instruction
-            selected_queries = random.sample(queries, min(queries_per_instruction, len(queries)))
-            
-            for query in selected_queries:
-                prompt = f"{query['query']} {instruction}"
+            # Select queries for this instruction continuously from the dataset
+            for _ in range(queries_per_instruction):
+                if query_index >= len(queries):
+                    break  # End of dataset reached
+                    
+                query = queries[query_index]
+                query_index += 1
+                
+                prompt_template = open("model_prompts/generate_response_prompt.txt").read().strip()
+                prompt = prompt_template.format(query=query['query'], instruction=instruction)
                 
                 output = {
                     'instruction_id': instruction_id,
