@@ -1,10 +1,11 @@
 """Example task – two responses + judge"""
 from typing import Any, Dict, Generator, List, Union
+import re
 
 from dispatcher.taskmanager.backend.request import Request, Response
 from dispatcher.taskmanager.task.base import GeneratorTask
 
-from src.utils.response_handler import response_verify, extract_score
+from src.utils.response_handler import response_verify, extract_score, construct_scoring_messages
 
 __all__ = ["GenerateQueryResponsesTask"]
 
@@ -47,29 +48,34 @@ class GenerateQueryResponsesTask(GeneratorTask):
         # Step 1 – get response for the query
         # print(f"queries_messages: {queries_messages}")
         queries_resp: Response = yield Request({"messages": queries_messages, **self.GEN_PARAMS})
-        # this function performs response verification
-        # and constructs scoring prompt
-        # based on by AutoIF/code/7_query_verification.py
-        # the output can be None if the response did not pass the verification
-        query_scoring_msgs = response_verify(queries_resp.get_text(), self.data)
         response_text = queries_resp.get_text()
+        # this function performs response verification
+        # based on by AutoIF/code/7_query_verification.py
+        # if the response did not pass the verification, it will raise a TaskFailed exception
+        response_verify(response_text, self.data)
 
-        score = None
-        if query_scoring_msgs is not None:
-            # Step 2 - score query response
-            scored_resp: Response = yield Request({"messages": query_scoring_msgs, **self.GEN_PARAMS})
-            # this function extracts the score from the response
-            score = extract_score(scored_resp.get_text())
+        scoring_messages = construct_scoring_messages(response_text, self.data)
+
+        # Step 2 - score query response
+        scored_resp: Response = yield Request({"messages": scoring_messages, **self.GEN_PARAMS})
+        scoring_text = scored_resp.get_text()
+        # this function extracts the score from the response. 
+        # If the score is not found, it will raise a TaskFailed exception
+        score = extract_score(scoring_text)
+
+        # Add fullstop if query doesn't end with punctuation
+        query = self.data.get("query", "")
+        if not re.search(r'[.!?]$', query):
+            query += "."
         
         messages = [
             {
                 "role": "user", 
-                "content": self.data.get("prompt")
+                "content": f"{query} {self.data.get('instruction')}"
             },
             {
                 "role": "assistant", 
                 "content": response_text
-                
             },
         ]
 
@@ -84,5 +90,6 @@ class GenerateQueryResponsesTask(GeneratorTask):
             'cases': self.data.get("cases"),
             'prompt': self.data.get("prompt"),
             'messages': messages,
-            'score': score # None if errors
+            'score': score,
+            'scoring_response': scoring_text
         }

@@ -6,12 +6,14 @@ import os
 from src.utils.lang_id import detect_language
 from src.utils.function_executor import FunctionExecutor
 
+from dispatcher.taskmanager.task.base import TaskFailed
+
 LANGUAGE=os.environ.get("LANGUAGE")
 
 def response_verify(response: str, data: Dict[str, Any]) -> Optional[List[Dict[str, str]]]:
     """
     Verifies the query response using all provided evaluation functions and checks
-    that the response is in Finnish language.
+    that the response is in the target language.
     
     Args:
         response: The response to verify
@@ -21,25 +23,30 @@ def response_verify(response: str, data: Dict[str, Any]) -> Optional[List[Dict[s
         List of messages for scoring or None if verification failed
     """
     # First check if the response is in the desired language
+    # Get language prediction
+    # lang_code1 is the three-letter code, lang_code2 is the two-letter code
     try:
-
-        # Get language prediction
-        # lang_code1 is the three-letter code, lang_code2 is the two-letter code
         lang_code1, lang_code2 = detect_language(response)
-        if lang_code1 != LANGUAGE:
-            print(f"Response language is {lang_code1} ({lang_code2}). Expected {LANGUAGE}.")
-            return None
-            
     except Exception as e:
-        print(f"Language identification error: {e}")
-        # If language check fails, continue with other verifications
-        # Alternative: return None to fail this verification
+        raise TaskFailed(
+            message=f"Language detection error: {e}",
+            error_type="language_detection"
+        )
+
+    valid_lang_ids = {lang_code1, lang_code2} if lang_code2 is not None else {lang_code1}
+    if LANGUAGE not in valid_lang_ids:
+        raise TaskFailed(
+            message=f"The response is not in the expected language {LANGUAGE}, but got {valid_lang_ids} <response>{response}</response>",
+            error_type="invalid_language"
+        )
     
     # Parse the evaluation functions
     eval_func_data = data.get('eval_func', [])
     if not eval_func_data:
-        print("No evaluation functions found")
-        return None
+        raise TaskFailed(
+            message=f"No evaluation functions found",
+            error_type="no_eval_functions"
+        )
     
     # Use FunctionExecutor for safe function execution
     executor = FunctionExecutor()
@@ -53,16 +60,23 @@ def response_verify(response: str, data: Dict[str, Any]) -> Optional[List[Dict[s
             if result is not None:
                 acc.append(result)
         except Exception as e:
-            print(f"Error executing evaluation function: {e}")
-            continue
+            raise TaskFailed(
+                message=f"Error executing evaluation function {func}: {e} <response>{response}</response>",
+                error_type="function_execution_failed"
+            )
     
     # Calculate accuracy as in the original code
-    print(f"Accuracy scores: {acc}")
     acc_value = np.mean(acc) if acc else 0
     
     # Filter out responses with acc <= 0
     if acc_value <= 0:
-        return None
+        raise TaskFailed(
+            message=f"The response did not pass the verification with accuracy {acc_value}. <response>{response}</response>",
+            error_type="response_verification_failed"
+        )
+
+def construct_scoring_messages(response: str, data: Dict[str, Any]) -> List[Dict[str, str]]:
+    """ Constructs the scoring prompt based on the response and data. """
     
     # If passed verification, construct the scoring prompt
     scoring_prompt = open("model_prompts/scoring_prompt.txt").read().strip()
@@ -92,11 +106,16 @@ def extract_score(scored_text: str) -> Optional[int]:
     score_match = re.search(r'Score: (\d+)$', scored_text)
     
     if not score_match:
-        return None
+        raise TaskFailed(
+            message=f"Score not found in the scoring response: {scored_text}",
+            error_type="score_extraction_failed"
+        )
     
     try:
         score = int(score_match.group(1))
     except Exception as e:
-        print(f"Error extracting score: {e}")
-        return None
+        raise TaskFailed(
+            message=f"Error converting score to integer: {e}",
+            error_type="score_conversion_failed"
+        )
     return score
