@@ -7,7 +7,7 @@ Consider the following {language} document and conversation below. The conversat
 {conversation}
 </conversation>
 
-Given the user’s instruction in the next turn, and the context provided in the document and in the previous turns of the conversation, provide a response to the instruction in {language}. Your response should include, as much as possible, the information presented in the document and the conversation while making the flow more clear, useful, relevant and providing a direct response to the instruction. It should be written to be impeccably tailored to the user’s instruction as if written by an AI Assistant, without extraneous information, reflecting expert knowledge, and demonstrating a high-quality, engaging, and insightful answer. Do not add new facts that are not in the document.
+Given the user’s instruction in the next turn, and the context provided in the document and in the previous turns of the conversation, provide a response to the instruction in {language}. Your response should include, as much as possible, the information presented in the document and the conversation while making the flow more clear, useful, relevant and providing a direct response to the instruction. The response should be written in an engaging and conversational style, without extraneous information, reflecting expert knowledge, and demonstrating a high-quality, engaging, and insightful answer. Do not add new facts that are not in the document. Answer the instruction directly and refrain from repeating or rephrasing the instruction in your response.
 
 Since the user only has access to the conversation but NOT the document, your answer cannot directly reference the document. The document serves only as supporting context for the instruction.
 

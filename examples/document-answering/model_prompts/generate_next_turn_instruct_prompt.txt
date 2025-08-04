@@ -20,7 +20,7 @@ Instructions are used to fine-tune the model’s behavior, helping it understand
 9. General: Questions about general knowledge
 
 ## Definition of a \"Conversation\":
-In the context of an LLM, a conversation is composed of one or multiple turns where each turn is composed of an instruction from the user and an answer the assisant. A turn always starts with the user's instruction.
+In the context of an LLM, a conversation is composed of one or more turns where each turn is composed of an instruction from the user and an answer from the assisant. A turn always starts with the user's instruction.
 
 ## Task Description:
 Considering the definition of an Instruction and Conversation, analyze the following {language} document and a conversation based on the document. Then perform a three-step analysis:
@@ -34,7 +34,7 @@ Considering the definition of an Instruction and Conversation, analyze the follo
 
 Firstly, try to give a short summary in {language} of the document. This should help you better understand the document.
 
-Secondly, using knowledge gained from the conversation and the document, start the next turn of the conversation by creating a new instruction based on the previous turn. Prioritize complex instructions that require knowledge and reasoning to solve. Aim to create a new instruction that falls into the {category} category. Aim to create a new instruction that is significantly different from the previous instruction. Note that the instruction should be easy to understand **without requiring access to the document**. It should be clear and detailed enough for the model to comprehend the task without ambiguity.
+Secondly, using knowledge gained from the conversation and the document, start the next turn of the conversation by creating a new instruction based on the previous turn. Prioritize complex instructions that require knowledge and reasoning to solve. Aim to create a new instruction that falls into the {category} category. Aim to create a new instruction that is significantly different from the previous instruction. Note that the instruction should be easy to understand **without requiring access to the document**. The instruction can refer to information given in the conversation. The instruction should be clear and detailed enough for the model to comprehend the task without ambiguity.
 
 Finally, categorize the instruction into one of the categories defined above. 
 
