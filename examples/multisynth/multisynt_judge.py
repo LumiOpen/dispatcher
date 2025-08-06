@@ -25,8 +25,6 @@ def is_short_enough(text: str, tokenizer: PreTrainedTokenizerBase, max_length: i
 
 
 class MultiSyntJudge(GeneratorTask):
-    """Generate two answers, have the model judge, and return preferred vs dispreferred."""
-
     # Deterministic parameters for the judge
     JUDGE_PARAMS: Dict[str, Any] = {
         "temperature": 0.0,
