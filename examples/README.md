@@ -181,7 +181,8 @@ if judge_text not in ["A", "B"]:
     raise TaskFailed(
         message=f"Judge model returned an invalid response: '{judge_text}'",
         error_type="judge_response_invalid"
-    )```
+    )
+```
 
 This will produce the following clean, standardized error in your `output.jsonl` file, allowing you to easily find and analyze all failed tasks:
 
@@ -195,6 +196,7 @@ This will produce the following clean, standardized error in your `output.jsonl`
     }
   }
 }
+```
 
 
 # Troubleshooting
@@ -257,6 +259,4 @@ from huggingface_hub import hf_hub_download
 
 path = hf_hub_download(repo_id="meta-llama/Llama-2-7b-hf", filename="config.json")
 print("Cache path:", path)
-
-
 ```
