@@ -68,10 +68,10 @@ with open("merged.jsonl", "w") as f:
             "openeurollm/nemotron-cc-10K-sample-translated",
             revision=model,
         )
-        for row in get_records(model, orig_data, model_data):
+        for row in get_records(model, orig_data, model_data, languages=targets):
             f.write(json.dumps(row) + "\n")
 
     model = "Unbabel/Tower-Plus-72B"
     model_data = load_dataset("maxidl/nemotron-cc-10k-sample-translated-tower72-26langs")
-    for row in get_records(model, orig_data, model_data):
+    for row in get_records(model, orig_data, model_data, languages=targets):
         f.write(json.dumps(row) + "\n")
