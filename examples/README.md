@@ -158,7 +158,6 @@ python -m dispatcher.taskmanager.cli \
 *   `--workers`: Limiting to a single worker can make reading log output more tractable while debugging.
 
 Now, you can edit your task logic in `your_task_module.py` and re-run the `python -m dispatcher.taskmanager.cli` command instantly. You will get immediate feedback on your changes without waiting for the model to reload.
-```
 
 ## Graceful Failure Reporting in Tasks
 
