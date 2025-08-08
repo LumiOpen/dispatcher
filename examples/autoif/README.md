@@ -72,6 +72,21 @@ This step generates Python verification functions to evaluate instruction follow
    - Each instruction is paired with multiple queries
    - Output: Query-instruction pairs (`data/verifiers_queries.jsonl`)
 
+   *Example usage for multi-instruction query augmentation:*
+   ```
+   python src/concat_queries.py \
+      --verifiers_file verifiers.jsonl \
+      --output_file verifiers_queries.jsonl \
+      --queries_file dataset.jsonl \
+      --query_max_len 500 \          # Maximum length of the query
+      --num_of_output_lines 50000 \  # Number of output lines to generate
+      --instructions_per_query 2 \   # Number of instructions to pair with each query
+      --messages_format              # If the input queries file is formatted in chat messages format
+   ```
+
+   Notes for parameter `--num_of_output_lines`: Each query is randomly paired with as many instructions as needed to reach this number. The instructions are selected randomly but preserving a uniform distribution across the instructions. If the number of queries is lower than num_of_output_lines, the script will repeat queries sequentially to reach the desired number of output lines.
+
+
 ### Output Format
 
 The final output of Phase 1 includes:
