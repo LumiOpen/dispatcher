@@ -15,9 +15,18 @@ def response_verify(response: str, data: Dict[str, Any]) -> Optional[List[Dict[s
     Verifies the query response using all provided evaluation functions and checks
     that the response is in the target language.
     
+    The evaluation functions can be in two formats:
+    1. Flat list: All functions are applied and overall accuracy is calculated
+    2. List of lists: Each sub-list contains functions for one instruction. 
+       The response must pass at least one function from each sub-list to ensure
+       it follows all instructions.
+    
     Args:
         response: The response to verify
-        data: Dictionary containing instruction, query, and eval_func
+        data: Dictionary containing instruction, query, and eval_funcs (or eval_func for backward compatibility)
+              eval_funcs can be:
+              - List of functions (old format)
+              - List of lists, where each sub-list contains functions for one instruction (new format)
         
     Returns:
         List of messages for scoring or None if verification failed
@@ -29,7 +38,7 @@ def response_verify(response: str, data: Dict[str, Any]) -> Optional[List[Dict[s
         lang_code1, lang_code2 = detect_language(response)
     except Exception as e:
         raise TaskFailed(
-            message=f"Language detection error: {e}",
+            message=f"Language detection error: {e} <response>{response}</response>",
             error_type="language_detection"
         )
 
@@ -41,7 +50,7 @@ def response_verify(response: str, data: Dict[str, Any]) -> Optional[List[Dict[s
         )
     
     # Parse the evaluation functions
-    eval_func_data = data.get('eval_func', [])
+    eval_func_data = data.get('eval_funcs', data.get('eval_func', []))
     if not eval_func_data:
         raise TaskFailed(
             message=f"No evaluation functions found",
@@ -51,29 +60,67 @@ def response_verify(response: str, data: Dict[str, Any]) -> Optional[List[Dict[s
     # Use FunctionExecutor for safe function execution
     executor = FunctionExecutor()
     
-    # Run each evaluation function and collect results
-    acc = []
-    for func in eval_func_data:
-        try:
-            # Execute function with timeout protection using the new method
-            result = executor.execute_with_response(func, response, log_errors=True)
-            if result is not None:
-                acc.append(result)
-        except Exception as e:
+    # Normalize eval_func_data to always be a list of lists
+    # If it's a flat list (old format), wrap it in a single list (treat as one instruction)
+    # If it's already a list of lists (new format), use as-is
+    normalized_eval_funcs = eval_func_data if eval_func_data and isinstance(eval_func_data[0], list) else [eval_func_data]
+    
+    # Get instruction IDs from data, or use enumerated indices as fallback
+    instruction_ids = data.get('instruction_ids', list(data.get('instruction_id', range(len(normalized_eval_funcs)))))
+    
+    # Process each instruction group
+    instruction_results = []
+    accuracy_threshold = 0  # Threshold for instruction to pass
+    
+    for idx, instruction_funcs in enumerate(normalized_eval_funcs):
+        instruction_id = instruction_ids[idx] if idx < len(instruction_ids) else idx
+        
+        if not instruction_funcs:
             raise TaskFailed(
-                message=f"Error executing evaluation function {func}: {e} <response>{response}</response>",
-                error_type="function_execution_failed"
+                message=f"No evaluation functions found for instruction {instruction_id}",
+                error_type="no_eval_functions_for_instruction"
             )
+        
+        # Run all functions for this instruction and collect results
+        instruction_acc = []
+        for func in instruction_funcs:
+            try:
+                # Execute function with timeout protection using the new method
+                result = executor.execute_with_response(func, response, log_errors=True)
+                if result is not None:
+                    instruction_acc.append(result)
+            except Exception as e:
+                raise TaskFailed(
+                    message=f"Error executing evaluation function {func} for instruction {instruction_id}: {e} <response>{response}</response>",
+                    error_type="function_execution_failed"
+                )
+        
+        # For this instruction, calculate accuracy
+        instruction_accuracy = np.mean(instruction_acc) if instruction_acc else 0
+        instruction_results.append(instruction_accuracy)
     
-    # Calculate accuracy as in the original code
-    acc_value = np.mean(acc) if acc else 0
+    # Check if ALL instructions pass the threshold (all instructions must be followed)
+    failed_instructions = []
+    for idx, accuracy in enumerate(instruction_results):
+        instruction_id = instruction_ids[idx] if idx < len(instruction_ids) else idx
+        if accuracy <= accuracy_threshold:
+            failed_instructions.append((instruction_id, accuracy))
     
-    # Filter out responses with acc <= 0
-    if acc_value <= 0:
-        raise TaskFailed(
-            message=f"The response did not pass the verification with accuracy {acc_value}. <response>{response}</response>",
-            error_type="response_verification_failed"
-        )
+    if failed_instructions:
+        # Format error message based on number of failed instructions
+        if len(failed_instructions) == 1:
+            instruction_id, accuracy = failed_instructions[0]
+            error_context = f" for instruction {instruction_id}" if len(normalized_eval_funcs) > 1 else ""
+            raise TaskFailed(
+                message=f"The response did not pass verification{error_context} with accuracy {accuracy}. <response>{response}</response>",
+                error_type="instruction_verification_failed"
+            )
+        else:
+            failed_ids = [str(instr_id) for instr_id, _ in failed_instructions]
+            raise TaskFailed(
+                message=f"The response did not pass verification for instructions {', '.join(failed_ids)}. <response>{response}</response>",
+                error_type="multiple_instructions_verification_failed"
+            )
 
 def construct_scoring_messages(response: str, data: Dict[str, Any]) -> List[Dict[str, str]]:
     """ Constructs the scoring prompt based on the response and data. """
@@ -81,7 +128,7 @@ def construct_scoring_messages(response: str, data: Dict[str, Any]) -> List[Dict
     # If passed verification, construct the scoring prompt
     scoring_prompt = open("model_prompts/scoring_prompt.txt").read().strip()
     scoring_prompt = scoring_prompt.format(
-        instruction=data.get('instruction', ''),
+        instructions=data.get('instructions', list(data.get('instruction', ''))),
         query=data.get('query', ''),
         response=response
     )
