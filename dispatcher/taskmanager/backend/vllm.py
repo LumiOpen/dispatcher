@@ -241,7 +241,7 @@ class VLLMBackendManager(BackendManager):
         except Exception as e:
             self.logger.error(f"Failed to initialize OpenAI client: {e}")
             raise
-    
+
     def process(self, request: Request) -> Response:
         """
         Process a request through the vLLM API.
@@ -257,12 +257,9 @@ class VLLMBackendManager(BackendManager):
             
             # Check if model is specified and if it matches our expected model
             if 'model' in content and content['model'] != self.model_name:
-                # Raise an error for model mismatch
                 raise ValueError(f"Request specifies model '{content['model']}' but this backend is configured for '{self.model_name}'")
-            
-            # Ensure model is set correctly
             content['model'] = self.model_name
-            
+
             # Determine the API endpoint to use based on content structure
             if 'messages' in content:
                 # This is a chat completion request
@@ -275,11 +272,11 @@ class VLLMBackendManager(BackendManager):
             else:
                 raise ValueError("Request must contain either 'messages' for chat or 'prompt' for text completion")
             
-            return Response(request=request, content=result)
+            return Response(request=request, content=result, model_name=self.model_name)
             
         except Exception as e:
             self.logger.error(f"Error calling vLLM API: {str(e)}")
-            return Response.from_error(request, e)
+            return Response.from_error(request, e, model_name=self.model_name)
     
     def _process_chat_completion(self, completion: ChatCompletion) -> Dict[str, Any]:
         """Process a chat completion response from the API."""
