@@ -26,13 +26,13 @@ class GenerateQueryResponsesTask(GeneratorTask):
         # processed
         # these are queries with verifiers of format
         # {
-        #     'instruction_id': instruction_id,
-        #     'instruction': instruction,
+        #     'instruction_ids': instruction_ids, # backwards compatible with 'instruction_id'
+        #     'instructions': instructions, # backwards compatible with 'instruction'
         #     'query': query,
         #     'query_response': query_response,
         #     'query_metadata': query_metadata,
-        #     'eval_func': 'def evaluate():...',
-        #     'cases': [{'input', 'output'}],
+        #     'eval_funcs': [["def evaluate():...",],], # backwards compatible with 'eval_func' ["def evaluate():...",]
+        #     'cases': [[{'input', 'output'},],], # backwards compatible with 'cases' [{'input', 'output'},]
         #     'prompt': prompt
         # }
         # there is M lines with the same query with different instructions
@@ -67,11 +67,15 @@ class GenerateQueryResponsesTask(GeneratorTask):
         query = self.data.get("query", "")
         if not re.search(r'[.!?]$', query):
             query += "."
-        
+
+        # Handle both "instructions" (list) and "instruction" (string - old version) cases
+        instructions = self.data.get("instructions", self.data.get("instruction", ""))
+        instructions_text = ". ".join(instructions) if isinstance(instructions, list) else instructions
+
         messages = [
             {
                 "role": "user", 
-                "content": f"{query} {self.data.get('instruction')}"
+                "content": f"{query} {instructions_text}"
             },
             {
                 "role": "assistant", 
@@ -80,13 +84,13 @@ class GenerateQueryResponsesTask(GeneratorTask):
         ]
 
         return {
-            'instruction_id': self.data.get("instruction_id"),
-            'instruction': self.data.get("instruction"),
+            'instruction_ids': self.data.get("instruction_ids", self.data.get("instruction_id")),
+            'instructions': self.data.get("instructions", self.data.get("instruction")),
             'query': self.data.get("query"),
             'query_response': self.data.get("query_response"),
             'query_metadata': self.data.get("query_metadata"),
             'response': response_text,
-            'eval_func': self.data.get("eval_func"),
+            'eval_funcs': self.data.get("eval_funcs", self.data.get("eval_func")),
             'cases': self.data.get("cases"),
             'prompt': self.data.get("prompt"),
             'messages': messages,

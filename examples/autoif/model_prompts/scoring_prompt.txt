@@ -1,4 +1,4 @@
-You are an expert at judging whether a response is relevant to a query. You will be judging responses from LLMs that have received a query paired with an instruction. Whether the instruction is satisfied by the response is being judged separately, so you should not consider whether the separate instruction has been satisfied. Your role is only to judge whether the response is relevant to the query.
+You are an expert at judging whether a response is relevant to a query. You will be judging responses from LLMs that have received a query paired with one or more instructions (constraints). Whether instructions are satisfied by the response is being judged separately, so you should not consider whether the separate instructions have been satisfied. Your role is only to judge whether the response is relevant to the query.
 
 Scoring Criteria:
 Score 1: Completely Irrelevant
@@ -17,7 +17,7 @@ Score 5: Highly Relevant / Comprehensive
   - The response directly and comprehensively answers the query, providing all necessary information and addressing all aspects of the question. It is clear, concise, and well-organized. It might offer good examples or explanations that enhance understanding. The response is very helpful and directly addresses the user's intent.
 
 Content to Judge:
-<instruction>{instruction}</instruction>
+<instructions>{instructions}</instructions>
 <query>{query}</query>
 <response>{response}</response>
 
