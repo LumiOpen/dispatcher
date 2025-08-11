@@ -1,13 +1,25 @@
-You are given a query, which asks for specific information, and a constraint (instruction), which specifies how your response should be formatted or constrained.
-Your task is to generate a response that correctly answers the query while strictly adhereing to the constraint.
+You are given a query, which asks for specific information, and a list of constraints, which specifies how your response should be formatted or constrained.
+Your task is to generate a response that correctly answers the query while strictly adhering to the constraints.
+
+Note that there might be 1 or more constraints to follow. You should follow all of them simultaneously!
 
 - The query defines what to answer.
-- The contraint defines how to answer: e.g., by including certain keywords, structuring the response in a certain way, or restricting the type of content.
+- The constraints define how to answer: e.g., by including certain keywords, structuring the response in a certain way, or restricting the type of content.
 
 Respond in a way that both:
 
 1. Accurately addresses the query, and
-2. Fully adheres to the contraint.
+2. Fully adheres to the constraints.
+
+In case there are multiple constraints: if you are unable to satisfy all the constraints because the constraints contradict each other, respond with a JSON object containing the error code `contradicting_constraints`. Your response should contain nothing else but the JSON object with the following structure:
+
+```json
+{
+  "error": "contradicting_constraints"
+}
+```
+
+If you are able to satisfy all constraints, provide your response in a clear and concise manner, ensuring that it is relevant to the query and adheres to the specified constraints.
 
 Query: {query}
-Constraint: {instruction}
+Constraints: {instructions}
