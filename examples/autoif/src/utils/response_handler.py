@@ -31,7 +31,10 @@ def response_verify(response: str, data: Dict[str, Any]) -> Optional[List[Dict[s
     Returns:
         List of messages for scoring or None if verification failed
     """
-    # First check if the response is in the desired language
+    # First check for error response
+    check_error(response, error_code='contradicting_constraints')
+
+    # Check if the response is in the desired language
     # Get language prediction
     # lang_code1 is the three-letter code, lang_code2 is the two-letter code
     try:
@@ -166,3 +169,73 @@ def extract_score(scored_text: str) -> Optional[int]:
             error_type="score_conversion_failed"
         )
     return score
+
+def check_error(response: str, error_code: Optional[str] = None):
+    """
+    Checks whether the response contains a JSON object with an error key.
+    If error_code is provided, checks for that specific error.
+    Handles LLM responses that may contain additional text and markdown formatting.
+    
+    Args:
+        response: The response text to check for errors
+        error_code: Optional specific error code to check for
+        
+    Raises:
+        TaskFailed: If an error is found in the response
+    """
+    import json
+    
+    def extract_json_from_response(text: str) -> Optional[dict]:
+        """Extract JSON object from LLM response that may contain markdown or extra text."""
+        # First, try to find JSON within markdown code blocks
+        json_pattern = r'```(?:json)?\s*(\{.*?\})\s*```'
+        match = re.search(json_pattern, text, re.DOTALL | re.IGNORECASE)
+        
+        if match:
+            try:
+                return json.loads(match.group(1))
+            except json.JSONDecodeError:
+                pass
+        
+        # If no markdown blocks found, try to find JSON object in the text
+        # Look for curly braces that might contain JSON
+        brace_pattern = r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}'
+        matches = re.findall(brace_pattern, text, re.DOTALL)
+        
+        for match in matches:
+            try:
+                parsed = json.loads(match)
+                if isinstance(parsed, dict):
+                    return parsed
+            except json.JSONDecodeError:
+                continue
+        
+        # As a last resort, try to parse the entire response as JSON
+        try:
+            parsed = json.loads(text.strip())
+            if isinstance(parsed, dict):
+                return parsed
+        except json.JSONDecodeError:
+            pass
+        
+        return None
+    
+    # Extract JSON from the response
+    response_data = extract_json_from_response(response)
+    
+    if response_data and 'error' in response_data:
+        error_value = response_data['error']
+        
+        # If a specific error_code is provided, check if it matches
+        if error_code is not None:
+            if error_value == error_code:
+                raise TaskFailed(
+                    message=f"Expected error '{error_code}' found in response: {response}",
+                    error_type=error_code
+                )
+        else:
+            # If no specific error_code is provided, raise for any error
+            raise TaskFailed(
+                message=f"Error found in response: {error_value}",
+                error_type="error_in_response"
+            )
