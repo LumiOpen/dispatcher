@@ -142,7 +142,7 @@ def construct_scoring_messages(response: str, data: Dict[str, Any]) -> List[Dict
 
     return scoring_messages
 
-def extract_score(scored_text: str) -> Optional[int]:
+def extract_score(scored_text: str) -> int:
     """
     Extracts the score from the scored text
     
@@ -152,23 +152,35 @@ def extract_score(scored_text: str) -> Optional[int]:
     Returns:
         The extracted score
     """
-    # Extract the score using regex
-    score_match = re.search(r'Score: (\d+)$', scored_text)
+    # Try multiple patterns to extract the score at the end of text, ordered by specificity
+    patterns = [
+        # Handle markdown bold formatting at end: **Score: 5**
+        r'\*\*Score:\s*(\d+)\*\*\s*$',
+        # Handle markdown code formatting at end: `Score: 5`
+        r'`Score:\s*(\d+)`\s*$',
+        # Handle parenthetical score at end: (Score 5) or (Score: 5)
+        r'\(Score\s*:?\s*(\d+)\)\s*$',
+        # Keep the original pattern for cases where it works
+        r'Score:\s*(\d+)\s*$',
+        # Handle Score followed by word boundary at end (fallback)
+        r'Score\s*:?\s*(\d+)\s*$',
+    ]
     
-    if not score_match:
-        raise TaskFailed(
-            message=f"Score not found in the scoring response: {scored_text}",
-            error_type="score_extraction_failed"
-        )
+    for pattern in patterns:
+        # Search case-insensitively
+        match = re.search(pattern, scored_text, re.IGNORECASE)
+        if match:
+            try:
+                score = int(match.group(1))
+                return score
+            except (ValueError, IndexError):
+                continue
     
-    try:
-        score = int(score_match.group(1))
-    except Exception as e:
-        raise TaskFailed(
-            message=f"Error converting score to integer: {e}",
-            error_type="score_conversion_failed"
-        )
-    return score
+    # If no pattern matched, raise TaskFailed (maintaining original behavior)
+    raise TaskFailed(
+        message=f"Score not found in the scoring response: {scored_text}",
+        error_type="score_extraction_failed"
+    )
 
 def check_error(response: str, error_code: Optional[str] = None):
     """
