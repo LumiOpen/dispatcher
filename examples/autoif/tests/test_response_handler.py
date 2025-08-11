@@ -19,7 +19,7 @@ sys.path.insert(0, src_dir)
 sys.path.insert(0, autoif_dir)
 sys.path.insert(0, dispatcher_root)
 
-from utils.response_handler import check_error
+from utils.response_handler import check_error, extract_score
 from dispatcher.taskmanager.task.base import TaskFailed
 
 
@@ -150,6 +150,69 @@ def test_check_error_case_sensitivity():
         raise TestException("check_error should be case-sensitive for the 'error' key")
 
 
+def test_extract_score_basic():
+    """Test extract_score with basic score patterns."""
+    test_cases = [
+        ("Score: 5", 5),
+        ("Some text\nScore: 3", 3),
+        ("Analysis complete\nScore: 1", 1),
+        ("Score: 4  \n", 4),
+        ("Score: 2\t", 2),
+    ]
+    
+    for text, expected_score in test_cases:
+        result = extract_score(text)
+        if result != expected_score:
+            raise TestException(f"Expected {expected_score}, got {result} for text: '{text[:50]}...'")
+
+
+def test_extract_score_markdown_formatting():
+    """Test extract_score with markdown formatted scores."""
+    test_cases = [
+        ("Analysis complete. **Score: 3**", 3),
+        ("Final result: `Score: 2`", 2),
+    ]
+    
+    for text, expected_score in test_cases:
+        result = extract_score(text)
+        if result != expected_score:
+            raise TestException(f"Expected {expected_score}, got {result} for text: '{text[:50]}...'")
+
+
+def test_extract_score_multiple_scores():
+    """Test extract_score with multiple scores - should return the last valid one."""
+    test_cases = [
+        ("Multiple scores: Score: 3 and Score: 5", 5)
+    ]
+    
+    for text, expected_score in test_cases:
+        result = extract_score(text)
+        if result != expected_score:
+            raise TestException(f"Expected {expected_score}, got {result} for text: '{text}'")
+
+
+def test_extract_score_error_cases():
+    """Test extract_score with cases that should raise TaskFailed."""
+    error_cases = [
+        "No score here",
+        "Score: 5 but more text after",
+        "Score: not_a_number",
+        "Some random text",
+        "Score mentioned but no number",
+        "Score: without number",
+    ]
+    
+    for text in error_cases:
+        try:
+            result = extract_score(text)
+            raise TestException(f"'{text}' should have raised TaskFailed but returned {result}")
+        except TaskFailed as e:
+            if e.error_type != "score_extraction_failed":
+                raise TestException(f"'{text}' raised TaskFailed with wrong error_type: {e.error_type}")
+        except Exception as e:
+            raise TestException(f"'{text}' raised unexpected exception: {e}")
+
+
 def run_all_tests():
     """Run all tests manually (for environments without pytest)."""
     test_functions = [
@@ -160,13 +223,17 @@ def run_all_tests():
         test_check_error_with_markdown_no_json_label,
         test_check_error_with_json_in_text,
         test_check_error_with_complex_llm_response,
-        test_check_error_case_sensitivity
+        test_check_error_case_sensitivity,
+        test_extract_score_basic,
+        test_extract_score_markdown_formatting,
+        test_extract_score_multiple_scores,
+        test_extract_score_error_cases
     ]
     
     passed = 0
     failed = 0
     
-    print("Running check_error function tests...")
+    print("Running response_handler function tests...")
     print("=" * 60)
     
     for test_func in test_functions:
