@@ -5,7 +5,7 @@ import re
 from dispatcher.taskmanager.backend.request import Request, Response
 from dispatcher.taskmanager.task.base import GeneratorTask
 
-from src.utils.response_handler import response_verify, extract_score, construct_scoring_messages
+from src.utils.response_handler import response_verify, extract_score, construct_scoring_messages, format_instructions_with_conjunctions
 
 __all__ = ["GenerateQueryResponsesTask"]
 
@@ -70,7 +70,7 @@ class GenerateQueryResponsesTask(GeneratorTask):
 
         # Handle both "instructions" (list) and "instruction" (string - old version) cases
         instructions = self.data.get("instructions", self.data.get("instruction", ""))
-        instructions_text = ". ".join(instructions) if isinstance(instructions, list) else instructions
+        instructions_text = format_instructions_with_conjunctions(instructions)
 
         messages = [
             {
