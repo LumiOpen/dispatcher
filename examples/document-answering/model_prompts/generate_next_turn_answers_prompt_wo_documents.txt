@@ -1,0 +1,9 @@
+Consider the following {language} conversation. The conversation has one or more complete turns---a complete turn is composed of a user's instruction and the assistant's answer---and the start of the next turn with a new instruction from the user.
+
+<conversation> 
+{conversation}
+</conversation>
+
+Given the above user’s instruction, provide a response to the instruction in {language}. Your response should fulfill the instructions and provide the information requested by the user while making the flow of the conversation clear, useful, and relevant. The response should be written in an engaging and conversational style, reflecting expert knowledge, and demonstrating a high-quality, engaging, and insightful answer. Avoid repeating or rephrasing the instruction in your response.
+
+NOTE: Since the instruction is in {language}, your response should also be in {language}. Provide ONLY the response to the instruction.

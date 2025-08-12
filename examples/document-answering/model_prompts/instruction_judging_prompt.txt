@@ -1,0 +1,19 @@
+Review the user’s request and assign a score to the complexity of the request using the 5-point scoring system described below.
+
+- Score: 1 if the request is unambiguous, short, and factual. The request asks only for common knowledge or simple definitions and there is little or no reasoning involved needed to give an answer. The request does not require special constraints on the format of the output.
+- Score: 2 if the request is mostly clear with minor nuance. The request requires only basic reasoning or domain familiarity at a general level to answer. The request may have one simple constraint (e.g., "answer in a sentence").
+- Score: 3 if there is some ambiguity in the request or multiple interpretations are possible. The request involves intermediate reasoning or multi-step thinking to solve and requires domain-specific knowledge to answer.
+- Score: 4 if there is significant ambiguity, complexity, or cross-domain reasoning involved in the request. The requires deep domain expertise or synthesis of concepts to answer. The request has constraints that require careful balancing (e.g., tone + structure + accuracy) and small mistakes could cause a wrong or low-quality answer.
+- Score: 5 if the request is highly ambiguous, open-ended, or abstract. The request requires advanced, niche, or cutting-edge knowledge to answer or involves multi-layered reasoning with uncertain or incomplete data. The request might have complex and possibly conflicting constraints.
+
+Evaluation:
+The user's request is immediately below in the <request></request> tags.
+
+<request>{instruction}</request>
+
+After examining the user’s request, perform the following two-step analysis:
+
+- Briefly justify your total score, up to 100 words. 
+- Conclude with the score using the format: \"Score: X/5\"
+
+Remember to assess the complexity of the request from the perspective of the AI Assistant that will respond to the request.
