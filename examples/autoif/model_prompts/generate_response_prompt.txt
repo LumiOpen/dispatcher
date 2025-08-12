@@ -14,9 +14,9 @@ Respond in a way that both:
 In case there are multiple constraints: if you are unable to satisfy all the constraints because the constraints contradict each other, respond with a JSON object containing the error code `contradicting_constraints`. Your response should contain nothing else but the JSON object with the following structure:
 
 ```json
-{
+{{
   "error": "contradicting_constraints"
-}
+}}
 ```
 
 If you are able to satisfy all constraints, provide your response in a clear and concise manner, ensuring that it is relevant to the query and adheres to the specified constraints.
