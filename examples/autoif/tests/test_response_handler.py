@@ -19,7 +19,7 @@ sys.path.insert(0, src_dir)
 sys.path.insert(0, autoif_dir)
 sys.path.insert(0, dispatcher_root)
 
-from utils.response_handler import check_error, extract_score
+from utils.response_handler import check_error, extract_score, format_instructions_with_conjunctions
 from dispatcher.taskmanager.task.base import TaskFailed
 
 
@@ -213,6 +213,75 @@ def test_extract_score_error_cases():
             raise TestException(f"'{text}' raised unexpected exception: {e}")
 
 
+def test_format_instructions_single():
+    """Test format_instructions_with_conjunctions with single instruction."""
+    instruction = "Your response should be clear"
+    result = format_instructions_with_conjunctions(instruction)
+    if result != instruction:
+        raise TestException(f"Single string should return as-is, got: {result}")
+    
+    # Test with single item list
+    result = format_instructions_with_conjunctions([instruction])
+    if result != instruction:
+        raise TestException(f"Single item list should return the item, got: {result}")
+
+
+def test_format_instructions_two():
+    """Test format_instructions_with_conjunctions with two instructions."""
+    instructions = [
+        "Your response should be clear",
+        "Your response contains examples"
+    ]
+    expected = "Your response should be clear and your response contains examples"
+    result = format_instructions_with_conjunctions(instructions)
+    if result != expected:
+        raise TestException(f"Expected: {expected}, got: {result}")
+
+
+def test_format_instructions_three_or_more():
+    """Test format_instructions_with_conjunctions with three or more instructions."""
+    instructions = [
+        "Your response should be clear",
+        "Your response is detailed", 
+        "Your response contains examples"
+    ]
+    expected = "Your response should be clear, your response is detailed and your response contains examples"
+    result = format_instructions_with_conjunctions(instructions)
+    if result != expected:
+        raise TestException(f"Expected: {expected}, got: {result}")
+    
+    # Test with four instructions
+    instructions_four = [
+        "Your response should be clear",
+        "Your response is detailed",
+        "Your response contains examples", 
+        "Your response follows format"
+    ]
+    expected_four = "Your response should be clear, your response is detailed, your response contains examples and your response follows format"
+    result_four = format_instructions_with_conjunctions(instructions_four)
+    if result_four != expected_four:
+        raise TestException(f"Expected: {expected_four}, got: {result_four}")
+
+
+def test_format_instructions_edge_cases():
+    """Test format_instructions_with_conjunctions with edge cases."""
+    # Empty list
+    result = format_instructions_with_conjunctions([])
+    if result != "":
+        raise TestException(f"Empty list should return empty string, got: {result}")
+    
+    # Empty string
+    result = format_instructions_with_conjunctions("")
+    if result != "":
+        raise TestException(f"Empty string should return empty string, got: {result}")
+    
+    # List with empty strings
+    result = format_instructions_with_conjunctions(["", ""])
+    expected = " and "
+    if result != expected:
+        raise TestException(f"Expected: '{expected}', got: '{result}'")
+
+
 def run_all_tests():
     """Run all tests manually (for environments without pytest)."""
     test_functions = [
@@ -227,7 +296,11 @@ def run_all_tests():
         test_extract_score_basic,
         test_extract_score_markdown_formatting,
         test_extract_score_multiple_scores,
-        test_extract_score_error_cases
+        test_extract_score_error_cases,
+        test_format_instructions_single,
+        test_format_instructions_two,
+        test_format_instructions_three_or_more,
+        test_format_instructions_edge_cases
     ]
     
     passed = 0
