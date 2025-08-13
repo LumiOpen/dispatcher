@@ -64,7 +64,7 @@ def extract_query_from_messages(item: Dict, turns: int = 1, messages_key: str = 
 
 def parse_query_from_item(item: Dict, messages_format: bool, query_column_name: str, 
                          response_column_name: str, query_max_len: int, turns: int = 1, 
-                         messages_key: str = 'messages') -> Optional[Dict]:
+                         messages_key: str = 'messages', no_followup: bool = False) -> Optional[Dict]:
     """Parse a single query item from either standard or messages format.
     
     Returns:
@@ -104,9 +104,16 @@ def parse_query_from_item(item: Dict, messages_format: bool, query_column_name: 
                 query['responses'] = ['']
         else:
             # For multi-turn non-messages format, we need the data to contain lists or structured turns
-            # This implementation assumes the data structure supports this
-            if isinstance(item.get(query_column_name), list) and len(item[query_column_name]) >= turns:
-                query['queries'] = item[query_column_name][:turns]
+            # With no_followup, we only need the first query since subsequent turns use rephrase prompts
+            required_queries = 1 if no_followup else turns
+            
+            if isinstance(item.get(query_column_name), list) and len(item[query_column_name]) >= required_queries:
+                # Take only the required number of queries
+                query['queries'] = item[query_column_name][:required_queries]
+                # Pad with empty strings for turns that don't need queries (when no_followup=True)
+                while len(query['queries']) < turns:
+                    query['queries'].append('')
+                    
                 if response_column_name in item and isinstance(item[response_column_name], list):
                     responses = item[response_column_name][:turns]
                     # Pad with empty strings if needed
@@ -126,7 +133,7 @@ def parse_query_from_item(item: Dict, messages_format: bool, query_column_name: 
 
 def load_queries_from_file(queries_file: str, messages_format: bool, query_column_name: str,
                           response_column_name: str, query_max_len: int, turns: int = 1,
-                          messages_key: str = 'messages') -> Tuple[List[Dict], int]:
+                          messages_key: str = 'messages', no_followup: bool = False) -> Tuple[List[Dict], int]:
     """Load queries from a JSONL file.
     
     Returns:
@@ -144,7 +151,7 @@ def load_queries_from_file(queries_file: str, messages_format: bool, query_colum
             try:
                 item = json.loads(line)
                 query = parse_query_from_item(item, messages_format, query_column_name, 
-                                            response_column_name, query_max_len, turns, messages_key)
+                                            response_column_name, query_max_len, turns, messages_key, no_followup)
                 if query:
                     queries.append(query)
                 else:
@@ -157,7 +164,8 @@ def load_queries_from_file(queries_file: str, messages_format: bool, query_colum
     return queries, skipped_queries
 
 def load_queries_from_dataset(queries_dataset: str, query_column_name: str,
-                             response_column_name: str, query_max_len: int, turns: int = 1) -> Tuple[List[Dict], int]:
+                             response_column_name: str, query_max_len: int, turns: int = 1, 
+                             no_followup: bool = False) -> Tuple[List[Dict], int]:
     """Load queries from a HuggingFace dataset.
     
     Returns:
@@ -172,16 +180,49 @@ def load_queries_from_dataset(queries_dataset: str, query_column_name: str,
             skipped_queries += 1
             continue
         
-        query = {
-            'queries': [item[query_column_name]],  # Convert to list format
-            'metadata': {k: v for k, v in item.items() 
-                        if k not in [query_column_name, response_column_name]}
-        }
-        
-        if response_column_name in item:
-            query['responses'] = [item[response_column_name]]
+        # For multi-turn with no_followup, we only need one query
+        if turns == 1:
+            query = {
+                'queries': [item[query_column_name]],  # Convert to list format
+                'metadata': {k: v for k, v in item.items() 
+                            if k not in [query_column_name, response_column_name]}
+            }
+            
+            if response_column_name in item:
+                query['responses'] = [item[response_column_name]]
+            else:
+                query['responses'] = ['']
         else:
-            query['responses'] = ['']
+            # Multi-turn logic for datasets
+            if no_followup:
+                # Only need one query, pad the rest with empty strings
+                query = {
+                    'queries': [item[query_column_name]] + [''] * (turns - 1),
+                    'metadata': {k: v for k, v in item.items() 
+                                if k not in [query_column_name, response_column_name]}
+                }
+            else:
+                # Need queries for all turns - skip if not available
+                if not isinstance(item.get(query_column_name), list) or len(item[query_column_name]) < turns:
+                    skipped_queries += 1
+                    continue
+                query = {
+                    'queries': item[query_column_name][:turns],
+                    'metadata': {k: v for k, v in item.items() 
+                                if k not in [query_column_name, response_column_name]}
+                }
+            
+            # Handle responses for multi-turn
+            if response_column_name in item:
+                if isinstance(item[response_column_name], list):
+                    responses = item[response_column_name][:turns]
+                    while len(responses) < turns:
+                        responses.append('')
+                    query['responses'] = responses
+                else:
+                    query['responses'] = [item[response_column_name]] + [''] * (turns - 1)
+            else:
+                query['responses'] = [''] * turns
         
         queries.append(query)
     
@@ -288,7 +329,8 @@ def select_instructions_multi_turn(verifiers_list: List[Dict], instructions_per_
     return all_turn_instructions
 
 def create_output_entry(query: Dict, selected_verifiers: List[Dict] = None, source: str = None, 
-                       turns: int = 1, selected_verifiers_multi_turn: List[List[Dict]] = None) -> Dict:
+                       turns: int = 1, selected_verifiers_multi_turn: List[List[Dict]] = None,
+                       no_followup: bool = False) -> Dict:
     """Create the output dictionary for a single query-instruction pair or multi-turn conversation."""
     
     # For single turn, wrap selected_verifiers in a list to unify with multi-turn logic
@@ -308,26 +350,48 @@ def create_output_entry(query: Dict, selected_verifiers: List[Dict] = None, sour
     all_eval_funcs = []
     all_cases = []
     
+    # For no_followup mode, accumulate instructions across turns
+    accumulated_verifiers = []
+    
     for turn_idx in range(turns):
         turn_verifiers = verifiers_by_turn[turn_idx]
-        turn_query = query['queries'][turn_idx]
         
-        # Format current turn instructions
-        current_instructions_text = "\n".join([f"- {v['instruction']}" for v in turn_verifiers])
+        if no_followup and turns > 1:
+            # Accumulate instructions across turns for no_followup mode
+            accumulated_verifiers.extend(turn_verifiers)
+            # Format accumulated instructions
+            current_instructions_text = "\n".join([f"- {v['instruction']}" for v in accumulated_verifiers])
+        else:
+            # Use only current turn instructions (normal mode or single turn)
+            current_instructions_text = "\n".join([f"- {v['instruction']}" for v in turn_verifiers])
         
-        # Select appropriate prompt template based on turn
+        # Select appropriate prompt template based on turn and no_followup flag
         if turns == 1:
             # Single turn uses the original template
             template_file = "model_prompts/generate_response_prompt.txt"
+            turn_query = query['queries'][turn_idx]
+            prompt_template = open(template_file).read().strip()
+            prompt = prompt_template.format(query=turn_query, instructions=current_instructions_text)
         elif turn_idx == 0:
             # First turn of multi-turn conversation
             template_file = "model_prompts/generate_response_turn1_prompt.txt"
+            turn_query = query['queries'][turn_idx]
+            prompt_template = open(template_file).read().strip()
+            prompt = prompt_template.format(query=turn_query, instructions=current_instructions_text)
         else:
             # Subsequent turns of multi-turn conversation
-            template_file = "model_prompts/generate_response_turnN_prompt.txt"
+            if no_followup:
+                # Use rephrase prompt (no query needed)
+                template_file = "model_prompts/rephrase_response_turnN_prompt.txt"
+                prompt_template = open(template_file).read().strip()
+                prompt = prompt_template.format(instructions=current_instructions_text)
+            else:
+                # Use regular turnN prompt with query
+                template_file = "model_prompts/generate_response_turnN_prompt.txt"
+                turn_query = query['queries'][turn_idx]
+                prompt_template = open(template_file).read().strip()
+                prompt = prompt_template.format(query=turn_query, instructions=current_instructions_text)
         
-        prompt_template = open(template_file).read().strip()
-        prompt = prompt_template.format(query=turn_query, instructions=current_instructions_text)
         prompts.append(prompt)
         
         # Collect instruction data for this turn
@@ -357,11 +421,12 @@ def concat_queries(
     query_column_name: str,
     response_column_name: str,
     output_file: str,
-    num_of_output_lines: int = 100,
+    num_of_output_lines: int = None,
     instructions_per_query: int = 1,
     messages_format: bool = False,
     turns: int = 1,
-    messages_key: str = 'messages'
+    messages_key: str = 'messages',
+    no_followup: bool = False
 ) -> int:
     """Concatenate queries with verification functions."""
     # Load verifiers
@@ -376,12 +441,12 @@ def concat_queries(
     if queries_file is not None:
         queries, skipped_queries = load_queries_from_file(
             queries_file, messages_format, query_column_name, 
-            response_column_name, query_max_len, turns, messages_key
+            response_column_name, query_max_len, turns, messages_key, no_followup
         )
     elif queries_dataset is not None:
         queries, skipped_queries = load_queries_from_dataset(
             queries_dataset, query_column_name, response_column_name, 
-            query_max_len, turns
+            query_max_len, turns, no_followup
         )
     else:
         print("No queries file or dataset provided")
@@ -402,11 +467,27 @@ def concat_queries(
     count = 0
     query_index = 0
     
+    # Determine the number of iterations
+    if num_of_output_lines is None:
+        # Process all queries once without repetition
+        num_iterations = len(queries)
+    else:
+        # Use the specified number of output lines
+        num_iterations = num_of_output_lines
+    
     with open(output_file, 'w') as f:
-        for _ in range(num_of_output_lines):
-            # Reuse queries if we've exhausted them
-            query = queries[query_index % len(queries)]
-            query_index += 1
+        for _ in range(num_iterations):
+            # Handle query selection based on mode
+            if num_of_output_lines is None:
+                # No repetition mode - use each query once
+                if query_index >= len(queries):
+                    break  # No more queries available
+                query = queries[query_index]
+                query_index += 1
+            else:
+                # Reuse queries if we've exhausted them
+                query = queries[query_index % len(queries)]
+                query_index += 1
             
             if turns == 1:
                 # Single turn logic (backward compatibility)
@@ -421,7 +502,7 @@ def concat_queries(
                 # Create output entry
                 output = create_output_entry(query, selected_verifiers, 
                                            source=queries_file if queries_file else queries_dataset,
-                                           turns=turns)
+                                           turns=turns, no_followup=no_followup)
             else:
                 # Multi-turn logic
                 selected_verifiers_multi_turn = select_instructions_multi_turn(
@@ -439,14 +520,18 @@ def concat_queries(
                 output = create_output_entry(query, None, 
                                            source=queries_file if queries_file else queries_dataset,
                                            turns=turns,
-                                           selected_verifiers_multi_turn=selected_verifiers_multi_turn)
+                                           selected_verifiers_multi_turn=selected_verifiers_multi_turn,
+                                           no_followup=no_followup)
             
             f.write(json.dumps(output) + '\n')
             count += 1
     
     # Print summary statistics
     print(f"Generated {count} query-instruction pairs to {output_file}")
-    print(f"Used {len(queries)} unique queries (reused {max(0, count - len(queries))} times)")
+    if num_of_output_lines is None:
+        print(f"Used {count} unique queries (processed all available queries once)")
+    else:
+        print(f"Used {len(queries)} unique queries (reused {max(0, count - len(queries))} times)")
     print(f"Number of turns per conversation: {turns}")
     print(f"Instruction usage distribution: {dict(instruction_usage_count)}")
     
@@ -469,8 +554,8 @@ def main():
                         help='Column name of the desired response from the query dataset') 
     parser.add_argument('--response_column_name', type=str, default='response',
                         help='Column name of the desired response from the query dataset')                  
-    parser.add_argument('--num_of_output_lines', type=int, default=100,
-                        help='Number of output lines to generate (will reuse queries if needed)')
+    parser.add_argument('--num_of_output_lines', type=int, default=None,
+                        help='Number of output lines to generate (will reuse queries if needed). If not provided, processes all queries once without repetition.')
     parser.add_argument('--instructions_per_query', type=int, default=1,
                         help='Number of instructions to combine with each query (formatted as bullet points)')
     parser.add_argument('--messages_format', action='store_true',
@@ -479,6 +564,8 @@ def main():
                         help='Key name for the messages list when using messages_format (default: messages)')
     parser.add_argument('--turns', type=int, default=1,
                         help='Number of conversation turns to build multi-turn prompts (default: 1)')
+    parser.add_argument('--no-followup', action='store_true',
+                        help='For multi-turn conversations, use rephrase prompts for turns after the first (no queries needed)')
     
     args = parser.parse_args()
 
@@ -495,7 +582,8 @@ def main():
         args.instructions_per_query,
         args.messages_format,
         args.turns,
-        args.messages_key
+        args.messages_key,
+        args.no_followup
     )
 
 if __name__ == "__main__":
