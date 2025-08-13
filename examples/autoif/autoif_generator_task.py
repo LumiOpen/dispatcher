@@ -95,7 +95,7 @@ class GenerateQueryResponsesTask(GeneratorTask):
             verification_data = self._prepare_verification_data(turn_idx, instruction_ids_per_turn, 
                                                                instructions_per_turn, eval_funcs_per_turn, 
                                                                cases_per_turn)
-            response_verify(response_text, verification_data)
+            response_verify(response_text, verification_data, turn=turn_idx)
             
             # Step 3 - score the response for this turn
             scoring_data = self._prepare_scoring_data(turn_idx, instruction_ids_per_turn, 
@@ -104,7 +104,7 @@ class GenerateQueryResponsesTask(GeneratorTask):
             scoring_messages = construct_scoring_messages(response_text, scoring_data)
             scored_resp: Response = yield Request({"messages": scoring_messages, **self.GEN_PARAMS})
             scoring_text = scored_resp.get_text()
-            score = extract_score(scoring_text)
+            score = extract_score(scoring_text, turn=turn_idx)
             
             all_scores.append(score)
             all_scoring_responses.append(scoring_text)
