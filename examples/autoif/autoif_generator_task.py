@@ -28,72 +28,163 @@ class GenerateQueryResponsesTask(GeneratorTask):
         # {
         #     'instruction_ids': instruction_ids, # backwards compatible with 'instruction_id'
         #     'instructions': instructions, # backwards compatible with 'instruction'
-        #     'query': query,
-        #     'query_response': query_response,
+        #     'queries': queries, # backwards compatible with 'query'
+        #     'queries_responses': queries_responses, # backwards compatible with 'query_response'
         #     'query_metadata': query_metadata,
         #     'eval_funcs': [["def evaluate():...",],], # backwards compatible with 'eval_func' ["def evaluate():...",]
         #     'cases': [[{'input', 'output'},],], # backwards compatible with 'cases' [{'input', 'output'},]
-        #     'prompt': prompt
+        #     'prompts': prompts # backwards compatible with 'prompt'
         # }
-        # there is M lines with the same query with different instructions
-        queries_messages = [
-            {
-                "role": "user",
-                "content": (
-                    self.data.get("prompt")
-                ),
-            },
-        ]
         
-        # Step 1 – get response for the query
-        # print(f"queries_messages: {queries_messages}")
-        queries_resp: Response = yield Request({"messages": queries_messages, **self.GEN_PARAMS})
-        response_text = queries_resp.get_text()
-        # this function performs response verification
-        # based on by AutoIF/code/7_query_verification.py
-        # if the response did not pass the verification, it will raise a TaskFailed exception
-        response_verify(response_text, self.data)
-
-        scoring_messages = construct_scoring_messages(response_text, self.data)
-
-        # Step 2 - score query response
-        scored_resp: Response = yield Request({"messages": scoring_messages, **self.GEN_PARAMS})
-        scoring_text = scored_resp.get_text()
-        # this function extracts the score from the response. 
-        # If the score is not found, it will raise a TaskFailed exception
-        score = extract_score(scoring_text)
-
-        # Add fullstop if query doesn't end with punctuation
-        query = self.data.get("query", "")
-        if not re.search(r'[.!?]$', query):
-            query += "."
-
-        # Handle both "instructions" (list) and "instruction" (string - old version) cases
-        instructions = self.data.get("instructions", self.data.get("instruction", ""))
-        instructions_text = format_instructions_with_conjunctions(instructions)
-
-        messages = [
-            {
-                "role": "user", 
-                "content": f"{query} {instructions_text}"
-            },
-            {
-                "role": "assistant", 
+        # Determine if this is multi-turn (check for plural keys)
+        prompts = self.data.get("prompts", [self.data.get("prompt")] if self.data.get("prompt") else [])
+        queries = self.data.get("queries", [self.data.get("query")] if self.data.get("query") else [])
+        queries_responses = self.data.get("queries_responses", [self.data.get("query_response")] if self.data.get("query_response") else [])
+        
+        # Handle instructions - can be list of lists (multi-turn) or single list/string (single-turn)
+        instructions_data = self.data.get("instructions", self.data.get("instruction", []))
+        if not isinstance(instructions_data[0], list) if instructions_data else True:
+            # Single-turn format: wrap in list
+            instructions_per_turn = [instructions_data] if instructions_data else [[]]
+        else:
+            # Multi-turn format: already list of lists
+            instructions_per_turn = instructions_data
+        
+        # Handle instruction_ids similarly
+        instruction_ids_data = self.data.get("instruction_ids", self.data.get("instruction_id", []))
+        if not isinstance(instruction_ids_data[0], list) if instruction_ids_data else True:
+            instruction_ids_per_turn = [instruction_ids_data] if instruction_ids_data else [[]]
+        else:
+            instruction_ids_per_turn = instruction_ids_data
+        
+        # Handle eval_funcs and cases
+        eval_funcs_data = self.data.get("eval_funcs", self.data.get("eval_func", []))
+        if not isinstance(eval_funcs_data[0], list) if eval_funcs_data else True:
+            eval_funcs_per_turn = [eval_funcs_data] if eval_funcs_data else [[]]
+        else:
+            eval_funcs_per_turn = eval_funcs_data
+            
+        cases_data = self.data.get("cases", [])
+        if not isinstance(cases_data[0], list) if cases_data else True:
+            cases_per_turn = [cases_data] if cases_data else [[]]
+        else:
+            cases_per_turn = cases_data
+        
+        num_turns = len(prompts)
+        queries_messages = []
+        all_responses = []
+        all_scores = []
+        all_scoring_responses = []
+        final_messages = []
+        
+        # Process each turn
+        for turn_idx in range(num_turns):
+            # Add user message for this turn
+            queries_messages.append({
+                "role": "user",
+                "content": prompts[turn_idx]
+            })
+            
+            # Step 1 – get response for the current turn
+            queries_resp: Response = yield Request({"messages": queries_messages, **self.GEN_PARAMS})
+            response_text = queries_resp.get_text()
+            all_responses.append(response_text)
+            
+            # Step 2 - verify response 
+            # For multi-turn, we need to verify against all instructions from all turns up to current turn
+            verification_data = self._prepare_verification_data(turn_idx, instruction_ids_per_turn, 
+                                                               instructions_per_turn, eval_funcs_per_turn, 
+                                                               cases_per_turn)
+            response_verify(response_text, verification_data)
+            
+            # Step 3 - score the response for this turn
+            scoring_data = self._prepare_scoring_data(turn_idx, instruction_ids_per_turn, 
+                                                     instructions_per_turn, eval_funcs_per_turn, 
+                                                     cases_per_turn)
+            scoring_messages = construct_scoring_messages(response_text, scoring_data)
+            scored_resp: Response = yield Request({"messages": scoring_messages, **self.GEN_PARAMS})
+            scoring_text = scored_resp.get_text()
+            score = extract_score(scoring_text)
+            
+            all_scores.append(score)
+            all_scoring_responses.append(scoring_text)
+            
+            # Add assistant response to conversation for next turn
+            queries_messages.append({
+                "role": "assistant",
                 "content": response_text
-            },
-        ]
-
+            })
+            
+            # Build final messages format for this turn
+            query = queries[turn_idx] if turn_idx < len(queries) else ""
+            if not re.search(r'[.!?]$', query):
+                query += "."
+            
+            instructions_text = format_instructions_with_conjunctions(instructions_per_turn[turn_idx])
+            
+            final_messages.extend([
+                {
+                    "role": "user", 
+                    "content": f"{query} {instructions_text}"
+                },
+                {
+                    "role": "assistant", 
+                    "content": response_text
+                }
+            ])
+        
+        # Return results - use plural format for consistency
         return {
-            'instruction_ids': self.data.get("instruction_ids", self.data.get("instruction_id")),
-            'instructions': self.data.get("instructions", self.data.get("instruction")),
-            'query': self.data.get("query"),
-            'query_response': self.data.get("query_response"),
+            'instruction_ids': instruction_ids_per_turn,
+            'instructions': instructions_per_turn,
+            'queries': queries,
+            'queries_responses': queries_responses,
             'query_metadata': self.data.get("query_metadata"),
-            'response': response_text,
-            'eval_funcs': self.data.get("eval_funcs", self.data.get("eval_func")),
-            'cases': self.data.get("cases"),
-            'prompt': self.data.get("prompt"),
-            'messages': messages,
-            'score': score,
-            'scoring_response': scoring_text
+            'responses': all_responses,
+            'eval_funcs': eval_funcs_per_turn,
+            'cases': cases_per_turn,
+            'prompts': prompts,
+            'messages': final_messages,
+            'scores': all_scores,
+            'scoring_responses': all_scoring_responses
+        }
+    
+    def _prepare_verification_data(self, turn_idx: int, instruction_ids_per_turn: List[List], 
+                                  instructions_per_turn: List[List], eval_funcs_per_turn: List[List], 
+                                  cases_per_turn: List[List]) -> Dict[str, Any]:
+        """Prepare verification data for a specific turn, including all previous turn constraints."""
+        # For verification, we need to check against all instructions from turn 0 to current turn
+        cumulative_instruction_ids = []
+        cumulative_instructions = []
+        cumulative_eval_funcs = []
+        cumulative_cases = []
+        
+        for i in range(turn_idx + 1):
+            if i < len(instruction_ids_per_turn):
+                cumulative_instruction_ids.extend(instruction_ids_per_turn[i])
+            if i < len(instructions_per_turn):
+                cumulative_instructions.extend(instructions_per_turn[i])
+            if i < len(eval_funcs_per_turn):
+                cumulative_eval_funcs.extend(eval_funcs_per_turn[i])
+            if i < len(cases_per_turn):
+                cumulative_cases.extend(cases_per_turn[i])
+        
+        return {
+            'instruction_ids': cumulative_instruction_ids,
+            'instructions': cumulative_instructions,
+            'eval_funcs': cumulative_eval_funcs,
+            'cases': cumulative_cases,
+            **{k: v for k, v in self.data.items() if k not in ['instruction_ids', 'instructions', 'eval_funcs', 'cases']}
+        }
+    
+    def _prepare_scoring_data(self, turn_idx: int, instruction_ids_per_turn: List[List], 
+                             instructions_per_turn: List[List], eval_funcs_per_turn: List[List], 
+                             cases_per_turn: List[List]) -> Dict[str, Any]:
+        """Prepare scoring data for a specific turn (only current turn's instructions)."""
+        return {
+            'instruction_ids': instruction_ids_per_turn[turn_idx] if turn_idx < len(instruction_ids_per_turn) else [],
+            'instructions': instructions_per_turn[turn_idx] if turn_idx < len(instructions_per_turn) else [],
+            'eval_funcs': eval_funcs_per_turn[turn_idx] if turn_idx < len(eval_funcs_per_turn) else [],
+            'cases': cases_per_turn[turn_idx] if turn_idx < len(cases_per_turn) else [],
+            **{k: v for k, v in self.data.items() if k not in ['instruction_ids', 'instructions', 'eval_funcs', 'cases']}
         }

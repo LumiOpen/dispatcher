@@ -2,7 +2,10 @@ import argparse
 from typing import List, Dict, Optional, Tuple
 import random
 import json
+import re
 from datasets import load_dataset
+
+
 
 def load_verifiers(verifiers_path: str) -> List[Dict]:
     """Load verifiers from a JSONL file."""
@@ -16,59 +19,105 @@ def load_verifiers(verifiers_path: str) -> List[Dict]:
         return []
     return verifiers_list
 
-def extract_query_from_messages(item: Dict) -> Optional[Tuple[str, str]]:
-    """Extract the first user message and assistant response from chat messages format.
+def extract_query_from_messages(item: Dict, turns: int = 1, messages_key: str = 'messages') -> Optional[Tuple[List[str], List[str]]]:
+    """Extract multiple user messages and assistant responses from chat messages format.
+    
+    Args:
+        item: Dictionary containing messages key
+        turns: Number of conversation turns to extract
+        messages_key: Key name for the messages list (default: 'messages')
     
     Returns:
-        Tuple of (user_message, assistant_response) or None if not found
+        Tuple of (user_messages_list, assistant_responses_list) or None if not found
     """
-    if 'messages' not in item:
+    if messages_key not in item:
         return None
     
-    user_message = None
-    assistant_response = None
+    user_messages = []
+    assistant_responses = []
     
-    for msg in item['messages']:
-        if msg.get('role') == 'user' and user_message is None:
-            user_message = msg.get('content', '')
-        elif msg.get('role') == 'assistant' and user_message is not None and assistant_response is None:
-            assistant_response = msg.get('content', '')
-            break  # Stop after finding the first user-assistant pair
+    current_turn = 0
+    expecting_user = True
     
-    return (user_message, assistant_response) if user_message else None
+    for msg in item[messages_key]:
+        if current_turn >= turns:
+            break
+            
+        if expecting_user and msg.get('role') == 'user':
+            user_messages.append(msg.get('content', ''))
+            expecting_user = False
+        elif not expecting_user and msg.get('role') == 'assistant':
+            assistant_responses.append(msg.get('content', ''))
+            expecting_user = True
+            current_turn += 1
+    
+    # Check if we have enough complete turns
+    if len(user_messages) >= turns and len(assistant_responses) >= turns:
+        return (user_messages[:turns], assistant_responses[:turns])
+    elif len(user_messages) >= turns:
+        # If we have user messages but missing some assistant responses, pad with empty strings
+        while len(assistant_responses) < turns:
+            assistant_responses.append('')
+        return (user_messages[:turns], assistant_responses[:turns])
+    
+    return None
 
 def parse_query_from_item(item: Dict, messages_format: bool, query_column_name: str, 
-                         response_column_name: str, query_max_len: int) -> Optional[Dict]:
+                         response_column_name: str, query_max_len: int, turns: int = 1, 
+                         messages_key: str = 'messages') -> Optional[Dict]:
     """Parse a single query item from either standard or messages format.
     
     Returns:
-        Dict with 'query', 'response', and 'metadata' keys, or None if invalid
+        Dict with 'queries', 'responses', and 'metadata' keys, or None if invalid
     """
+    
     query = {}
     
     if messages_format:
         # Extract from chat messages format
-        result = extract_query_from_messages(item)
+        result = extract_query_from_messages(item, turns, messages_key)
         if not result:
             return None
         
-        user_message, assistant_response = result
-        if not user_message or len(user_message) >= query_max_len:
+        user_messages, assistant_responses = result
+        
+        # Check if any user message exceeds max length
+        if any(len(msg) >= query_max_len for msg in user_messages):
             return None
         
-        query['query'] = user_message
-        if assistant_response:
-            query['response'] = assistant_response
+        query['queries'] = user_messages
+        query['responses'] = assistant_responses
         # Add the rest as metadata (excluding messages)
-        query['metadata'] = {k: v for k, v in item.items() if k != 'messages'}
+        query['metadata'] = {k: v for k, v in item.items() if k not in [messages_key, 'openai_moderation']}
     else:
         # Standard format
         if query_column_name not in item or len(item[query_column_name]) >= query_max_len:
             return None
         
-        query['query'] = item[query_column_name]
-        if response_column_name in item:
-            query['response'] = item[response_column_name]
+        # For non-messages format with multiple turns, we expect the data to be structured differently
+        # For now, we'll treat single-turn as before, and multi-turn will need specific handling
+        if turns == 1:
+            query['queries'] = [item[query_column_name]]
+            if response_column_name in item:
+                query['responses'] = [item[response_column_name]]
+            else:
+                query['responses'] = ['']
+        else:
+            # For multi-turn non-messages format, we need the data to contain lists or structured turns
+            # This implementation assumes the data structure supports this
+            if isinstance(item.get(query_column_name), list) and len(item[query_column_name]) >= turns:
+                query['queries'] = item[query_column_name][:turns]
+                if response_column_name in item and isinstance(item[response_column_name], list):
+                    responses = item[response_column_name][:turns]
+                    # Pad with empty strings if needed
+                    while len(responses) < turns:
+                        responses.append('')
+                    query['responses'] = responses
+                else:
+                    query['responses'] = [''] * turns
+            else:
+                return None
+        
         # Add the rest as metadata
         query['metadata'] = {k: v for k, v in item.items() 
                            if k not in [query_column_name, response_column_name]}
@@ -76,7 +125,8 @@ def parse_query_from_item(item: Dict, messages_format: bool, query_column_name: 
     return query
 
 def load_queries_from_file(queries_file: str, messages_format: bool, query_column_name: str,
-                          response_column_name: str, query_max_len: int) -> Tuple[List[Dict], int]:
+                          response_column_name: str, query_max_len: int, turns: int = 1,
+                          messages_key: str = 'messages') -> Tuple[List[Dict], int]:
     """Load queries from a JSONL file.
     
     Returns:
@@ -94,7 +144,7 @@ def load_queries_from_file(queries_file: str, messages_format: bool, query_colum
             try:
                 item = json.loads(line)
                 query = parse_query_from_item(item, messages_format, query_column_name, 
-                                            response_column_name, query_max_len)
+                                            response_column_name, query_max_len, turns, messages_key)
                 if query:
                     queries.append(query)
                 else:
@@ -107,7 +157,7 @@ def load_queries_from_file(queries_file: str, messages_format: bool, query_colum
     return queries, skipped_queries
 
 def load_queries_from_dataset(queries_dataset: str, query_column_name: str,
-                             response_column_name: str, query_max_len: int) -> Tuple[List[Dict], int]:
+                             response_column_name: str, query_max_len: int, turns: int = 1) -> Tuple[List[Dict], int]:
     """Load queries from a HuggingFace dataset.
     
     Returns:
@@ -123,13 +173,15 @@ def load_queries_from_dataset(queries_dataset: str, query_column_name: str,
             continue
         
         query = {
-            'query': item[query_column_name],
+            'queries': [item[query_column_name]],  # Convert to list format
             'metadata': {k: v for k, v in item.items() 
                         if k not in [query_column_name, response_column_name]}
         }
         
         if response_column_name in item:
-            query['response'] = item[response_column_name]
+            query['responses'] = [item[response_column_name]]
+        else:
+            query['responses'] = ['']
         
         queries.append(query)
     
@@ -173,23 +225,127 @@ def select_instructions(verifiers_list: List[Dict], instructions_per_query: int,
     
     return selected_verifiers
 
-def create_output_entry(query: Dict, selected_verifiers: List[Dict], source: str = None) -> Dict:
-    """Create the output dictionary for a single query-instruction pair."""
-    # Format instructions as bullet points
-    instructions_text = "\n".join([f"- {v['instruction']}" for v in selected_verifiers])
+def select_instructions_multi_turn(verifiers_list: List[Dict], instructions_per_query: int,
+                                  instruction_usage_count: Dict[int, int], turns: int,
+                                  used_instructions_in_conversation: set = None) -> List[List[Dict]]:
+    """Select instructions for multiple turns maintaining uniform distribution without replacement.
     
-    prompt_template = open("model_prompts/generate_response_prompt.txt").read().strip()
-    prompt = prompt_template.format(query=query['query'], instructions=instructions_text)
+    Args:
+        verifiers_list: List of all available verifiers
+        instructions_per_query: Number of instructions per query/turn
+        instruction_usage_count: Global usage count for uniform distribution
+        turns: Number of turns to generate instructions for
+        used_instructions_in_conversation: Set of instruction indices already used in this conversation
     
+    Returns:
+        List of lists - one list of selected verifier dictionaries per turn
+    """
+    if used_instructions_in_conversation is None:
+        used_instructions_in_conversation = set()
+    
+    all_turn_instructions = []
+    
+    for turn in range(turns):
+        # Find the minimum usage count among unused instructions
+        available_indices = [i for i in range(len(verifiers_list)) 
+                           if i not in used_instructions_in_conversation]
+        
+        if len(available_indices) < instructions_per_query:
+            # If we don't have enough unused instructions, we'll have to reuse some
+            # Reset and use all available
+            available_indices = list(range(len(verifiers_list)))
+            used_instructions_in_conversation = set()
+        
+        min_usage = min(instruction_usage_count[i] for i in available_indices)
+        
+        # Select instructions for this turn
+        selected_indices = []
+        current_usage = min_usage
+        
+        while len(selected_indices) < instructions_per_query:
+            # Get available indices with current usage count
+            candidates = [i for i in available_indices
+                         if instruction_usage_count[i] == current_usage and i not in selected_indices]
+            
+            if not candidates:
+                current_usage += 1
+                continue
+            
+            # Randomly select from candidates
+            needed = min(instructions_per_query - len(selected_indices), len(candidates))
+            selected_from_current = random.sample(candidates, needed)
+            selected_indices.extend(selected_from_current)
+        
+        # Update usage counts and tracking
+        selected_verifiers = []
+        for idx in selected_indices:
+            instruction_usage_count[idx] += 1
+            used_instructions_in_conversation.add(idx)
+            selected_verifiers.append(verifiers_list[idx])
+        
+        all_turn_instructions.append(selected_verifiers)
+    
+    return all_turn_instructions
+
+def create_output_entry(query: Dict, selected_verifiers: List[Dict] = None, source: str = None, 
+                       turns: int = 1, selected_verifiers_multi_turn: List[List[Dict]] = None) -> Dict:
+    """Create the output dictionary for a single query-instruction pair or multi-turn conversation."""
+    
+    # For single turn, wrap selected_verifiers in a list to unify with multi-turn logic
+    if turns == 1:
+        if selected_verifiers is None:
+            raise ValueError("selected_verifiers must be provided for single-turn conversations")
+        verifiers_by_turn = [selected_verifiers]
+    else:
+        if selected_verifiers_multi_turn is None:
+            raise ValueError("selected_verifiers_multi_turn must be provided for multi-turn conversations")
+        verifiers_by_turn = selected_verifiers_multi_turn
+    
+    # Build prompts and collect data for each turn
+    prompts = []
+    all_instruction_ids = []
+    all_instructions = []
+    all_eval_funcs = []
+    all_cases = []
+    
+    for turn_idx in range(turns):
+        turn_verifiers = verifiers_by_turn[turn_idx]
+        turn_query = query['queries'][turn_idx]
+        
+        # Format current turn instructions
+        current_instructions_text = "\n".join([f"- {v['instruction']}" for v in turn_verifiers])
+        
+        # Select appropriate prompt template based on turn
+        if turns == 1:
+            # Single turn uses the original template
+            template_file = "model_prompts/generate_response_prompt.txt"
+        elif turn_idx == 0:
+            # First turn of multi-turn conversation
+            template_file = "model_prompts/generate_response_turn1_prompt.txt"
+        else:
+            # Subsequent turns of multi-turn conversation
+            template_file = "model_prompts/generate_response_turnN_prompt.txt"
+        
+        prompt_template = open(template_file).read().strip()
+        prompt = prompt_template.format(query=turn_query, instructions=current_instructions_text)
+        prompts.append(prompt)
+        
+        # Collect instruction data for this turn
+        all_instruction_ids.append([v['instruction_id'] for v in turn_verifiers])
+        all_instructions.append([v['instruction'] for v in turn_verifiers])
+        all_eval_funcs.append([v['eval_func'] for v in turn_verifiers])
+        all_cases.append([v['cases'] for v in turn_verifiers])
+    
+    # Create unified output format (all keys are plural)
     return {
-        'instruction_ids': [v['instruction_id'] for v in selected_verifiers],
-        'instructions': [v['instruction'] for v in selected_verifiers],
-        'query': query['query'],
-        'query_response': query.get('response', ''),
+        'instruction_ids': all_instruction_ids,
+        'instructions': all_instructions,
+        'queries': query['queries'],
+        'queries_responses': query['responses'],
         'query_metadata': query['metadata'],
-        'eval_funcs': [v['eval_func'] for v in selected_verifiers],
-        'cases': [v['cases'] for v in selected_verifiers],
-        'prompt': prompt,
+        'eval_funcs': all_eval_funcs,
+        'cases': all_cases,
+        'prompts': prompts,
         'source': source
     }
 
@@ -203,7 +359,9 @@ def concat_queries(
     output_file: str,
     num_of_output_lines: int = 100,
     instructions_per_query: int = 1,
-    messages_format: bool = False
+    messages_format: bool = False,
+    turns: int = 1,
+    messages_key: str = 'messages'
 ) -> int:
     """Concatenate queries with verification functions."""
     # Load verifiers
@@ -218,11 +376,12 @@ def concat_queries(
     if queries_file is not None:
         queries, skipped_queries = load_queries_from_file(
             queries_file, messages_format, query_column_name, 
-            response_column_name, query_max_len
+            response_column_name, query_max_len, turns, messages_key
         )
     elif queries_dataset is not None:
         queries, skipped_queries = load_queries_from_dataset(
-            queries_dataset, query_column_name, response_column_name, query_max_len
+            queries_dataset, query_column_name, response_column_name, 
+            query_max_len, turns
         )
     else:
         print("No queries file or dataset provided")
@@ -249,17 +408,38 @@ def concat_queries(
             query = queries[query_index % len(queries)]
             query_index += 1
             
-            # Select instructions
-            selected_verifiers = select_instructions(
-                verifiers_list, instructions_per_query, instruction_usage_count
-            )
-            
-            # Track instruction combination for summary
-            instruction_key = tuple(sorted([v['instruction_id'] for v in selected_verifiers]))
-            instruction_combination_count[instruction_key] = instruction_combination_count.get(instruction_key, 0) + 1
-            
-            # Create output entry
-            output = create_output_entry(query, selected_verifiers, source=queries_file if queries_file else queries_dataset)
+            if turns == 1:
+                # Single turn logic (backward compatibility)
+                selected_verifiers = select_instructions(
+                    verifiers_list, instructions_per_query, instruction_usage_count
+                )
+                
+                # Track instruction combination for summary
+                instruction_key = tuple(sorted([v['instruction_id'] for v in selected_verifiers]))
+                instruction_combination_count[instruction_key] = instruction_combination_count.get(instruction_key, 0) + 1
+                
+                # Create output entry
+                output = create_output_entry(query, selected_verifiers, 
+                                           source=queries_file if queries_file else queries_dataset,
+                                           turns=turns)
+            else:
+                # Multi-turn logic
+                selected_verifiers_multi_turn = select_instructions_multi_turn(
+                    verifiers_list, instructions_per_query, instruction_usage_count, turns
+                )
+                
+                # Track instruction combination for summary (flatten all turns)
+                all_instruction_ids = []
+                for turn_verifiers in selected_verifiers_multi_turn:
+                    all_instruction_ids.extend([v['instruction_id'] for v in turn_verifiers])
+                instruction_key = tuple(sorted(all_instruction_ids))
+                instruction_combination_count[instruction_key] = instruction_combination_count.get(instruction_key, 0) + 1
+                
+                # Create output entry
+                output = create_output_entry(query, None, 
+                                           source=queries_file if queries_file else queries_dataset,
+                                           turns=turns,
+                                           selected_verifiers_multi_turn=selected_verifiers_multi_turn)
             
             f.write(json.dumps(output) + '\n')
             count += 1
@@ -267,13 +447,9 @@ def concat_queries(
     # Print summary statistics
     print(f"Generated {count} query-instruction pairs to {output_file}")
     print(f"Used {len(queries)} unique queries (reused {max(0, count - len(queries))} times)")
+    print(f"Number of turns per conversation: {turns}")
     print(f"Instruction usage distribution: {dict(instruction_usage_count)}")
-    # Log instruction combination usage to file
-    # with open("logs/concat_queries.log", "w") as log_file:
-    #     log_file.write(f"Instruction combination usage:\n")
-    #     for combination, usage_count in sorted(instruction_combination_count.items()):
-    #         log_file.write(f"  {combination}: {usage_count} queries\n")
-    #     print(f"Logged instruction combinations to logs/concat_queries.log")
+    
     return count
 
 def main():
@@ -299,6 +475,10 @@ def main():
                         help='Number of instructions to combine with each query (formatted as bullet points)')
     parser.add_argument('--messages_format', action='store_true',
                         help='Parse queries from chat messages format (extracts first user message)')
+    parser.add_argument('--messages_key', type=str, default='messages',
+                        help='Key name for the messages list when using messages_format (default: messages)')
+    parser.add_argument('--turns', type=int, default=1,
+                        help='Number of conversation turns to build multi-turn prompts (default: 1)')
     
     args = parser.parse_args()
 
@@ -313,7 +493,9 @@ def main():
         args.output_file,
         args.num_of_output_lines,
         args.instructions_per_query,
-        args.messages_format
+        args.messages_format,
+        args.turns,
+        args.messages_key
     )
 
 if __name__ == "__main__":
