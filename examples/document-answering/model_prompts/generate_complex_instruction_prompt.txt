@@ -16,7 +16,7 @@ Instructions are used to fine-tune the model’s behavior, helping it understand
 5. Roleplay and Simulation: Inhabiting a character/persona
 6. Advisory: Life coaching, productivity guidance
 7. Domain-Specific Knowledge: STEM, humanities, history, social studies
-8. Adversarial: ambiguous or underspecified requests, attempts at misdirection, unsafe or inappropriate requests, noisy or ungrammatical prompts
+8. Adversarial: noisy or ungrammatical prompts, ambiguous or underspecified requests, attempts at misdirection, unsafe or inappropriate requests 
 
 ## Task Description:
 Considering the definition of an Instruction, analyze the following {language} web document and perform a three-step analysis:
@@ -26,7 +26,7 @@ Considering the definition of an Instruction, analyze the following {language} w
 
 Firstly, try to give a short summary in {language} of the document. This should help you better understand the document.
 
-Secondly, using the knowledge in the document, create an instruction suitable for training an AI system, where the document provides the topic and, if possible, the answer. Prioritize complex instructions that require domain knowledge and reasoning to solve. Complex instructions typically require domain expertise and synthesis of multiple concepts to solve. Aim to create an instruction that falls into the {category} category. Note that the instruction should be understandable **without requiring access to the document**. It should be clear and detailed enough for the model to comprehend the task without seeing the document.
+Secondly, using the knowledge in the document, create an instruction suitable for training an AI system, where the document provides the topic and, if possible, the answer. Provide an instruction from the perspective of the user. Prioritize complex instructions that require domain knowledge and reasoning to solve. Complex instructions typically require domain expertise and synthesis of multiple concepts to solve. Aim to create an instruction that falls into the {category} category. Note that the instruction should be understandable **without requiring access to the document**. It should be clear and detailed enough for the model to comprehend the task without seeing the document.
 
 Thirdly, categorize the instruction into one of the categories defined above. 
 

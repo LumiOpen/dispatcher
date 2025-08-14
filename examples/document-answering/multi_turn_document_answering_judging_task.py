@@ -16,7 +16,7 @@ __all__ = ["GenerateConversationJudgingFromDocumentsTask"]
 LANGUAGE=os.environ.get("LANGUAGE")
 MIN_DOC_LEN = 100
 MAX_DOC_LEN = 30000
-MAX_TURNS = 4
+MAX_TURNS = 3
 
 ERROR_TYPES = {
     "document_len": "document_length_error",
@@ -125,6 +125,7 @@ class GenerateConversationJudgingFromDocumentsTask(GeneratorTask):
         turns = random.sample(range(1, MAX_TURNS+1), 1)[0]
         # draw a random category for each turn without replacement
         categories = random.sample(list(INSTRUCTION_CATEGORIES.keys()), turns)
+        # self.logger.info(f"CATEGORIES: {categories}")
         return_dict = {
                         "id": doc_id,
                         "turns": turns,
@@ -156,6 +157,15 @@ class GenerateConversationJudgingFromDocumentsTask(GeneratorTask):
                     )
                 instruct_text = match.group(1).strip()
 
+                match = re.search(r"CATEGORY:\s*(.*)", instruct_resp_text)
+                if match is None:
+                    error_message = f"Could not find keyword CATEGORY for the first-turn"
+                    raise TaskFailed(
+                        message=error_message,
+                        error_type=ERROR_TYPES['instruction_format']
+                    )
+                category_text = match.group(1).strip()
+
                 lang_id1, lang_id2 = detect_language(instruct_text)
                 if lang_id1 != LANGUAGE and lang_id2 != LANGUAGE:
                     error_message = f"Skipping this Instruction. Instruction lang is {lang_id1.upper()} or {lang_id2.upper()}, but expected {LANGUAGE.upper()}"
@@ -172,7 +182,7 @@ class GenerateConversationJudgingFromDocumentsTask(GeneratorTask):
                 messages = [
                     {
                         "role": "user",
-                        "content": gen_answer_prompt_text
+                        "content": gen_answer_prompt_text,
                     },
                 ]
 
@@ -211,7 +221,8 @@ class GenerateConversationJudgingFromDocumentsTask(GeneratorTask):
                 return_dict["messages"] = [
                             {
                                 "role": "user",
-                                "content": instruct_text
+                                "content": instruct_text,
+                                "category": category_text
                             },
                             {
                                 "role": "assistant",
@@ -219,6 +230,7 @@ class GenerateConversationJudgingFromDocumentsTask(GeneratorTask):
                                 "score": first_turn_score
                             }
                         ]
+                # self.logger.info(f"\nINSTRUCTION: {instruct_text}\nRESPONSE: {answer_text}\n\n")
             else: 
                 # Step 4 - Generate instruction for the next turn
                 existing_conv = self.convert_conversation_to_string(return_dict)
@@ -240,11 +252,22 @@ class GenerateConversationJudgingFromDocumentsTask(GeneratorTask):
                 next_turn_instruct_resp_text = next_turn_instruct_resp.get_text()
                 match = re.search(r'INSTRUCTION\s*:?([\s\S]*?)CATEGORY', next_turn_instruct_resp_text)
                 if match is None:
+                    error_message = f"Could not find keyword INSTRUCTION for the first-turn"
                     raise TaskFailed(
                         message=error_message,
                         error_type=ERROR_TYPES['instruction_format']
                     )
                 next_turn_instruct_text = match.group(1).strip()
+
+                match = re.search(r"CATEGORY:\s*(.*)", next_turn_instruct_resp_text)
+                if match is None:
+                    error_message = f"Could not find keyword CATEGORY for the first-turn"
+                    raise TaskFailed(
+                        message=error_message,
+                        error_type=ERROR_TYPES['instruction_format']
+                    )
+                next_turn_category_text = match.group(1).strip()
+
                 lang_id1, lang_id2 = detect_language(next_turn_instruct_text)
                 if lang_id1 != LANGUAGE and lang_id2 != LANGUAGE:
                     error_message = f"Skipping this instruction. Instruction lang is {lang_id1.upper()} or {lang_id2.upper()}, but expected {LANGUAGE.upper()}"
@@ -257,7 +280,8 @@ class GenerateConversationJudgingFromDocumentsTask(GeneratorTask):
                 return_dict["messages"].append(
                     {
                         "role": "user",
-                        "content": next_turn_instruct_text
+                        "content": next_turn_instruct_text,
+                        "category": next_turn_category_text
                     }
                 )
                 existing_conv = self.convert_conversation_to_string(return_dict)
@@ -310,5 +334,6 @@ class GenerateConversationJudgingFromDocumentsTask(GeneratorTask):
                     "content": next_turn_answer_text,
                     "score": next_turn_score
                 })
+                # self.logger.info(f"\nNEXT-TURN INSTRUCTION: {next_turn_instruct_text}\nNEXT-TURN RESPONSE: {next_turn_answer_text}\n\n")
             
         return return_dict

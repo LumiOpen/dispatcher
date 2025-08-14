@@ -10,6 +10,7 @@ import random
 import os
 import re
 import logging
+import numpy as np
 
 __all__ = ["GenerateConversationJudgingFromDocumentsTask"]
 
@@ -25,15 +26,15 @@ ERROR_TYPES = {
     "score_format": "score_format_error",
 }
 
-INSTRUCTION_CATEGORIES = [
-    "Problem Solving",
-    "Creative Tasks",
-    "Information Processing",
-    "Text Transformation",
-    "Roleplay and Simulation",
-    "Domain-Specific Knowledge",
-    "Adversarial",
-]
+INSTRUCTION_CATEGORIES = {
+    "Problem Solving" : 0.1,
+    "Creative Tasks": 0.1,
+    "Information Processing": 0.1,
+    "Text Transformation": 0.1,
+    "Roleplay and Simulation": 0.1,
+    "Domain-Specific Knowledge": 0.1,
+    "Adversarial": 0.6,
+}
 
 LANGUAGE_NAMES = {
     "bg": ["Bulgarian", "bul"],
@@ -68,12 +69,23 @@ class GenerateConversationJudgingFromDocumentsTask(GeneratorTask):
     """Generate a question from a document in some language, the have the model generate an answer to the question."""
 
     # Fixed generation hyper‑parameters for candidate answers
-    GEN_PARAMS: Dict[str, Any] = {
-        "temperature": 0.8,
+    ANSWER_GEN_PARAMS: Dict[str, Any] = {
+        "temperature": 0.6,
         "top_p": 0.9,
         "max_tokens": 4096,
     }
     
+    INSTRUCTION_GEN_PARAMS: Dict[str, Any] = {
+        "temperature": 0.6,
+        "top_p": 0.9,
+        "max_tokens": 4096,
+    }
+
+    ADVERSARIAL_GEN_PARAMS: Dict[str, Any] = {
+        "temperature": 0.9,
+        "max_tokens": 4096,
+    }
+
     # Deterministic parameters for the judge
     JUDGE_PARAMS: Dict[str, Any] = {
         "temperature": 0.0,
@@ -91,7 +103,6 @@ class GenerateConversationJudgingFromDocumentsTask(GeneratorTask):
                 string_conv += f"Assistant: {msg['content']}\n\n"
             else:
                 string_conv += f"User: {msg['content']}\n"
-        
         return string_conv.strip()
 
     # --------------- generator ---------------
@@ -120,13 +131,16 @@ class GenerateConversationJudgingFromDocumentsTask(GeneratorTask):
             )
         
         # draw a random category for each turn without replacement
-        categories = random.sample(INSTRUCTION_CATEGORIES, MAX_TURNS)
-        # self.logger.info(f"CATEGORIES: {categories}")
+        prob = np.array(list(INSTRUCTION_CATEGORIES.values()))
+        prob /= prob.sum()  # normalize to sum to 1
+        categories = np.random.choice(list(INSTRUCTION_CATEGORIES.keys()), MAX_TURNS, p=prob)
+        #self.logger.info(f"CATEGORIES: {categories}")
         return_dict = {
                         "id": doc_id,
                     }
         for turn in range(MAX_TURNS):
             if turn == 0:
+                # Step 1 – Generate instruction from a document
                 gen_instruct_prompt_template = open("model_prompts/generate_complex_instruction_prompt.txt").read().strip()
                 gen_instruct_prompt_text = gen_instruct_prompt_template.format(
                             language=LANGUAGE_NAMES.get(LANGUAGE, ["English", "eng"])[0],
@@ -140,8 +154,10 @@ class GenerateConversationJudgingFromDocumentsTask(GeneratorTask):
                     },
                 ]
 
-                # Step 1 – Generate instruction from a document
-                instruct_resp: Response = yield Request({"messages": messages, **self.GEN_PARAMS})
+                if categories[turn] != 'Adversarial':
+                    instruct_resp: Response = yield Request({"messages": messages, **self.INSTRUCTION_GEN_PARAMS})
+                else:
+                    instruct_resp: Response = yield Request({"messages": messages, **self.ADVERSARIAL_GEN_PARAMS})
                 instruct_resp_text = instruct_resp.get_text()
                 match = re.search(r'INSTRUCTION\s*:?([\s\S]*?)CATEGORY', instruct_resp_text)
                 if match is None:
@@ -182,7 +198,6 @@ class GenerateConversationJudgingFromDocumentsTask(GeneratorTask):
                 ]
                 judge_resp = yield Request({"messages": messages, **self.JUDGE_PARAMS})
                 judge_resp_text = judge_resp.get_text()
-                # self.logger.info(f"JUDGE RESPONSE: {judge_resp_text}")
                 score_match = re.search(r'Score:\s*(\d+)/\d+', judge_resp_text)
                 if not score_match:
                     # self.logger.error(f"\nCould not find SCORE in judge response: {judge_resp_text}")
@@ -192,7 +207,6 @@ class GenerateConversationJudgingFromDocumentsTask(GeneratorTask):
                         error_type=ERROR_TYPES['score_format']
                     )
                 first_turn_instruct_score = int(score_match.group(1))
-                # self.logger.info(f"\nEXTRACTED SCORE from judge response: {judge_resp_text}\nSCORE: {first_turn_instruct_score}")
 
                 # Step 2 – Generate the answer to the instruction
                 gen_answer_prompt_template = open("model_prompts/generate_answers_prompt.txt").read().strip()
@@ -208,7 +222,7 @@ class GenerateConversationJudgingFromDocumentsTask(GeneratorTask):
                     },
                 ]
 
-                answer_resp: Response = yield Request({"messages": messages, **self.GEN_PARAMS})
+                answer_resp: Response = yield Request({"messages": messages, **self.ANSWER_GEN_PARAMS})
                 answer_text = answer_resp.get_text().strip()
                 # print("Checking answer language")
                 lang_id1, lang_id2 = detect_language(answer_text)
@@ -270,7 +284,10 @@ class GenerateConversationJudgingFromDocumentsTask(GeneratorTask):
                         "content": gen_next_turn_text
                     }, 
                 ]
-                next_turn_instruct_resp: Response = yield Request({"messages": messages, **self.GEN_PARAMS})
+                if categories[turn] != 'Adversarial':
+                    next_turn_instruct_resp: Response = yield Request({"messages": messages, **self.INSTRUCTION_GEN_PARAMS})
+                else:
+                    next_turn_instruct_resp: Response = yield Request({"messages": messages, **self.ADVERSARIAL_GEN_PARAMS})
                 next_turn_instruct_resp_text = next_turn_instruct_resp.get_text()
                 match = re.search(r'INSTRUCTION\s*:?([\s\S]*?)CATEGORY', next_turn_instruct_resp_text)
                 if match is None:
@@ -338,7 +355,7 @@ class GenerateConversationJudgingFromDocumentsTask(GeneratorTask):
                         "content": gen_answer_prompt_text
                     },
                 ]
-                answer_resp: Response = yield Request({"messages": messages, **self.GEN_PARAMS})
+                answer_resp: Response = yield Request({"messages": messages, **self.ANSWER_GEN_PARAMS})
                 next_turn_answer_text = answer_resp.get_text().strip()
                 lang_id1, lang_id2 = detect_language(next_turn_answer_text)
                 if lang_id1 != LANGUAGE and lang_id2 != LANGUAGE:

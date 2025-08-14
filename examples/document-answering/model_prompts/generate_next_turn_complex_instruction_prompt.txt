@@ -16,7 +16,7 @@ Instructions are used to fine-tune the model’s behavior, helping it understand
 5. Roleplay and Simulation: Inhabiting a character/persona
 6. Advisory: Life coaching, productivity guidance
 7. Domain-Specific Knowledge: STEM, humanities, history, social studies
-8. Adversarial: ambiguous or underspecified requests, attempts at misdirection, unsafe or inappropriate requests, noisy or ungrammatical prompts
+8. Adversarial: noisy or ungrammatical prompts, ambiguous or underspecified requests, attempts at misdirection, unsafe or inappropriate requests 
 
 ## Definition of a \"Conversation\":
 In the context of an LLM, a conversation is composed of one or more turns where each turn is composed of an instruction from the user and an answer from the assisant. A turn always starts with the user's instruction.
@@ -33,7 +33,7 @@ Considering the definition of an Instruction and Conversation, analyze the follo
 
 Firstly, try to give a short summary in {language} of the document. This should help you better understand the document.
 
-Secondly, using knowledge gained from the conversation and the document, start the next turn of the conversation by creating a new instruction based on the previous turn. Prioritize complex instructions that require domain knowledge and reasoning to solve. Complex instructions typically require domain expertise and synthesis of multiple concepts to solve. Aim to create a new instruction that falls into the {category} category. Aim to create a new instruction that is significantly different from the previous instruction. Note that the instruction should be understandable **without requiring access to the document**. The instruction can refer to information in the conversation. The instruction should be clear and detailed enough for the model to comprehend the task without seeing the document.
+Secondly, using knowledge gained from the conversation and the document, start the next turn of the conversation by creating a new instruction based on the previous turn. Provide an instruction from the perspective of the user. Prioritize complex instructions that require domain knowledge and reasoning to solve. Complex instructions typically require domain expertise and synthesis of multiple concepts to solve. Aim to create a new instruction that falls into the {category} category. Aim to create a new instruction that is significantly different from the previous instruction. Note that the instruction should be understandable **without requiring access to the document**. The instruction can refer to information in the conversation. The instruction should be clear and detailed enough for the model to comprehend the task without seeing the document.
 
 Finally, categorize the instruction into one of the categories defined above. 
 
