@@ -158,7 +158,6 @@ python -m dispatcher.taskmanager.cli \
 *   `--workers`: Limiting to a single worker can make reading log output more tractable while debugging.
 
 Now, you can edit your task logic in `your_task_module.py` and re-run the `python -m dispatcher.taskmanager.cli` command instantly. You will get immediate feedback on your changes without waiting for the model to reload.
-```
 
 ## Graceful Failure Reporting in Tasks
 
@@ -182,7 +181,8 @@ if judge_text not in ["A", "B"]:
     raise TaskFailed(
         message=f"Judge model returned an invalid response: '{judge_text}'",
         error_type="judge_response_invalid"
-    )```
+    )
+```
 
 This will produce the following clean, standardized error in your `output.jsonl` file, allowing you to easily find and analyze all failed tasks:
 
@@ -196,6 +196,7 @@ This will produce the following clean, standardized error in your `output.jsonl`
     }
   }
 }
+```
 
 
 # Troubleshooting
@@ -258,6 +259,4 @@ from huggingface_hub import hf_hub_download
 
 path = hf_hub_download(repo_id="meta-llama/Llama-2-7b-hf", filename="config.json")
 print("Cache path:", path)
-
-
 ```

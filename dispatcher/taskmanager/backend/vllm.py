@@ -54,7 +54,8 @@ class VLLMServerManager:
         max_model_len: Optional[int],
         startup_timeout: int,
         disable_log_requests: bool = True,
-        disable_output: bool = False
+        disable_output: bool = False,
+        enforce_eager: bool = False,
     ) -> 'VLLMServerManager':
         """
         Launches the vLLM OpenAI API server and waits for it to become healthy.
@@ -97,6 +98,9 @@ class VLLMServerManager:
             cmd.extend(["--chat-template", chat_template])
         if max_model_len:
             cmd.extend(["--max-model-len", str(max_model_len)])
+
+        if enforce_eager:
+            cmd.extend(["--enforce-eager"])
 
         stdout, stderr = subprocess.DEVNULL, subprocess.DEVNULL
         if not disable_output:
@@ -176,7 +180,8 @@ class VLLMBackendManager(BackendManager):
                  startup_timeout: int = 1500,
                  request_timeout: int = 300,
                  health_check_interval: int = 60,
-                 disable_output: bool = False):
+                 disable_output: bool = False,
+                 enforce_eager: bool = False):
         """
         Initialize a VLLM backend manager.
         
@@ -194,6 +199,7 @@ class VLLMBackendManager(BackendManager):
             request_timeout: Request timeout in seconds
             health_check_interval: How often to perform health checks (in seconds)
             disable_output: Redirect vllm output to /dev/null
+            enforce_eager: run vllm in eager mode
         """
         self.model_name = model_name
         self.host = host
@@ -223,6 +229,7 @@ class VLLMBackendManager(BackendManager):
                     startup_timeout=startup_timeout,
                     disable_log_requests=True,
                     disable_output=disable_output,
+                    enforce_eager=enforce_eager,
                 )
                 self.logger.info(f"Launched vLLM server for model {model_name}")
             except Exception as e:
