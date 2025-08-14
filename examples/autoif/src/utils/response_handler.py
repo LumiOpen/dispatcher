@@ -301,3 +301,34 @@ def format_instructions_with_conjunctions(instructions: Union[str, List[str]]) -
         return f"{formatted[0]} and {formatted[1]}"
     
     return ", ".join(formatted[:-1]) + f" and {formatted[-1]}"
+
+def is_no_followup_case(queries: List[str]) -> bool:
+    """Check if this is a no_followup case (queries after first are empty)."""
+    if len(queries) <= 1:
+        return False
+    # Check if all queries after the first one are empty
+    return all(query.strip() == "" for query in queries[1:])
+
+def construct_rephrase_scoring_messages(current_response: str, original_response: str, 
+                                        original_query: str, instruction_ids_per_turn: List[List], 
+                                        instructions_per_turn: List[List], turn_idx: int) -> List[Dict[str, str]]:
+    """Construct scoring messages for no_followup rephrase scoring."""
+    # Load the rephrase scoring prompt
+    with open("model_prompts/scoring_rephrase_prompt.txt", "r") as f:
+        scoring_prompt = f.read().strip()
+    
+    # Accumulate all constraints up to current turn
+    accumulated_constraints = []
+    for i in range(turn_idx + 1):
+        if i < len(instructions_per_turn):
+            accumulated_constraints.extend(instructions_per_turn[i])
+    
+    # Format the prompt
+    scoring_prompt = scoring_prompt.format(
+        query=original_query,
+        previous_turn_response=original_response,
+        current_response=current_response,
+        instructions=format_instructions_with_conjunctions(accumulated_constraints)
+    )
+    
+    return [{"role": "user", "content": scoring_prompt}]

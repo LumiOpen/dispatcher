@@ -1,11 +1,12 @@
 """Example task – two responses + judge"""
 from typing import Any, Dict, Generator, List, Union
 import re
+import os
 
 from dispatcher.taskmanager.backend.request import Request, Response
-from dispatcher.taskmanager.task.base import GeneratorTask
+from dispatcher.taskmanager.task.base import GeneratorTask, TaskFailed
 
-from src.utils.response_handler import response_verify, extract_score, construct_scoring_messages, format_instructions_with_conjunctions
+from src.utils.response_handler import response_verify, extract_score, construct_scoring_messages, format_instructions_with_conjunctions, is_no_followup_case, construct_rephrase_scoring_messages
 
 __all__ = ["GenerateQueryResponsesTask"]
 
@@ -19,6 +20,9 @@ class GenerateQueryResponsesTask(GeneratorTask):
         "top_p": 0.95,
         "max_tokens": 4096,
     }
+    
+    # Score threshold for accepting responses
+    SCORE_THRESHOLD = int(os.environ.get("SCORE_THRESHOLD", "4"))
 
     # --------------- generator ---------------
     def task_generator(self) -> Generator[Union[Request, List[Request]], Any, Dict[str, Any]]:
@@ -77,6 +81,9 @@ class GenerateQueryResponsesTask(GeneratorTask):
         all_scoring_responses = []
         final_messages = []
         
+        # Determine if this is a no_followup case
+        is_no_followup = is_no_followup_case(queries)
+        
         # Process each turn
         for turn_idx in range(num_turns):
             # Add user message for this turn
@@ -98,16 +105,32 @@ class GenerateQueryResponsesTask(GeneratorTask):
             response_verify(response_text, verification_data, turn=turn_idx)
             
             # Step 3 - score the response for this turn
-            scoring_data = self._prepare_scoring_data(turn_idx, instruction_ids_per_turn, 
-                                                     instructions_per_turn, eval_funcs_per_turn, 
-                                                     cases_per_turn)
-            scoring_messages = construct_scoring_messages(response_text, scoring_data)
+            if is_no_followup and turn_idx > 0:
+                # For no_followup case after first turn, use rephrase scoring
+                scoring_messages = construct_rephrase_scoring_messages(
+                    response_text, all_responses[0], queries[0], 
+                    instruction_ids_per_turn, instructions_per_turn, turn_idx
+                )
+            else:
+                # Regular scoring - data already contains accumulated constraints
+                scoring_data = self._prepare_scoring_data(turn_idx, instruction_ids_per_turn, 
+                                                         instructions_per_turn, eval_funcs_per_turn, 
+                                                         cases_per_turn)
+                scoring_messages = construct_scoring_messages(response_text, scoring_data)
+            
             scored_resp: Response = yield Request({"messages": scoring_messages, **self.GEN_PARAMS})
             scoring_text = scored_resp.get_text()
             score = extract_score(scoring_text, turn=turn_idx)
             
             all_scores.append(score)
             all_scoring_responses.append(scoring_text)
+            
+            # Check if score meets threshold - if not, fail the task
+            if score < self.SCORE_THRESHOLD:
+                raise TaskFailed(
+                    message=f"Score {score} at turn {turn_idx + 1} is below threshold {self.SCORE_THRESHOLD}",
+                    error_type=f"turn{turn_idx + 1}_score_below_threshold"
+                )
             
             # Add assistant response to conversation for next turn
             queries_messages.append({
@@ -117,15 +140,20 @@ class GenerateQueryResponsesTask(GeneratorTask):
             
             # Build final messages format for this turn
             query = queries[turn_idx] if turn_idx < len(queries) else ""
-            if not re.search(r'[.!?]$', query):
-                query += "."
-            
             instructions_text = format_instructions_with_conjunctions(instructions_per_turn[turn_idx])
+            
+            # Only include query if it's not empty
+            if query.strip():
+                if not re.search(r'[.!?]$', query):
+                    query += "."
+                user_content = f"{query} {instructions_text}"
+            else:
+                user_content = instructions_text
             
             final_messages.extend([
                 {
                     "role": "user", 
-                    "content": f"{query} {instructions_text}"
+                    "content": user_content
                 },
                 {
                     "role": "assistant", 
@@ -180,10 +208,20 @@ class GenerateQueryResponsesTask(GeneratorTask):
     def _prepare_scoring_data(self, turn_idx: int, instruction_ids_per_turn: List[List], 
                              instructions_per_turn: List[List], eval_funcs_per_turn: List[List], 
                              cases_per_turn: List[List]) -> Dict[str, Any]:
-        """Prepare scoring data for a specific turn (only current turn's instructions)."""
+        """Prepare scoring data for a specific turn, including accumulated constraints."""
+        # For scoring, accumulate all constraints up to current turn
+        cumulative_instruction_ids = []
+        cumulative_instructions = []
+        
+        for i in range(turn_idx + 1):
+            if i < len(instruction_ids_per_turn):
+                cumulative_instruction_ids.extend(instruction_ids_per_turn[i])
+            if i < len(instructions_per_turn):
+                cumulative_instructions.extend(instructions_per_turn[i])
+        
         return {
-            'instruction_ids': instruction_ids_per_turn[turn_idx] if turn_idx < len(instruction_ids_per_turn) else [],
-            'instructions': instructions_per_turn[turn_idx] if turn_idx < len(instructions_per_turn) else [],
+            'instruction_ids': cumulative_instruction_ids,
+            'instructions': cumulative_instructions,
             'eval_funcs': eval_funcs_per_turn[turn_idx] if turn_idx < len(eval_funcs_per_turn) else [],
             'cases': cases_per_turn[turn_idx] if turn_idx < len(cases_per_turn) else [],
             **{k: v for k, v in self.data.items() if k not in ['instruction_ids', 'instructions', 'eval_funcs', 'cases']}
