@@ -72,16 +72,43 @@ This step generates Python verification functions to evaluate instruction follow
    - Each instruction is paired with multiple queries
    - Output: Query-instruction pairs (`data/verifiers_queries.jsonl`)
 
-   *Example usage for multi-instruction query augmentation:*
+   *Example usage for multi-instruction query augmentation (magpie dataset):*
    ```
    python src/concat_queries.py \
-      --verifiers_file verifiers.jsonl \
-      --output_file verifiers_queries.jsonl \
-      --queries_file dataset.jsonl \
-      --query_max_len 500 \          # Maximum length of the query
-      --num_of_output_lines 50000 \  # Number of output lines to generate
-      --instructions_per_query 2 \   # Number of instructions to pair with each query
-      --messages_format              # If the input queries file is formatted in chat messages format
+      --verifiers_file /scratch/project_462000353/adamhrin/dispatcher/examples/autoif/data/verifiers_filtered_ifeval.jsonl \
+      --output_file data/verifiers_queries_ifeval_magpie_single_turn_60k.jsonl \
+      --queries_dataset /scratch/project_462000353/posttraining_data/SFTTrainer_format/eng/magpie/llama-31-70b/unfiltered/train.jsonl \
+      --query_max_len 500 \              # filters out any queries longer than 500
+      --num_of_output_lines 65000 \      # this many line in the output, if necessary will repeat queries sequentially
+      --instructions_per_query 2 \       # 2 instructions per query
+      --messages_format                  # for data that is in the standard chat message format
+   ```
+
+   *Example usage for multi-instruction query augmentation (dolly-lmsys dataset):*
+   ```
+   python src/concat_queries.py \
+      --verifiers_file /scratch/project_462000353/adamhrin/dispatcher/examples/autoif/data/verifiers_filtered_ifeval.jsonl \
+      --output_file /scratch/project_462000353/adamhrin/dispatcher/examples/autoif/data/verifiers_queries_ifeval_dolly_lmsys_two_instruct_70k.jsonl \
+      --queries_dataset /scratch/project_462000353/adamhrin/dispatcher/examples/autoif/data/merged_dolly15k_lmsyschat_70k.jsonl \
+      --query_column_name "query" \             # the name of the field with queries
+      --response_column_name "response" \       # the name of the field with responses
+      --query_max_len 500 \                     # filters out any queries longer than 500
+      --num_of_output_lines 70000 \             # this many line in the output, if necessary will repeat queries sequentially
+      --instructions_per_query 2                # 2 instructions per query
+   ```
+
+   *Example usage for 2turn-2instruct rephrasing task (second prompt asks for rephrasing of the response to the previous prompt)*
+   ```
+   python src/concat_queries.py \
+      --verifiers_file /scratch/project_462000353/adamhrin/dispatcher/examples/autoif/data/verifiers_filtered_ifeval.jsonl \
+      --output_file data/verifiers_queries_ifeval_dolly_lmsys_2instruct_2turn_rephrase.jsonl \
+      --queries_dataset /scratch/project_462000353/adamhrin/dispatcher/examples/autoif/data/merged_dolly15k_lmsyschat150k.jsonl \
+      --query_column_name "queries" \
+      --response_column_name "responses" \
+      --query_max_len 500 \
+      --instructions_per_query 2 \
+      --turns 2 \                            # 2 turns 
+      --no-followup                          # all turns after the first one (in this case second turn) is just asking to rephrase the output from the first one. The dataset does not need to have more than one query (meaning the data in the dataset does not actually need to be a two-turn conversation)
    ```
 
    Notes for parameter `--num_of_output_lines`: Each query is randomly paired with as many instructions as needed to reach this number. The instructions are selected randomly but preserving a uniform distribution across the instructions. If the number of queries is lower than num_of_output_lines, the script will repeat queries sequentially to reach the desired number of output lines.

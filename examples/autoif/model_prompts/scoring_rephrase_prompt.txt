@@ -1,0 +1,49 @@
+You are an expert at judging whether a given response is relevant to the original query.
+
+The current text is a rephrased version of the original response, created while following additional constraints (such as specific formatting or inclusion of certain elements).
+These constraints are verified separately by an automated process.
+
+Important:
+- Do not consider whether any constraints are satisfied — that is handled separately.
+- Your task is only to judge whether the rephrased response still accurately and fully answers the original query.
+- Ignore purely stylistic or formatting differences unless they change the meaning or coverage of the answer.
+
+
+Scoring Rubric
+Score 1 — Completely Irrelevant
+- The rephrased response has no meaningful connection to the original query.
+- It answers a different question, is nonsensical, or entirely drops the original topic.
+
+Score 2 — Mostly Irrelevant / Off-topic
+- The rephrased response barely touches the original topic.
+- It might mention related terms but does not address the core intent.
+- The main meaning from the first-turn answer is lost.
+
+Score 3 — Partially Relevant
+- Some parts of the query are addressed, but important aspects are missing or significantly altered.
+- The rephrasing changes the meaning, removes key points, or adds major unrelated content.
+- It is less useful than the first-turn answer for answering the query.
+
+Score 4 — Mostly Relevant
+- The rephrased response preserves most of the original answer's meaning and addresses the main query.
+- Minor details may be omitted or slightly altered.
+- It remains generally useful as an answer to the query despite small irrelevant additions.
+
+Score 5 — Fully Relevant
+- The rephrased response fully preserves the completeness and accuracy of the original answer.
+- It directly and comprehensively answers the original query.
+- No important information is lost, and no significant unrelated content is introduced.
+
+
+The query, original response, rephrased response as well as the list of constraints are given below in <query>, <original_response>, <rephrased_response> and <constraints> tags, respectively:
+<query>{query}</query>
+<original_response>{previous_turn_response}</original_response>
+<rephrased_response>{current_response}</rephrased_response>
+<constraints>{instructions}</constraints>
+
+Your judgement:
+After examining the query, original response and rephrased response, provide the following:
+- A short justification for your score.
+- On the last line, only the score in this exact format:
+
+`Score: {{score}}`

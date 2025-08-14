@@ -1,0 +1,7 @@
+Now you are given additional query expanding on the previous conversation, as well as one or more additional constraints to follow.
+Your task is to generate a response that correctly answers the query while strictly following the constraints.
+
+Note: Remember that you have to follow all the constraints from the previous turns as well as the new ones provided in this turn.
+
+Query: {query}
+Constraints: {instructions}

@@ -3,6 +3,7 @@ from typing import List, Dict, Optional, Tuple
 import random
 import json
 import re
+import os.path
 from datasets import load_dataset
 
 
@@ -162,6 +163,33 @@ def load_queries_from_file(queries_file: str, messages_format: bool, query_colum
                 continue
     
     return queries, skipped_queries
+
+def load_queries_from_dataset_or_file(queries_dataset: str, query_column_name: str,
+                                      response_column_name: str, query_max_len: int, turns: int = 1, 
+                                      messages_format: bool = False, messages_key: str = 'messages',
+                                      no_followup: bool = False) -> Tuple[List[Dict], int]:
+    """Load queries from either a local file or a HuggingFace dataset.
+    
+    Determines the loading strategy based on whether the path exists locally.
+    If the path exists as a local file, loads as JSONL file.
+    Otherwise, attempts to load as a HuggingFace dataset.
+    
+    Returns:
+        Tuple of (queries_list, skipped_count)
+    """
+    # Check if the path exists as a local file
+    if os.path.exists(queries_dataset):
+        print(f"Loading queries from local file: {queries_dataset}")
+        return load_queries_from_file(
+            queries_dataset, messages_format, query_column_name, 
+            response_column_name, query_max_len, turns, messages_key, no_followup
+        )
+    else:
+        print(f"Loading queries from HuggingFace dataset: {queries_dataset}")
+        return load_queries_from_dataset(
+            queries_dataset, query_column_name, response_column_name, 
+            query_max_len, turns, no_followup
+        )
 
 def load_queries_from_dataset(queries_dataset: str, query_column_name: str,
                              response_column_name: str, query_max_len: int, turns: int = 1, 
@@ -415,7 +443,6 @@ def create_output_entry(query: Dict, selected_verifiers: List[Dict] = None, sour
 
 def concat_queries(
     verifiers_path: str, 
-    queries_file: str, 
     queries_dataset: str,
     query_max_len: int,
     query_column_name: str,
@@ -438,18 +465,13 @@ def concat_queries(
     queries = []
     skipped_queries = 0
     
-    if queries_file is not None:
-        queries, skipped_queries = load_queries_from_file(
-            queries_file, messages_format, query_column_name, 
-            response_column_name, query_max_len, turns, messages_key, no_followup
-        )
-    elif queries_dataset is not None:
-        queries, skipped_queries = load_queries_from_dataset(
+    if queries_dataset is not None:
+        queries, skipped_queries = load_queries_from_dataset_or_file(
             queries_dataset, query_column_name, response_column_name, 
-            query_max_len, turns, no_followup
+            query_max_len, turns, messages_format, messages_key, no_followup
         )
     else:
-        print("No queries file or dataset provided")
+        print("No queries dataset provided")
         return 0
     
     print("Skipped queries due to length or missing fields:", skipped_queries)
@@ -501,7 +523,7 @@ def concat_queries(
                 
                 # Create output entry
                 output = create_output_entry(query, selected_verifiers, 
-                                           source=queries_file if queries_file else queries_dataset,
+                                           source=queries_dataset,
                                            turns=turns, no_followup=no_followup)
             else:
                 # Multi-turn logic
@@ -518,7 +540,7 @@ def concat_queries(
                 
                 # Create output entry
                 output = create_output_entry(query, None, 
-                                           source=queries_file if queries_file else queries_dataset,
+                                           source=queries_dataset,
                                            turns=turns,
                                            selected_verifiers_multi_turn=selected_verifiers_multi_turn,
                                            no_followup=no_followup)
@@ -544,10 +566,8 @@ def main():
                         help='Input file with filtered verifiers')
     parser.add_argument('--output_file', type=str, required=True,
                         help='Output file for concatenated queries and verifiers')
-    parser.add_argument('--queries_file', type=str, default=None,
-                        help='File with queries for concatenation')
-    parser.add_argument('--queries_dataset', type=str, default=None,
-                        help='Dataset with queries for concatenation')
+    parser.add_argument('--queries_dataset', type=str, required=True,
+                        help='Dataset with queries for concatenation. Can be a HuggingFace dataset path or a path to local jsonl file')
     parser.add_argument('--query_max_len', type=int, default=200,
                         help='Maximum query length in characters')
     parser.add_argument('--query_column_name', type=str, default='instruction',
@@ -572,7 +592,6 @@ def main():
     # Create query+instruction dataset
     concat_queries(
         args.verifiers_file,
-        args.queries_file,
         args.queries_dataset,
         args.query_max_len,
         args.query_column_name,
