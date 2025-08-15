@@ -128,7 +128,7 @@ class GenerateQueryResponsesTask(GeneratorTask):
             # Check if score meets threshold - if not, fail the task
             if score < self.SCORE_THRESHOLD:
                 raise TaskFailed(
-                    message=f"Score {score} at turn {turn_idx + 1} is below threshold {self.SCORE_THRESHOLD}",
+                    message=f"Score {score} at turn {turn_idx + 1} is below threshold {self.SCORE_THRESHOLD}. Scoring response: <response>{scoring_text}</response>",
                     error_type=f"turn{turn_idx + 1}_score_below_threshold"
                 )
             
