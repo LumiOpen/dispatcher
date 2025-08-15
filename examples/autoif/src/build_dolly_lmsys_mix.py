@@ -7,8 +7,8 @@ from typing import List, Dict, Any, Optional
 # Configuration variables
 DATASET_1 = "databricks/databricks-dolly-15k"  # Dolly dataset from HuggingFace
 DATASET_2 = "/scratch/project_462000353/posttraining_data/lmsys-chat-1m/train.jsonl"  # LMSYS Chat dataset
-NUM_ROWS_2 = 150000 # Number of rows to sample from LMSYS
-OUTPUT_FILE = "/scratch/project_462000353/adamhrin/dispatcher/examples/autoif/data/merged_dolly15k_lmsyschat150k.jsonl"
+NUM_ROWS_2 = 400000 # Number of rows to sample from LMSYS
+OUTPUT_FILE = "/scratch/project_462000353/adamhrin/dispatcher/examples/autoif/data/merged_dolly15k_lmsyschat400k.jsonl"
 
 def load_dolly_data() -> List[Dict[str, Any]]:
     """Load all data from Databricks Dolly dataset."""
