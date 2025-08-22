@@ -64,10 +64,13 @@ echo "Using seed instructions file: $SEED_FILE"
 echo "Using augmented instructions file: $AUGMENTED_INSTRUCTIONS_FILE"
 VERIFIERS_ALL_FILE="data/verifiers_all_${RUNID}.jsonl"
 VERIFIERS_FILTERED_FILE="data/verifiers_filtered_${RUNID}.jsonl"
-VERIFIERS_QUERIES_FILE="data/verifiers_queries_${RUNID}.jsonl"
+VERIFIERS_QUERIES_FILE="data/verifiers_queries_${RUNID}_80000.jsonl"
 SCORED_RESPONSES_FILE="data/scored_responses_${RUNID}.jsonl"
 SFT_DATASET_FILE="data/sft_dataset_${RUNID}.jsonl"
-QUERIES_DATASET="databricks/databricks-dolly-15k"
+
+QUERIES_DATASET="data/merged_dolly15k_lmsyschat400k.jsonl"
+# QUERIES_DATASET="/scratch/project_462000353/posttraining_data/SFTTrainer_format/eng/magpie/llama-31-70b/unfiltered/train.jsonl"
+# QUERIES_DATASET="databricks/databricks-dolly-15k"
 # export to make available for launch script
 export VERIFIERS_INPUT_FILE="data/verifiers_input_${RUNID}.jsonl" 
 export VERIFIERS_OUTPUT_FILE="data/verifiers_output_${RUNID}.jsonl"
@@ -87,7 +90,7 @@ export RESP_REQUEST_TIMEOUT
 export RESP_WORK_TIMEOUT
 
 # Other config
-NUM_OF_AUGMENTED_INSTRUCTIONS=2
+NUM_OF_AUGMENTED_INSTRUCTIONS=100
 
 # Verifier generation config
 export FUNCTION_TIMEOUT=5  # seconds
@@ -385,11 +388,12 @@ if ! step_completed $VER_QUERIES_CONCATED; then
     python src/concat_queries.py \
         --verifiers_file $VERIFIERS_FILTERED_FILE \
         --output_file $VERIFIERS_QUERIES_FILE \
-        --queries_dataset $QUERIES_DATASET \
-        --query_column_name "instruction" \
-        --response_column_name "response" \
-        --query_max_len "200" \
-        --queries_per_instruction 1
+        --queries_file $QUERIES_DATASET \
+        --query_column_name "queries" \
+        --response_column_name "responses" \
+        --query_max_len 200 \
+        --instructions_per_query 2 \
+        --num_of_output_lines 80000
     if [ $? -ne 0 ]; then
         echo "Concat queries failed!"
         exit 1
@@ -477,7 +481,8 @@ if ! step_completed $SFT_DATASET_BUILT; then
     python src/build_sft.py \
         "$SCORED_RESPONSES_FILE" \
         --output "$SFT_DATASET_FILE" \
-        --score_threshold "$SCORE_THRESHOLD"
+        --score_threshold "$SCORE_THRESHOLD" \
+        --test
     if [ $? -ne 0 ]; then
         echo "SFT dataset building failed!"
         exit 1
