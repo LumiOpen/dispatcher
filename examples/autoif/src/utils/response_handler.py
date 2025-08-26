@@ -10,7 +10,22 @@ from dispatcher.taskmanager.task.base import TaskFailed
 
 LANGUAGE=os.environ.get("LANGUAGE")
 
-def response_verify(response: str, data: Dict[str, Any]) -> Optional[List[Dict[str, str]]]:
+def _format_error_type_with_turn(error_type: str, turn: Optional[int] = None) -> str:
+    """
+    Formats error type with turn information if turn is provided.
+    
+    Args:
+        error_type: Base error type
+        turn: Optional turn number (0-indexed)
+        
+    Returns:
+        Formatted error type with turn prefix if turn is provided
+    """
+    if turn is not None:
+        return f"turn{turn + 1}_{error_type}"
+    return error_type
+
+def response_verify(response: str, data: Dict[str, Any], turn: Optional[int] = None) -> Optional[List[Dict[str, str]]]:
     """
     Verifies the query response using all provided evaluation functions and checks
     that the response is in the target language.
@@ -27,12 +42,13 @@ def response_verify(response: str, data: Dict[str, Any]) -> Optional[List[Dict[s
               eval_funcs can be:
               - List of functions (old format)
               - List of lists, where each sub-list contains functions for one instruction (new format)
+        turn: Optional turn number (0-indexed) for error reporting
         
     Returns:
         List of messages for scoring or None if verification failed
     """
     # First check for error response
-    check_error(response, error_code='contradicting_constraints')
+    check_error(response, error_code='contradicting_constraints', turn=turn)
 
     # Check if the response is in the desired language
     # Get language prediction
@@ -42,14 +58,14 @@ def response_verify(response: str, data: Dict[str, Any]) -> Optional[List[Dict[s
     except Exception as e:
         raise TaskFailed(
             message=f"Language detection error: {e} <response>{response}</response>",
-            error_type="language_detection"
+            error_type=_format_error_type_with_turn("language_detection", turn)
         )
 
     valid_lang_ids = {lang_code1, lang_code2} if lang_code2 is not None else {lang_code1}
     if LANGUAGE not in valid_lang_ids:
         raise TaskFailed(
             message=f"The response is not in the expected language {LANGUAGE}, but got {valid_lang_ids} <response>{response}</response>",
-            error_type="invalid_language"
+            error_type=_format_error_type_with_turn("invalid_language", turn)
         )
     
     # Parse the evaluation functions
@@ -57,7 +73,7 @@ def response_verify(response: str, data: Dict[str, Any]) -> Optional[List[Dict[s
     if not eval_func_data:
         raise TaskFailed(
             message=f"No evaluation functions found",
-            error_type="no_eval_functions"
+            error_type=_format_error_type_with_turn("no_eval_functions", turn)
         )
     
     # Use FunctionExecutor for safe function execution
@@ -81,7 +97,7 @@ def response_verify(response: str, data: Dict[str, Any]) -> Optional[List[Dict[s
         if not instruction_funcs:
             raise TaskFailed(
                 message=f"No evaluation functions found for instruction {instruction_id}",
-                error_type="no_eval_functions_for_instruction"
+                error_type=_format_error_type_with_turn("no_eval_functions_for_instruction", turn)
             )
         
         # Run all functions for this instruction and collect results
@@ -95,7 +111,7 @@ def response_verify(response: str, data: Dict[str, Any]) -> Optional[List[Dict[s
             except Exception as e:
                 raise TaskFailed(
                     message=f"Error executing evaluation function {func} for instruction {instruction_id}: {e} <response>{response}</response>",
-                    error_type="function_execution_failed"
+                    error_type=_format_error_type_with_turn("function_execution_failed", turn)
                 )
         
         # For this instruction, calculate accuracy
@@ -116,13 +132,13 @@ def response_verify(response: str, data: Dict[str, Any]) -> Optional[List[Dict[s
             error_context = f" for instruction {instruction_id}" if len(normalized_eval_funcs) > 1 else ""
             raise TaskFailed(
                 message=f"The response did not pass verification{error_context} with accuracy {accuracy}. <response>{response}</response>",
-                error_type="instruction_verification_failed"
+                error_type=_format_error_type_with_turn("instruction_verification_failed", turn)
             )
         else:
             failed_ids = [str(instr_id) for instr_id, _ in failed_instructions]
             raise TaskFailed(
                 message=f"The response did not pass verification for instructions {', '.join(failed_ids)}. <response>{response}</response>",
-                error_type="multiple_instructions_verification_failed"
+                error_type=_format_error_type_with_turn("multiple_instructions_verification_failed", turn)
             )
 
 def construct_scoring_messages(response: str, data: Dict[str, Any]) -> List[Dict[str, str]]:
@@ -142,12 +158,13 @@ def construct_scoring_messages(response: str, data: Dict[str, Any]) -> List[Dict
 
     return scoring_messages
 
-def extract_score(scored_text: str) -> int:
+def extract_score(scored_text: str, turn: Optional[int] = None) -> int:
     """
     Extracts the score from the scored text
     
     Args:
         scored_text: The text containing the score
+        turn: Optional turn number (0-indexed) for error reporting
         
     Returns:
         The extracted score
@@ -179,10 +196,10 @@ def extract_score(scored_text: str) -> int:
     # If no pattern matched, raise TaskFailed (maintaining original behavior)
     raise TaskFailed(
         message=f"Score not found in the scoring response: {scored_text}",
-        error_type="score_extraction_failed"
+        error_type=_format_error_type_with_turn("score_extraction_failed", turn)
     )
 
-def check_error(response: str, error_code: Optional[str] = None):
+def check_error(response: str, error_code: Optional[str] = None, turn: Optional[int] = None):
     """
     Checks whether the response contains a JSON object with an error key.
     If error_code is provided, checks for that specific error.
@@ -191,6 +208,7 @@ def check_error(response: str, error_code: Optional[str] = None):
     Args:
         response: The response text to check for errors
         error_code: Optional specific error code to check for
+        turn: Optional turn number (0-indexed) for error reporting
         
     Raises:
         TaskFailed: If an error is found in the response
@@ -243,13 +261,13 @@ def check_error(response: str, error_code: Optional[str] = None):
             if error_value == error_code:
                 raise TaskFailed(
                     message=f"Expected error '{error_code}' found in response: {response}",
-                    error_type=error_code
+                    error_type=_format_error_type_with_turn(error_code, turn)
                 )
         else:
             # If no specific error_code is provided, raise for any error
             raise TaskFailed(
                 message=f"Error found in response: {error_value}",
-                error_type="error_in_response"
+                error_type=_format_error_type_with_turn("error_in_response", turn)
             )
 
 def format_instructions_with_conjunctions(instructions: Union[str, List[str]]) -> str:
@@ -283,3 +301,34 @@ def format_instructions_with_conjunctions(instructions: Union[str, List[str]]) -
         return f"{formatted[0]} and {formatted[1]}"
     
     return ", ".join(formatted[:-1]) + f" and {formatted[-1]}"
+
+def is_no_followup_case(queries: List[str]) -> bool:
+    """Check if this is a no_followup case (queries after first are empty)."""
+    if len(queries) <= 1:
+        return False
+    # Check if all queries after the first one are empty
+    return all(query.strip() == "" for query in queries[1:])
+
+def construct_rephrase_scoring_messages(current_response: str, original_response: str, 
+                                        original_query: str, instruction_ids_per_turn: List[List], 
+                                        instructions_per_turn: List[List], turn_idx: int) -> List[Dict[str, str]]:
+    """Construct scoring messages for no_followup rephrase scoring."""
+    # Load the rephrase scoring prompt
+    with open("model_prompts/scoring_rephrase_prompt.txt", "r") as f:
+        scoring_prompt = f.read().strip()
+    
+    # Accumulate all constraints up to current turn
+    accumulated_constraints = []
+    for i in range(turn_idx + 1):
+        if i < len(instructions_per_turn):
+            accumulated_constraints.extend(instructions_per_turn[i])
+    
+    # Format the prompt
+    scoring_prompt = scoring_prompt.format(
+        query=original_query,
+        previous_turn_response=original_response,
+        current_response=current_response,
+        instructions=format_instructions_with_conjunctions(accumulated_constraints)
+    )
+    
+    return [{"role": "user", "content": scoring_prompt}]
