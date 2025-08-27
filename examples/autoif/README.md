@@ -3,27 +3,102 @@
 This repository implements [AutoIF (Automatic Instruction Following)](https://arxiv.org/abs/2402.04635) pipeline using the Dispatcher framework. AutoIF is a method that uses language models to verify instruction following and improve instruction tuning.
 
 The implementation is divided into two phases:
-1. **Phase 1**: Generate verification functions (verifiers) that can evaluate whether responses follow instructions
-2. **Phase 2**: Generate responses to queries, verify them with the functions, and create high-quality instruction-following data for fine-tuning
+1. **Phase 1**: Generate verification functions (verifiers) that can evaluate whether responses follow instructions. Steps in this phase are:
+  - **AUGMENTATION**: augmenting the seed instructions (configure the input seed json with `--seed_file` argument)
+  - **VERIFICATION**: generating and cross-validating the verifiers
+2. **Phase 2**: Generate responses to queries, verify them with the functions, and create high-quality instruction-following data for fine-tuning. Steps in this phase are:
+  - **CONCAT**: concatenating the verifiers with the queries (configure the queries dataset with `--queries_dataset` argument)
+  - **RESPONSE**: generating responses for the concatenated queries
+  - **SFT**: creating a supervised fine-tuning dataset from the responses
 
 ## Running the Complete Pipeline
 
 The entire AutoIF pipeline (both Phase 1 and Phase 2) can be executed with a single command:
 
 ```bash
-sh pipeline.sh [ model/path ]
+sh pipeline.sh [ --seed_file data/seed_instructions.txt ] [ --queries_dataset data/queries.jsonl ] [ --out_dir out1 ] [ model/path ]
 ```
-Model defaults to `meta-llama/Llama-3.3-70B-Instruct`.
 
-The pipeline utilizes a robust checkpointing mechanism (stored in `logs/state_tracker.log`) that tracks completion of each step, enabling safe restarts if any step fails or needs to be rerun.
+The pipeline utilizes checkpointing mechanism (stored in `logs/state_tracker_{out_dir}.log`) that tracks completion of each step, enabling safe restarts if any step fails or needs to be rerun.
+
+You can also explicitly skip any step by setting the SKIP_{STEP} environment variables. 
+
+For example, if you want to perform only the second phase of the pipeline (after verifiers have been generated), you can skip the first two steps with
+
+```bash
+SKIP_AUGMENTATION=true SKIP_VERIFIERS=true sh pipeline.sh [ model/path ] \
+[ --queries_dataset data/queries.jsonl ] \
+[ --out_dir out1 ]
+```
+
+Alternatively, if you want to stop the pipeline after generating verifiers and before concatenating the queries from a dataset (a reason might be that you might not yet have the queries data or you might only be interested in the verifiers phase) then run
+
+```bash
+SKIP_CONCAT=true SKIP_RESPONSES=true SKIP_SFT=true sh pipeline.sh [ model/path ] \
+[ --seed_file data/seed_instructions.txt ] \
+[ --out_dir out1 ]
+```
+
+## Configuration
+
+Steps can be configured by setting the respective env vars. Here is a complete list of configurable variables organized by steps with their defaults:
+
+```sh
+# core conf
+LANGUAGE=en
+VENV_DIR=.venv
+REQUIREMENTS_FILE=requirements.txt
+MODEL=meta-llama/Llama-3.3-70B-Instruct
+OUT_DIR=ifeval # path to all data files under data/{OUT_DIR}/. cmdline arg --out_dir will overwrite this
+HF_HOME=/scratch/project_462000353/hf_cache
+
+# step skipping conf
+SKIP_AUGMENTATION=false
+SKIP_VERIFIERS=false
+SKIP_CONCAT=false
+SKIP_RESPONSES=false
+SKIP_SFT=false
+
+# instruction augmentation conf
+SEED_FILE=data/seed_instructions_ifeval.txt # cmdline arg --seed_file will overwrite this
+AUGMENT_INPUT_FILE=data/${OUT_DIR}/aug_input.jsonl
+AUGMENT_OUTPUT_FILE=data/${OUT_DIR}/aug_output.jsonl
+NUM_OF_AUGMENTED_INSTRUCTIONS=100
+AUGMENTED_INSTRUCTIONS_FILE=data/${OUT_DIR}/augmented_instructions.csv
+
+# verifiers generation conf
+VERIFIERS_INPUT_FILE=data/${OUT_DIR}/verifiers_input.jsonl
+VERIFIERS_OUTPUT_FILE=data/${OUT_DIR}/verifiers_output.jsonl
+VERIFIERS_ALL_FILE=data/${OUT_DIR}/verifiers_all.jsonl
+VERIFIERS_FILTERED_FILE=data/${OUT_DIR}/verifiers_filtered.jsonl
+# cross-validation params
+FUNCTION_TIMEOUT=5
+MIN_FUNCTIONS=1
+MIN_TEST_CASES=1
+ACCURACY_THRESHOLD=0.8
+
+# queries-instructions concatenation conf
+VERIFIERS_QUERIES_FILE=data/${OUT_DIR}/verifiers_queries.jsonl # the output of this step
+QUERIES_DATASET=/scratch/project_462000353/posttraining_data/lmsys-chat-1m/unredacted_filtered_dedup_eng.jsonl # cmdline arg --queries_dataset will overwrite this
+QUERY_COLUMN_NAME=queries # used only if MESSAGES_FORMAT=false
+RESPONSE_COLUMN_NAME==responses # used only if MESSAGES_FORMAT=false
+INSTRUCTIONS_PER_QUERY=1
+QUERY_MAX_LEN=200
+NUM_OUTPUT_LINES=300000
+MESSAGES_FORMAT=true
+MESSAGES_KEY=conversation
+TURNS=2
+NO_FOLLOWUP=true
+
+# response generation conf
+SCORED_RESPONSES_FILE=data/${OUT_DIR}/scored_responses.jsonl
+SCORE_THRESHOLD=4 # Here used for intermediate judgements in multi-turn generations. Also used in next step building sft data
+
+# build sft conf
+SFT_DATASET_DIR=data/${OUT_DIR}/sft_dataset
+```
 
 ## Pipeline Structure
-
-### Phase 1: Generating Verifiers
-
-Run with ```sh phase1_pipeline.sh```
-
-Phase 1 is implemented as a multi-step process with pre/post-processing steps and inference using the dispatcher.
 
 ### Step 1: Augment Instructions
 
@@ -31,17 +106,17 @@ This step takes seed instructions and generates additional similar instructions:
 
 1. **Pre-processing**: 
    - Creates input for the instruction augmentation
-   - `src/create_instructions_input.py` transforms seed instructions into prompt format
+   - `src/create_instructions_input.py` transforms seed instructions from `SEED_FILE` into prompt format (`AUGMENT_INPUT_FILE`)
 
 2. **Inference**: 
    - Submits instruction augmentation job to the dispatcher
-   - Input: Seed instructions (`data/seed_instructions_fi.txt`)
-   - Output: Raw model generations (`data/tmp_aug_output.jsonl`)
+   - Input: `AUGMENT_INPUT_FILE`
+   - Output: `AUGMENT_OUTPUT_FILE`
 
 3. **Post-processing**: 
    - `src/process_instructions_output.py` extracts and filters augmented instructions
    - Filters out non-target language samples and potential duplicates
-   - Output: Filtered augmented instructions (`data/augmented_instructions.txt`)
+   - Output: Filtered augmented instructions `AUGMENTED_INSTRUCTIONS_FILE`
 
 ### Step 2: Generate Verifiers
 
@@ -49,28 +124,27 @@ This step generates Python verification functions to evaluate instruction follow
 
 1. **Pre-processing**:
    - `src/create_verifiers_input.py` transforms instructions into prompts for verifier generation
-   - Input: Augmented instructions (`data/augmented_instructions.txt`)
-   - Output: Verifier generation prompts (`data/verifiers_input.jsonl`)
+   - Input: `AUGMENTED_INSTRUCTIONS_FILE`
+   - Output: `VERIFIERS_INPUT_FILE`
 
 2. **Inference**:
    - Submits verifier generation jobs to the dispatcher
-   - Generates multiple verification functions per instruction
-   - Output: Raw verification functions and test cases (`data/verifiers_output.jsonl`)
+   - Generates 10 verification functions per instruction and 3 test cases per each function
+   - Output: Raw verification functions and test cases `VERIFIERS_OUTPUT_FILE`
 
 3. **Post-processing**:
    - Cross-validates verifier functions using `src/verifiers_cross_validation.py`
       1. Parse functions and test cases from LLM responses
       2. Validate function safety (no harmful code patterns)
       3. Deduplicate test cases
-      4. Filter test cases that pass at least MIN_FUNCTIONS functions
-      5. Keep only functions that meet ACCURACY_THRESHOLD (how many test cases they pass)
+      4. Filter test cases that pass at least `MIN_FUNCTIONS` functions
+      5. Keep only functions that meet `ACCURACY_THRESHOLD` (how many test cases they pass)
       6. Output results for further processing
-   - Output: Filtered verification functions (`data/filtered_verifiers.jsonl`)
+   - Output: Filtered verification functions `VERIFIERS_FILTERED_FILE` (also post-processed verifiers `VERIFIERS_ALL_FILE`)
 
-4. **Query Augmentation**:
+4. **Query Concatenation**:
    - Combines verifiers with queries using `src/concat_queries.py`
-   - Each instruction is paired with multiple queries
-   - Output: Query-instruction pairs (`data/verifiers_queries.jsonl`)
+   - Output: Query-instruction combinations `VERIFIERS_QUERIES_FILE`
 
    *Example usage for multi-instruction query augmentation (magpie dataset):*
    ```
@@ -79,7 +153,7 @@ This step generates Python verification functions to evaluate instruction follow
       --output_file data/verifiers_queries_ifeval_magpie_single_turn_60k.jsonl \
       --queries_dataset /scratch/project_462000353/posttraining_data/SFTTrainer_format/eng/magpie/llama-31-70b/unfiltered/train.jsonl \
       --query_max_len 500 \              # filters out any queries longer than 500
-      --num_of_output_lines 65000 \      # this many line in the output, if necessary will repeat queries sequentially
+      --num_output_lines 65000 \      # this many line in the output, if necessary will repeat queries sequentially
       --instructions_per_query 2 \       # 2 instructions per query
       --messages_format                  # for data that is in the standard chat message format
    ```
@@ -93,7 +167,7 @@ This step generates Python verification functions to evaluate instruction follow
       --query_column_name "query" \             # the name of the field with queries
       --response_column_name "response" \       # the name of the field with responses
       --query_max_len 500 \                     # filters out any queries longer than 500
-      --num_of_output_lines 70000 \             # this many line in the output, if necessary will repeat queries sequentially
+      --num_output_lines 70000 \             # this many line in the output, if necessary will repeat queries sequentially
       --instructions_per_query 2                # 2 instructions per query
    ```
 
@@ -111,7 +185,7 @@ This step generates Python verification functions to evaluate instruction follow
       --no-followup                          # all turns after the first one (in this case second turn) is just asking to rephrase the output from the first one. The dataset does not need to have more than one query (meaning the data in the dataset does not actually need to be a two-turn conversation)
    ```
 
-   Notes for parameter `--num_of_output_lines`: Each query is randomly paired with as many instructions as needed to reach this number. The instructions are selected randomly but preserving a uniform distribution across the instructions. If the number of queries is lower than num_of_output_lines, the script will repeat queries sequentially to reach the desired number of output lines.
+   Notes for parameter `--num_output_lines`: Each query is randomly paired with as many instructions as needed to reach this number. The instructions are selected randomly but preserving a uniform distribution across the instructions. If the number of queries is lower than num_of_output_lines, the script will repeat queries sequentially to reach the desired number of output lines.
 
 
 ### Output Format
@@ -119,20 +193,20 @@ This step generates Python verification functions to evaluate instruction follow
 The final output of Phase 1 includes:
 ```json
 {
-    "instruction": "Follow this specific instruction...",
-    "query": "User's query to answer",
-    "eval_func": ["def evaluate(response): ..."],
-    "cases": [{"input": "test case", "output": true}],
-    "prompt": "Please answer the query strictly following the instruction..."
+    "instructions": ["Follow this specific instruction..."],
+    "queries": ["User's query to answer"],
+    "eval_func": [["def evaluate(response): ..."],..],
+    "cases": [[{"input": "test case", "output": true}],..],
+    "prompts": ["Please answer the query strictly following the instruction..."]
 }
 ```
 
 ## Phase 2: Generating Responses and Scoring
 
 Phase 2 is implemented as a [`GeneratorTask`](src/autoif_generator_task.py) utilizing the multi-step inference functionality of the dispatcher.
+It can be run standalone with
 
 ```sh
-cd src
 sbatch launch_generate_query_responses.sh
 ```
 
@@ -140,7 +214,7 @@ sbatch launch_generate_query_responses.sh
 
 1. **Query Response Generation**:
    - Generate responses to queries following specific instructions
-   - Input: `data/verifiers_queries.jsonl`
+   - Input: `VERIFIERS_QUERIES_FILE`
 
 2. **Post-processing**:
    - Verify responses using the verification functions
@@ -149,10 +223,12 @@ sbatch launch_generate_query_responses.sh
 3. **Response Scoring**:
    - Use another LLM generation to score each verified response for relevance and quality
    - Append the score to the final result
-   - Output: `data/scored_responses.jsonl`
+   - For multi-turn setups also filter after each turn based on `SCORE_THRESHOLD`
+   - Output: `SCORED_RESPONSES_FILE`
 
 4. **Final Output**:
-   - Run `python3 src/build_sft.py data/scored_responses.jsonl --output data/final_sft.jsonl --score_threshold 4` to build the final output for fine-tuning, scored at least with a score of 4 out of 5 by an LLM judge.
+   - SFT format data, filtered by `SCORE_THRESHOLD`
+   - Output: `SFT_DATASET_DIR`
 
 ## Requirements
 
