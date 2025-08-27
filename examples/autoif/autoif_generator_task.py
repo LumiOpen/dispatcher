@@ -98,7 +98,7 @@ class GenerateQueryResponsesTask(GeneratorTask):
             all_responses.append(response_text)
             
             # Step 2 - verify response 
-            # For multi-turn, we need to verify against all instructions from all turns up to current turn
+            # Instructions are already accumulated in the data structure
             verification_data = self._prepare_verification_data(turn_idx, instruction_ids_per_turn, 
                                                                instructions_per_turn, eval_funcs_per_turn, 
                                                                cases_per_turn)
@@ -112,7 +112,7 @@ class GenerateQueryResponsesTask(GeneratorTask):
                     instruction_ids_per_turn, instructions_per_turn, turn_idx
                 )
             else:
-                # Regular scoring - data already contains accumulated constraints
+                # Regular scoring - instructions are already accumulated in the data structure
                 scoring_data = self._prepare_scoring_data(turn_idx, instruction_ids_per_turn, 
                                                          instructions_per_turn, eval_funcs_per_turn, 
                                                          cases_per_turn)
@@ -180,48 +180,28 @@ class GenerateQueryResponsesTask(GeneratorTask):
     def _prepare_verification_data(self, turn_idx: int, instruction_ids_per_turn: List[List], 
                                   instructions_per_turn: List[List], eval_funcs_per_turn: List[List], 
                                   cases_per_turn: List[List]) -> Dict[str, Any]:
-        """Prepare verification data for a specific turn, including all previous turn constraints."""
-        # For verification, we need to check against all instructions from turn 0 to current turn
-        cumulative_instruction_ids = []
-        cumulative_instructions = []
-        cumulative_eval_funcs = []
-        cumulative_cases = []
+        """Prepare verification data for a specific turn.
         
-        for i in range(turn_idx + 1):
-            if i < len(instruction_ids_per_turn):
-                cumulative_instruction_ids.extend(instruction_ids_per_turn[i])
-            if i < len(instructions_per_turn):
-                cumulative_instructions.extend(instructions_per_turn[i])
-            if i < len(eval_funcs_per_turn):
-                cumulative_eval_funcs.extend(eval_funcs_per_turn[i])
-            if i < len(cases_per_turn):
-                cumulative_cases.extend(cases_per_turn[i])
-        
+        Instructions are already accumulated in the data structure, so we just use the current turn's data.
+        """
         return {
-            'instruction_ids': cumulative_instruction_ids,
-            'instructions': cumulative_instructions,
-            'eval_funcs': cumulative_eval_funcs,
-            'cases': cumulative_cases,
+            'instruction_ids': instruction_ids_per_turn[turn_idx] if turn_idx < len(instruction_ids_per_turn) else [],
+            'instructions': instructions_per_turn[turn_idx] if turn_idx < len(instructions_per_turn) else [],
+            'eval_funcs': eval_funcs_per_turn[turn_idx] if turn_idx < len(eval_funcs_per_turn) else [],
+            'cases': cases_per_turn[turn_idx] if turn_idx < len(cases_per_turn) else [],
             **{k: v for k, v in self.data.items() if k not in ['instruction_ids', 'instructions', 'eval_funcs', 'cases']}
         }
     
     def _prepare_scoring_data(self, turn_idx: int, instruction_ids_per_turn: List[List], 
                              instructions_per_turn: List[List], eval_funcs_per_turn: List[List], 
                              cases_per_turn: List[List]) -> Dict[str, Any]:
-        """Prepare scoring data for a specific turn, including accumulated constraints."""
-        # For scoring, accumulate all constraints up to current turn
-        cumulative_instruction_ids = []
-        cumulative_instructions = []
+        """Prepare scoring data for a specific turn.
         
-        for i in range(turn_idx + 1):
-            if i < len(instruction_ids_per_turn):
-                cumulative_instruction_ids.extend(instruction_ids_per_turn[i])
-            if i < len(instructions_per_turn):
-                cumulative_instructions.extend(instructions_per_turn[i])
-        
+        Instructions are already accumulated in the data structure, so we just use the current turn's data.
+        """
         return {
-            'instruction_ids': cumulative_instruction_ids,
-            'instructions': cumulative_instructions,
+            'instruction_ids': instruction_ids_per_turn[turn_idx] if turn_idx < len(instruction_ids_per_turn) else [],
+            'instructions': instructions_per_turn[turn_idx] if turn_idx < len(instructions_per_turn) else [],
             'eval_funcs': eval_funcs_per_turn[turn_idx] if turn_idx < len(eval_funcs_per_turn) else [],
             'cases': cases_per_turn[turn_idx] if turn_idx < len(cases_per_turn) else [],
             **{k: v for k, v in self.data.items() if k not in ['instruction_ids', 'instructions', 'eval_funcs', 'cases']}
