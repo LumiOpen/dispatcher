@@ -11,8 +11,8 @@ def count_valid_entries(input_file, score_threshold):
     with open(input_file, 'r') as f:
         for line in f:
             data = json.loads(line.strip())
-            score = data.get('score')
-            if score is not None and score >= score_threshold:
+            scores = data.get('scores')
+            if scores is not None and isinstance(scores, list) and all(s >= score_threshold for s in scores):
                 count += 1
     return count
 
@@ -62,9 +62,9 @@ def main():
         
         for line in f_in:
             data = json.loads(line.strip())
-            score = data.get('score')
-            
-            if score is not None and score >= args.score_threshold:
+            scores = data.get('scores')
+
+            if scores is not None and isinstance(scores, list) and all(s >= args.score_threshold for s in scores):
                 output = {
                     'messages': data['messages'], 
                     'query_source': data['query_metadata']['source'] if 'query_metadata' in data and 'source' in data['query_metadata'] else ''
