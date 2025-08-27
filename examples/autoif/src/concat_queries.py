@@ -297,22 +297,28 @@ def select_instructions(verifiers_list: List[Dict], instructions_per_query: int,
 def select_instructions_multi_turn(verifiers_list: List[Dict], instructions_per_query: int,
                                   instruction_usage_count: Dict[int, int], turns: int,
                                   used_instructions_in_conversation: set = None) -> List[List[Dict]]:
-    """Select instructions for multiple turns maintaining uniform distribution without replacement.
+    """Select instructions for multiple turns with accumulation across turns.
+    
+    For each turn, the instruction list includes all instructions from previous turns plus new ones.
+    For example, if instructions_per_query=1 and turns=2:
+    - Turn 0: [instruction_0]
+    - Turn 1: [instruction_0, instruction_1]
     
     Args:
         verifiers_list: List of all available verifiers
-        instructions_per_query: Number of instructions per query/turn
+        instructions_per_query: Number of NEW instructions to add per turn
         instruction_usage_count: Global usage count for uniform distribution
         turns: Number of turns to generate instructions for
         used_instructions_in_conversation: Set of instruction indices already used in this conversation
     
     Returns:
-        List of lists - one list of selected verifier dictionaries per turn
+        List of lists - accumulated instruction lists per turn
     """
     if used_instructions_in_conversation is None:
         used_instructions_in_conversation = set()
     
     all_turn_instructions = []
+    accumulated_verifiers = []
     
     for turn in range(turns):
         # Find the minimum usage count among unused instructions
@@ -327,7 +333,7 @@ def select_instructions_multi_turn(verifiers_list: List[Dict], instructions_per_
         
         min_usage = min(instruction_usage_count[i] for i in available_indices)
         
-        # Select instructions for this turn
+        # Select NEW instructions for this turn
         selected_indices = []
         current_usage = min_usage
         
@@ -346,13 +352,16 @@ def select_instructions_multi_turn(verifiers_list: List[Dict], instructions_per_
             selected_indices.extend(selected_from_current)
         
         # Update usage counts and tracking
-        selected_verifiers = []
+        new_verifiers = []
         for idx in selected_indices:
             instruction_usage_count[idx] += 1
             used_instructions_in_conversation.add(idx)
-            selected_verifiers.append(verifiers_list[idx])
+            new_verifiers.append(verifiers_list[idx])
         
-        all_turn_instructions.append(selected_verifiers)
+        # Accumulate instructions: add new instructions to previous ones
+        accumulated_verifiers.extend(new_verifiers)
+        # Create a copy of accumulated verifiers for this turn
+        all_turn_instructions.append(accumulated_verifiers.copy())
     
     return all_turn_instructions
 
@@ -378,20 +387,12 @@ def create_output_entry(query: Dict, selected_verifiers: List[Dict] = None, sour
     all_eval_funcs = []
     all_cases = []
     
-    # For no_followup mode, accumulate instructions across turns
-    accumulated_verifiers = []
-    
     for turn_idx in range(turns):
         turn_verifiers = verifiers_by_turn[turn_idx]
         
-        if no_followup and turns > 1:
-            # Accumulate instructions across turns for no_followup mode
-            accumulated_verifiers.extend(turn_verifiers)
-            # Format accumulated instructions
-            current_instructions_text = "\n".join([f"- {v['instruction']}" for v in accumulated_verifiers])
-        else:
-            # Use only current turn instructions (normal mode or single turn)
-            current_instructions_text = "\n".join([f"- {v['instruction']}" for v in turn_verifiers])
+        # Instructions are now already accumulated in verifiers_by_turn
+        # No need for special accumulation logic here
+        current_instructions_text = "\n".join([f"- {v['instruction']}" for v in turn_verifiers])
         
         # Select appropriate prompt template based on turn and no_followup flag
         if turns == 1:
@@ -422,7 +423,7 @@ def create_output_entry(query: Dict, selected_verifiers: List[Dict] = None, sour
         
         prompts.append(prompt)
         
-        # Collect instruction data for this turn
+        # Collect instruction data for this turn (already accumulated)
         all_instruction_ids.append([v['instruction_id'] for v in turn_verifiers])
         all_instructions.append([v['instruction'] for v in turn_verifiers])
         all_eval_funcs.append([v['eval_func'] for v in turn_verifiers])
@@ -448,7 +449,7 @@ def concat_queries(
     query_column_name: str,
     response_column_name: str,
     output_file: str,
-    num_of_output_lines: int = None,
+    num_output_lines: int = None,
     instructions_per_query: int = 1,
     messages_format: bool = False,
     turns: int = 1,
@@ -490,17 +491,17 @@ def concat_queries(
     query_index = 0
     
     # Determine the number of iterations
-    if num_of_output_lines is None:
+    if num_output_lines is None:
         # Process all queries once without repetition
         num_iterations = len(queries)
     else:
         # Use the specified number of output lines
-        num_iterations = num_of_output_lines
+        num_iterations = num_output_lines
     
     with open(output_file, 'w') as f:
         for _ in range(num_iterations):
             # Handle query selection based on mode
-            if num_of_output_lines is None:
+            if num_output_lines is None:
                 # No repetition mode - use each query once
                 if query_index >= len(queries):
                     break  # No more queries available
@@ -550,7 +551,7 @@ def concat_queries(
     
     # Print summary statistics
     print(f"Generated {count} query-instruction pairs to {output_file}")
-    if num_of_output_lines is None:
+    if num_output_lines is None:
         print(f"Used {count} unique queries (processed all available queries once)")
     else:
         print(f"Used {len(queries)} unique queries (reused {max(0, count - len(queries))} times)")
@@ -574,7 +575,7 @@ def main():
                         help='Column name of the desired response from the query dataset') 
     parser.add_argument('--response_column_name', type=str, default='response',
                         help='Column name of the desired response from the query dataset')                  
-    parser.add_argument('--num_of_output_lines', type=int, default=None,
+    parser.add_argument('--num_output_lines', type=int, default=None,
                         help='Number of output lines to generate (will reuse queries if needed). If not provided, processes all queries once without repetition.')
     parser.add_argument('--instructions_per_query', type=int, default=1,
                         help='Number of instructions to combine with each query (formatted as bullet points)')
@@ -597,7 +598,7 @@ def main():
         args.query_column_name,
         args.response_column_name,
         args.output_file,
-        args.num_of_output_lines,
+        args.num_output_lines,
         args.instructions_per_query,
         args.messages_format,
         args.turns,
