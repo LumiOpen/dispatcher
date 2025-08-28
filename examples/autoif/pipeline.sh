@@ -140,7 +140,6 @@ export SCORE_THRESHOLD="${SCORE_THRESHOLD:-4}"
 
 # final SFT dataset
 SFT_DATASET_DIR="${SFT_DATASET_DIR:-data/${OUT_DIR}/sft_dataset}"
-mkdir -p "$SFT_DATASET_DIR"
 
 # Checkpointing mechanism
 mkdir -p logs
@@ -495,6 +494,7 @@ case $CONTINUE_FROM in
     "SFT_START")
         if ! skip_step "SFT dataset building" "SKIP_SFT"; then
             echo "Starting SFT dataset building phase"
+            mkdir -p "$SFT_DATASET_DIR"
             execute_step "SFT: Building SFT dataset from scored responses" "$SFT_DATASET_BUILT" \
                 "python src/build_sft.py \"$SCORED_RESPONSES_FILE\" --output_dir \"$SFT_DATASET_DIR\" --score_threshold \"$SCORE_THRESHOLD\" --test" \
                 "SFT dataset building failed!"
