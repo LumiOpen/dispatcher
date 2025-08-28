@@ -37,6 +37,7 @@ MIN_FUNCTIONS = int(os.getenv('MIN_FUNCTIONS', 1))  # Minimum number of function
 MIN_TEST_CASES = int(os.getenv('MIN_TEST_CASES', 1))  # Minimum number of test cases required
 ACCURACY_THRESHOLD = float(os.getenv('ACCURACY_THRESHOLD', 0.8))  # Minimum accuracy threshold for functions
 LANGUAGE = os.getenv('LANGUAGE', 'eng')  # Language code for filtering test cases
+OUT_DIR = os.getenv('OUT_DIR', 'exp1') # sub-directory for the output files in data/
 
 class CrossValidationResult:
     """Container for cross-validation results of a single instruction."""
@@ -415,7 +416,7 @@ def cross_validate_verifiers(verifiers_file: str, output_all_file: str, output_f
     5. Log comprehensive summary
     """
     # Set up logging
-    logfile = f"logs/{os.path.basename(output_all_file)}.log"
+    logfile = f"data/{OUT_DIR}/{os.path.basename(output_all_file)}.log"
     os.makedirs(os.path.dirname(logfile), exist_ok=True)
     logger = CrossValidationLogger(logfile)
     

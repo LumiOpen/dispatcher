@@ -19,7 +19,7 @@ The entire AutoIF pipeline (both Phase 1 and Phase 2) can be executed with a sin
 sh pipeline.sh [ --seed_file data/seed_instructions.txt ] [ --queries_dataset data/queries.jsonl ] [ --out_dir out1 ] [ model/path ]
 ```
 
-The pipeline utilizes checkpointing mechanism (stored in `logs/state_tracker_{out_dir}.log`) that tracks completion of each step, enabling safe restarts if any step fails or needs to be rerun.
+The pipeline utilizes checkpointing mechanism (stored in `data/{out_dir}/state_tracker.log`) that tracks completion of each step, enabling safe restarts if any step fails or needs to be rerun.
 
 You can also explicitly skip any step by setting the SKIP_{STEP} environment variables. 
 
