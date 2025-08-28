@@ -24,6 +24,50 @@ def mark_step_completed(checkpoint_file, step_name):
     with open(checkpoint_file, 'a') as f:
         f.write(f"{timestamp} - {step_name}\n")
 
+def determine_continuation_point(checkpoint_file):
+    """Determine which pipeline step to continue from based on the checkpoint file."""
+    if not os.path.exists(checkpoint_file):
+        return "AUG_START"
+    
+    # Read the last two lines from the file
+    with open(checkpoint_file, 'r') as f:
+        lines = f.readlines()
+        last_lines = lines[-2:] if len(lines) >= 2 else lines
+    
+    # Extract the last checkpoint and check for job ID
+    last_checkpoint = None
+    job_id = None
+    
+    for line in reversed(last_lines):
+        line = line.strip()
+        if '_JOB_ID=' in line:  # Job ID line
+            job_id = line.split('=')[1]
+        elif ' - ' in line:  # Step record line
+            last_checkpoint = line.split(' - ')[1]
+            break
+    
+    if not last_checkpoint:
+        return "AUG_START"
+        
+    # Define the state transitions
+    transitions = {
+        "AUG_PREPROCESSING": "AUG_INFERENCE",
+        "AUG_INFERENCE_COMPLETE": "AUG_POSTPROCESS",
+        "AUG_POSTPROCESSING": "VER_START",
+        "VER_PREPROCESSING": "VER_INFERENCE",
+        "VER_INFERENCE_COMPLETE": "VER_CROSSVAL",
+        "VER_CROSS_VALIDATION": "CONCAT_START",
+        "CONCAT_QUERIES_CONCATED": "RESP_START",
+        "RESP_INFERENCE_COMPLETE": "SFT_START",
+        "SFT_DATASET_BUILT": "COMPLETE"
+    }
+    
+    # Special handling for SUBMITTED states
+    if last_checkpoint.endswith("_SUBMITTED"):
+        return f"{last_checkpoint[:-9]}_MONITOR" if job_id else f"{last_checkpoint[:-9]}_INFERENCE"
+    
+    return transitions.get(last_checkpoint, "AUG_START")
+
 def get_last_job_id(checkpoint_file, job_id_prefix):
     """Get the last job ID with the given prefix from checkpoint file."""
     if not os.path.exists(checkpoint_file):
@@ -67,6 +111,9 @@ def main():
     save_parser.add_argument("--prefix", required=True, help="Job ID prefix")
     save_parser.add_argument("--job-id", required=True, help="Job ID to save")
     
+    # Get continuation point
+    subparsers.add_parser("get-continuation", help="Get the next step to continue from")
+    
     args = parser.parse_args()
     
     if args.command == "check":
@@ -89,6 +136,11 @@ def main():
     elif args.command == "save-job":
         save_job_id(args.checkpoint_file, args.prefix, args.job_id)
         print(f"Saved job ID {args.job_id} with prefix {args.prefix}")
+    
+    elif args.command == "get-continuation":
+        continuation_point = determine_continuation_point(args.checkpoint_file)
+        print(continuation_point)
+        sys.exit(0)
 
 if __name__ == "__main__":
     main()

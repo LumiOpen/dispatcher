@@ -98,6 +98,36 @@ SCORE_THRESHOLD=4 # Here used for intermediate judgements in multi-turn generati
 SFT_DATASET_DIR=data/${OUT_DIR}/sft_dataset
 ```
 
+## Examples
+
+### IFEval-based constraints + lmsys-chat queries two-turn two-constraints each turn (cumulative constraints)
+
+```sh
+SEED_FILE=data/seed_instructions_ifeval.txt \
+NUM_OF_AUGMENTED_INSTRUCTIONS=100 \
+TURNS=2 \
+INSTRUCTIONS_PER_QUERY=2 \
+QUERY_MAX_LEN=500 \
+NUM_OUTPUT_LINES=300000 \
+OUT_DIR=ifeval-lmsys-2turn-2constraint \
+QUERIES_DATASET=/scratch/project_462000353/posttraining_data/lmsys-chat-1m/unredacted_filtered_dedup_eng.jsonl \
+sh pipeline.sh /scratch/project_462000353/zosaelai2/models/Llama-3.3-70B-Instruct
+
+# if you already have the verifiers pre-generated, copy it to the out_dir and skip the first two steps (augmentation and verifiers generation)
+cp path/to/pregenerated/verifiers.jsonl data/ifeval-lmsys-2turn-2constraint/verifiers_filtered.jsonl
+
+SKIP_AUGMENTATION=true \
+SKIP_VERIFIERS=true \
+VERIFIERS_FILTERED_FILE=data/ifeval-lmsys-2turn-2constraint/verifiers_filtered.jsonl \ # optional, pipeline will discover automatically
+TURNS=2 \
+INSTRUCTIONS_PER_QUERY=2 \
+QUERY_MAX_LEN=500 \
+NUM_OUTPUT_LINES=300000 \
+OUT_DIR=ifeval-lmsys-2turn-2constraint \
+QUERIES_DATASET=/scratch/project_462000353/posttraining_data/lmsys-chat-1m/unredacted_filtered_dedup_eng.jsonl \
+sh pipeline.sh /scratch/project_462000353/zosaelai2/models/Llama-3.3-70B-Instruct
+```
+
 ## Pipeline Structure
 
 ### Step 1: Augment Instructions
@@ -141,51 +171,6 @@ This step generates Python verification functions to evaluate instruction follow
       5. Keep only functions that meet `ACCURACY_THRESHOLD` (how many test cases they pass)
       6. Output results for further processing
    - Output: Filtered verification functions `VERIFIERS_FILTERED_FILE` (also post-processed verifiers `VERIFIERS_ALL_FILE`)
-
-4. **Query Concatenation**:
-   - Combines verifiers with queries using `src/concat_queries.py`
-   - Output: Query-instruction combinations `VERIFIERS_QUERIES_FILE`
-
-   *Example usage for multi-instruction query augmentation (magpie dataset):*
-   ```
-   python src/concat_queries.py \
-      --verifiers_file /scratch/project_462000353/adamhrin/dispatcher/examples/autoif/data/verifiers_filtered_ifeval.jsonl \
-      --output_file data/verifiers_queries_ifeval_magpie_single_turn_60k.jsonl \
-      --queries_dataset /scratch/project_462000353/posttraining_data/SFTTrainer_format/eng/magpie/llama-31-70b/unfiltered/train.jsonl \
-      --query_max_len 500 \              # filters out any queries longer than 500
-      --num_output_lines 65000 \      # this many line in the output, if necessary will repeat queries sequentially
-      --instructions_per_query 2 \       # 2 instructions per query
-      --messages_format                  # for data that is in the standard chat message format
-   ```
-
-   *Example usage for multi-instruction query augmentation (dolly-lmsys dataset):*
-   ```
-   python src/concat_queries.py \
-      --verifiers_file /scratch/project_462000353/adamhrin/dispatcher/examples/autoif/data/verifiers_filtered_ifeval.jsonl \
-      --output_file /scratch/project_462000353/adamhrin/dispatcher/examples/autoif/data/verifiers_queries_ifeval_dolly_lmsys_two_instruct_70k.jsonl \
-      --queries_dataset /scratch/project_462000353/adamhrin/dispatcher/examples/autoif/data/merged_dolly15k_lmsyschat_70k.jsonl \
-      --query_column_name "query" \             # the name of the field with queries
-      --response_column_name "response" \       # the name of the field with responses
-      --query_max_len 500 \                     # filters out any queries longer than 500
-      --num_output_lines 70000 \             # this many line in the output, if necessary will repeat queries sequentially
-      --instructions_per_query 2                # 2 instructions per query
-   ```
-
-   *Example usage for 2turn-2instruct rephrasing task (second prompt asks for rephrasing of the response to the previous prompt)*
-   ```
-   python src/concat_queries.py \
-      --verifiers_file /scratch/project_462000353/adamhrin/dispatcher/examples/autoif/data/verifiers_filtered_ifeval.jsonl \
-      --output_file data/verifiers_queries_ifeval_dolly_lmsys_2instruct_2turn_rephrase.jsonl \
-      --queries_dataset /scratch/project_462000353/adamhrin/dispatcher/examples/autoif/data/merged_dolly15k_lmsyschat150k.jsonl \
-      --query_column_name "queries" \
-      --response_column_name "responses" \
-      --query_max_len 500 \
-      --instructions_per_query 2 \
-      --turns 2 \                            # 2 turns 
-      --no-followup                          # all turns after the first one (in this case second turn) is just asking to rephrase the output from the first one. The dataset does not need to have more than one query (meaning the data in the dataset does not actually need to be a two-turn conversation)
-   ```
-
-   Notes for parameter `--num_output_lines`: Each query is randomly paired with as many instructions as needed to reach this number. The instructions are selected randomly but preserving a uniform distribution across the instructions. If the number of queries is lower than num_of_output_lines, the script will repeat queries sequentially to reach the desired number of output lines.
 
 
 ### Output Format

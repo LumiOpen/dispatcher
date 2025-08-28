@@ -5,7 +5,7 @@ import json
 import re
 import os.path
 from datasets import load_dataset
-
+from src.utils.query_skip_tracker import QuerySkipTracker
 
 
 def load_verifiers(verifiers_path: str) -> List[Dict]:
@@ -20,19 +20,20 @@ def load_verifiers(verifiers_path: str) -> List[Dict]:
         return []
     return verifiers_list
 
-def extract_query_from_messages(item: Dict, turns: int = 1, messages_key: str = 'messages') -> Optional[Tuple[List[str], List[str]]]:
+def extract_query_from_messages(item: Dict, turns: int = 1, messages_key: str = 'messages', no_followup: bool = False) -> Optional[Tuple[List[str], List[str]]]:
     """Extract multiple user messages and assistant responses from chat messages format.
     
     Args:
         item: Dictionary containing messages key
         turns: Number of conversation turns to extract
         messages_key: Key name for the messages list (default: 'messages')
+        no_followup: If True, only first turn needs a query, rest will be padded
     
     Returns:
         Tuple of (user_messages_list, assistant_responses_list) or None if not found
     """
     if messages_key not in item:
-        return None
+        return None, "key_not_in_item"
     
     user_messages = []
     assistant_responses = []
@@ -52,16 +53,21 @@ def extract_query_from_messages(item: Dict, turns: int = 1, messages_key: str = 
             expecting_user = True
             current_turn += 1
     
-    # Check if we have enough complete turns
-    if len(user_messages) >= turns and len(assistant_responses) >= turns:
-        return (user_messages[:turns], assistant_responses[:turns])
-    elif len(user_messages) >= turns:
-        # If we have user messages but missing some assistant responses, pad with empty strings
+    required_turns = 1 if no_followup else turns
+    
+    # Check if we have enough turns based on no_followup setting
+    if len(user_messages) >= required_turns:
+        # Pad remaining turns with empty strings if using no_followup
+        while len(user_messages) < turns:
+            user_messages.append('')
+            
+        # Pad assistant responses if needed
         while len(assistant_responses) < turns:
             assistant_responses.append('')
-        return (user_messages[:turns], assistant_responses[:turns])
+            
+        return (user_messages[:turns], assistant_responses[:turns]), ""
     
-    return None
+    return None, "not_enough_turns"
 
 def parse_query_from_item(item: Dict, messages_format: bool, query_column_name: str, 
                          response_column_name: str, query_max_len: int, turns: int = 1, 
@@ -76,15 +82,15 @@ def parse_query_from_item(item: Dict, messages_format: bool, query_column_name: 
     
     if messages_format:
         # Extract from chat messages format
-        result = extract_query_from_messages(item, turns, messages_key)
+        result, reason = extract_query_from_messages(item, turns, messages_key, no_followup)
         if not result:
-            return None
+            return None, reason
         
         user_messages, assistant_responses = result
         
-        # Check if any user message exceeds max length
-        if any(len(msg) >= query_max_len for msg in user_messages):
-            return None
+        # Check if any user message exceeds max length (only check non-empty messages)
+        if any(len(msg) >= query_max_len for msg in user_messages if msg):
+            return None, "length"
         
         query['queries'] = user_messages
         query['responses'] = assistant_responses
@@ -92,8 +98,10 @@ def parse_query_from_item(item: Dict, messages_format: bool, query_column_name: 
         query['metadata'] = {k: v for k, v in item.items() if k not in [messages_key, 'openai_moderation']}
     else:
         # Standard format
-        if query_column_name not in item or len(item[query_column_name]) >= query_max_len:
-            return None
+        if query_column_name not in item:
+            return None, "key_not_in_item"
+        if len(item[query_column_name]) >= query_max_len:
+            return None, "length"
         
         # For non-messages format with multiple turns, we expect the data to be structured differently
         # For now, we'll treat single-turn as before, and multi-turn will need specific handling
@@ -124,13 +132,13 @@ def parse_query_from_item(item: Dict, messages_format: bool, query_column_name: 
                 else:
                     query['responses'] = [''] * turns
             else:
-                return None
+                return None, "invalid_format"
         
         # Add the rest as metadata
         query['metadata'] = {k: v for k, v in item.items() 
                            if k not in [query_column_name, response_column_name]}
     
-    return query
+    return query, ""
 
 def load_queries_from_file(queries_file: str, messages_format: bool, query_column_name: str,
                           response_column_name: str, query_max_len: int, turns: int = 1,
@@ -141,7 +149,7 @@ def load_queries_from_file(queries_file: str, messages_format: bool, query_colum
         Tuple of (queries_list, skipped_count)
     """
     queries = []
-    skipped_queries = 0
+    skip_tracker = QuerySkipTracker()
     
     with open(queries_file, 'r') as f:
         for line in f:
@@ -151,18 +159,18 @@ def load_queries_from_file(queries_file: str, messages_format: bool, query_colum
             
             try:
                 item = json.loads(line)
-                query = parse_query_from_item(item, messages_format, query_column_name, 
+                query, reason = parse_query_from_item(item, messages_format, query_column_name, 
                                             response_column_name, query_max_len, turns, messages_key, no_followup)
                 if query:
                     queries.append(query)
                 else:
-                    skipped_queries += 1
+                    skip_tracker.skip(reason)
             except json.JSONDecodeError as e:
                 print(f"Error parsing JSON line: {e}")
-                skipped_queries += 1
+                skip_tracker.skip('json_decode_error')
                 continue
-    
-    return queries, skipped_queries
+
+    return queries, skip_tracker
 
 def load_queries_from_dataset_or_file(queries_dataset: str, query_column_name: str,
                                       response_column_name: str, query_max_len: int, turns: int = 1, 
@@ -200,12 +208,15 @@ def load_queries_from_dataset(queries_dataset: str, query_column_name: str,
         Tuple of (queries_list, skipped_count)
     """
     queries = []
-    skipped_queries = 0
+    skip_tracker = QuerySkipTracker()
     
     dataset = load_dataset(queries_dataset)
     for item in dataset['train']:
-        if query_column_name not in item or len(item[query_column_name]) >= query_max_len:
-            skipped_queries += 1
+        if query_column_name not in item:
+            skip_tracker.skip('key_not_in_item')
+            continue
+        if len(item[query_column_name]) >= query_max_len:
+            skip_tracker.skip('length')
             continue
         
         # For multi-turn with no_followup, we only need one query
@@ -222,23 +233,30 @@ def load_queries_from_dataset(queries_dataset: str, query_column_name: str,
                 query['responses'] = ['']
         else:
             # Multi-turn logic for datasets
-            if no_followup:
-                # Only need one query, pad the rest with empty strings
+            required_turns = 1 if no_followup else turns
+            
+            if isinstance(item.get(query_column_name), list):
+                if len(item[query_column_name]) < required_turns:
+                    return None, "not_enough_turns"
+                # Take the required number of queries and pad if needed
+                queries = item[query_column_name][:required_turns]
+                while len(queries) < turns:
+                    queries.append('')
                 query = {
-                    'queries': [item[query_column_name]] + [''] * (turns - 1),
+                    'queries': queries,
                     'metadata': {k: v for k, v in item.items() 
                                 if k not in [query_column_name, response_column_name]}
                 }
             else:
-                # Need queries for all turns - skip if not available
-                if not isinstance(item.get(query_column_name), list) or len(item[query_column_name]) < turns:
-                    skipped_queries += 1
-                    continue
-                query = {
-                    'queries': item[query_column_name][:turns],
-                    'metadata': {k: v for k, v in item.items() 
-                                if k not in [query_column_name, response_column_name]}
-                }
+                # Single string query
+                if no_followup:
+                    query = {
+                        'queries': [item[query_column_name]] + [''] * (turns - 1),
+                        'metadata': {k: v for k, v in item.items() 
+                                    if k not in [query_column_name, response_column_name]}
+                    }
+                else:
+                    return None, "invalid_format"
             
             # Handle responses for multi-turn
             if response_column_name in item:
@@ -253,8 +271,8 @@ def load_queries_from_dataset(queries_dataset: str, query_column_name: str,
                 query['responses'] = [''] * turns
         
         queries.append(query)
-    
-    return queries, skipped_queries
+
+    return queries, skip_tracker
 
 def select_instructions(verifiers_list: List[Dict], instructions_per_query: int,
                        instruction_usage_count: Dict[int, int]) -> List[Dict]:
@@ -464,18 +482,18 @@ def concat_queries(
     
     # Load queries from file or dataset
     queries = []
-    skipped_queries = 0
     
     if queries_dataset is not None:
-        queries, skipped_queries = load_queries_from_dataset_or_file(
+        queries, skip_tracker = load_queries_from_dataset_or_file(
             queries_dataset, query_column_name, response_column_name, 
             query_max_len, turns, messages_format, messages_key, no_followup
         )
     else:
         print("No queries dataset provided")
         return 0
-    
-    print("Skipped queries due to length or missing fields:", skipped_queries)
+
+    skip_tracker.print_summary()
+    print(f"Total passed: {len(queries)}")
     
     # Ensure we have some queries
     if len(queries) < 10:
