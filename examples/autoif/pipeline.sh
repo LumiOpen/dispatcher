@@ -58,7 +58,7 @@ done
 
 # Read these from args, otherwise read from env vars, lastly fallback to defaults
 MODEL="${MODEL_ARG:-${MODEL:-meta-llama/Llama-3.3-70B-Instruct}}"
-OUT_DIR="${OUT_DIR_ARG:-${OUT_DIR:-ifeval}}"
+export OUT_DIR="${OUT_DIR_ARG:-${OUT_DIR:-ifeval}}" # exported for verifiers_cross_validation.py to access
 SEED_FILE="${SEED_FILE_ARG:-${SEED_FILE:-data/seed_instructions_ifeval.txt}}"
 QUERIES_DATASET="${QUERIES_DATASET_ARG:-${QUERIES_DATASET:-/scratch/project_462000353/posttraining_data/lmsys-chat-1m/unredacted_filtered_dedup_eng.jsonl}}"
 
@@ -144,7 +144,7 @@ mkdir -p "$SFT_DATASET_DIR"
 
 # Checkpointing mechanism
 mkdir -p logs
-CHECKPOINT_FILE="${CHECKPOINT_FILE:-logs/state_tracker_${OUT_DIR}.log}"
+CHECKPOINT_FILE="${CHECKPOINT_FILE:-data/${OUT_DIR}/state_tracker.log}"
 touch "$CHECKPOINT_FILE"
 
 # =============================================================================
