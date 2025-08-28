@@ -96,7 +96,6 @@ export SCORED_RESPONSES_FILE="${SCORED_RESPONSES_FILE:-data/${OUT_DIR}/scored_re
 # =============================================================================
 # Input files
 
-echo "Using seed instructions file: $SEED_FILE"
 NUM_OF_AUGMENTED_INSTRUCTIONS="${NUM_OF_AUGMENTED_INSTRUCTIONS:-100}"
 AUGMENTED_INSTRUCTIONS_FILE="${AUGMENTED_INSTRUCTIONS_FILE:-data/${OUT_DIR}/augmented_instructions.csv}"
 
@@ -118,7 +117,6 @@ export ACCURACY_THRESHOLD="${ACCURACY_THRESHOLD:-0.8}"
 # =============================================================================
 
 # Query concatenation settings - use custom values if provided, otherwise use defaults
-echo "Using queries dataset: $QUERIES_DATASET"
 QUERY_COLUMN_NAME="${QUERY_COLUMN_NAME:-queries}"
 RESPONSE_COLUMN_NAME="${RESPONSE_COLUMN_NAME:-responses}"
 INSTRUCTIONS_PER_QUERY="${INSTRUCTIONS_PER_QUERY:-1}"
@@ -368,7 +366,8 @@ if skip_step "Step 1 (instruction augmentation)" "SKIP_AUGMENTATION" \
     : # Step was skipped, continue to next step
 else
     echo "Starting Step 1: Augment instructions"
-    
+    echo "Using seed instructions file: $SEED_FILE"
+
     # Step 1.1: Pre-process - Create instructions input
     execute_step "AUG: Pre-processing instructions" "$AUG_PREPROCESSING" \
         "python src/create_instructions_input.py --seed_file $SEED_FILE --output_file $AUGMENT_INPUT_FILE --num_instructions $NUM_OF_AUGMENTED_INSTRUCTIONS" \
@@ -441,6 +440,7 @@ if skip_step "Step 3 (query concatenation)" "SKIP_CONCAT" "$CONCAT_QUERIES_CONCA
     : # Step was skipped, continue to next step
 else
     echo "Starting Step 3: Concat queries"
+    echo "Using queries dataset: $QUERIES_DATASET"
     
     # Prepare concat queries command with conditional arguments
     CONCAT_CMD="python src/concat_queries.py \
