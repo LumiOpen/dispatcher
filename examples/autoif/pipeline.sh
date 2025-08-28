@@ -151,6 +151,16 @@ touch "$CHECKPOINT_FILE"
 # UTILITY FUNCTIONS
 # =============================================================================
 
+# Get pipeline continuation point from the Python implementation
+determine_continuation_point() {
+    if [ ! -f "$CHECKPOINT_FILE" ]; then
+        echo "AUG_START"
+        return
+    fi
+
+    python src/utils/checkpoint.py --checkpoint_file "$CHECKPOINT_FILE" get-continuation
+}
+
 # Function to check if a step has been completed
 step_completed() {
     local step_name="$1"
@@ -164,20 +174,15 @@ mark_step_completed() {
     python src/utils/checkpoint.py --checkpoint_file "$CHECKPOINT_FILE" mark --step "$step_name"
 }
 
-# Function to skip a step by marking all its checkpoints as completed
+# Function to check if a step should be skipped
 skip_step() {
     local step_name="$1"
     local skip_var="$2"
-    shift 2
-    local checkpoints=("$@")
     
     if [[ "${!skip_var}" == "true" ]]; then
-        echo "${skip_var}=true: Skipping ${step_name} and marking all checkpoints as complete"
-        for checkpoint in "${checkpoints[@]}"; do
-            mark_step_completed "$checkpoint"
-        done
+        echo "${skip_var}=true: Skipping ${step_name}"
         echo "${step_name} skipped - using existing files"
-        return 0  # Step was skipped
+        return 0  # Step should be skipped
     fi
     return 1  # Step should be executed
 }
@@ -352,146 +357,158 @@ source "$VENV_DIR/bin/activate"
 # PIPELINE EXECUTION
 # =============================================================================
 
-echo "Starting AutoIF Pipeline: Phase 1 - Generating verifiers, Phase 2 - Generating responses and building SFT dataset"
-
-# Step 1: Augment instructions
+# Define step constants
 AUG_PREPROCESSING="AUG_PREPROCESSING"
 AUG_INFERENCE_SUBMITTED="AUG_INFERENCE_SUBMITTED"
 AUG_INFERENCE_FAILED="AUG_INFERENCE_FAILED"
 AUG_INFERENCE_COMPLETE="AUG_INFERENCE_COMPLETE"
 AUG_POSTPROCESSING="AUG_POSTPROCESSING"
 
-if skip_step "Step 1 (instruction augmentation)" "SKIP_AUGMENTATION" \
-    "$AUG_PREPROCESSING" "$AUG_INFERENCE_SUBMITTED" "$AUG_INFERENCE_COMPLETE" "$AUG_POSTPROCESSING"; then
-    : # Step was skipped, continue to next step
-else
-    echo "Starting Step 1: Augment instructions"
-    echo "Using seed instructions file: $SEED_FILE"
-
-    # Step 1.1: Pre-process - Create instructions input
-    execute_step "AUG: Pre-processing instructions" "$AUG_PREPROCESSING" \
-        "python src/create_instructions_input.py --seed_file $SEED_FILE --output_file $AUGMENT_INPUT_FILE --num_instructions $NUM_OF_AUGMENTED_INSTRUCTIONS" \
-        "Pre-processing failed!"
-    
-    # Step 1.2: Submit and monitor inference job
-    handle_job_submission "launch_augment_instructions.sh" "AUG_JOB_ID" \
-        "$AUG_INFERENCE_SUBMITTED" "$AUG_INFERENCE_FAILED" "$AUG_INFERENCE_COMPLETE" \
-        "instruction augmentation" "AUG_JOB_ID"
-    
-    monitor_and_verify_job "$AUG_JOB_ID" "AUG" "$AUGMENT_INPUT_FILE" \
-        "$AUGMENT_OUTPUT_FILE" "$AUG_INFERENCE_COMPLETE" "$AUG_INFERENCE_FAILED" \
-        "100" "augmentation"
-    
-    # Step 1.3: Post-process
-    execute_step "AUG: Post-processing inference results" "$AUG_POSTPROCESSING" \
-        "python src/process_instructions_output.py --input_file $AUGMENT_OUTPUT_FILE --output_file $AUGMENTED_INSTRUCTIONS_FILE --seed_file $SEED_FILE --language $LANGUAGE --max_instructions $NUM_OF_AUGMENTED_INSTRUCTIONS" \
-        "Post-processing failed!"
-fi
-
-
-# Step 2: Generate verifiers
 VER_PREPROCESSING="VER_PREPROCESSING"
 VER_INFERENCE_SUBMITTED="VER_INFERENCE_SUBMITTED"
 VER_INFERENCE_COMPLETE="VER_INFERENCE_COMPLETE"
 VER_INFERENCE_FAILED="VER_INFERENCE_FAILED"
 VER_CROSS_VALIDATION="VER_CROSS_VALIDATION"
 
-if skip_step "Step 2 (verifier generation)" "SKIP_VERIFIERS" \
-    "$VER_PREPROCESSING" "$VER_INFERENCE_SUBMITTED" "$VER_INFERENCE_COMPLETE" "$VER_CROSS_VALIDATION"; then
-    : # Step was skipped, continue to next step
-else
-    echo "Starting Step 2: Generate verifiers"
-    
-    # Step 2.1: Create verifiers input
-    execute_step "VER: Pre-processing instructions for verifier generation" "$VER_PREPROCESSING" \
-        "python src/create_verifiers_input.py --instructions_file $AUGMENTED_INSTRUCTIONS_FILE --output_file $VERIFIERS_INPUT_FILE" \
-        "Verifier pre-processing failed!"
-    
-    # Step 2.2: Submit and monitor inference job
-    handle_job_submission "launch_generate_verifiers.sh" "VER_JOB_ID" \
-        "$VER_INFERENCE_SUBMITTED" "$VER_INFERENCE_FAILED" "$VER_INFERENCE_COMPLETE" \
-        "verifier generation" "VER_JOB_ID"
-    
-    monitor_and_verify_job "$VER_JOB_ID" "VER" "$VERIFIERS_INPUT_FILE" \
-        "$VERIFIERS_OUTPUT_FILE" "$VER_INFERENCE_COMPLETE" "$VER_INFERENCE_FAILED" \
-        "90" "verifier generation"
-    
-    # Step 2.3: Cross-validate verifiers and filter
-    execute_step "VER: Cross-validating and filtering verifiers" "$VER_CROSS_VALIDATION" \
-        "python src/verifiers_cross_validation.py --verifiers_file $VERIFIERS_OUTPUT_FILE --output_all_file $VERIFIERS_ALL_FILE --output_filtered_file $VERIFIERS_FILTERED_FILE" \
-        "Cross-validation failed!"
-fi
-
-echo "Phase 1 pipeline completed successfully!"
-echo "Generated verifiers are available at: $VERIFIERS_FILTERED_FILE"
-
-echo ""
-echo "Starting Phase 2: Concat queries with instructions, generate responses and build SFT dataset"
-
-# Phase 2 step definitions
 CONCAT_QUERIES_CONCATED="CONCAT_QUERIES_CONCATED"
 RESP_INFERENCE_SUBMITTED="RESP_INFERENCE_SUBMITTED"
 RESP_INFERENCE_COMPLETE="RESP_INFERENCE_COMPLETE"
 RESP_INFERENCE_FAILED="RESP_INFERENCE_FAILED"
 SFT_DATASET_BUILT="SFT_DATASET_BUILT"
 
-# Step 3: Concat queries
-if skip_step "Step 3 (query concatenation)" "SKIP_CONCAT" "$CONCAT_QUERIES_CONCATED"; then
-    : # Step was skipped, continue to next step
+# Check and report checkpoint status
+if [ ! -f "$CHECKPOINT_FILE" ]; then
+    echo "No checkpoint, creating $CHECKPOINT_FILE"
 else
-    echo "Starting Step 3: Concat queries"
-    echo "Using queries dataset: $QUERIES_DATASET"
-    
-    # Prepare concat queries command with conditional arguments
-    CONCAT_CMD="python src/concat_queries.py \
-        --verifiers_file \"$VERIFIERS_FILTERED_FILE\" \
-        --output_file \"$VERIFIERS_QUERIES_FILE\" \
-        --queries_dataset \"$QUERIES_DATASET\" \
-        --query_column_name \"$QUERY_COLUMN_NAME\" \
-        --response_column_name \"$RESPONSE_COLUMN_NAME\" \
-        --query_max_len \"$QUERY_MAX_LEN\" \
-        --instructions_per_query \"$INSTRUCTIONS_PER_QUERY\" \
-        --num_output_lines \"$NUM_OUTPUT_LINES\" \
-        --turns \"$TURNS\" \
-        --messages_key \"$MESSAGES_KEY\""
-    
-    # Add conditional flags
-    [[ "$MESSAGES_FORMAT" == "true" ]] && CONCAT_CMD="$CONCAT_CMD --messages_format"
-    [[ "$NO_FOLLOWUP" == "true" ]] && CONCAT_CMD="$CONCAT_CMD --no-followup"
-    
-    execute_step "CONCAT: Concat queries" "$CONCAT_QUERIES_CONCATED" \
-        "$CONCAT_CMD" "Concat queries failed!"
+    echo "Using checkpoint $CHECKPOINT_FILE"
 fi
 
-# Step 4: Generate query responses
-if skip_step "Step 4 (query response generation)" "SKIP_RESPONSES" \
-    "$RESP_INFERENCE_SUBMITTED" "$RESP_INFERENCE_COMPLETE"; then
-    : # Step was skipped, continue to next step
-else
-    echo "Starting Step 4: Generate query responses"
-    
-    # Step 4.1: Submit and monitor inference job
-    handle_job_submission "launch_generate_query_responses.sh" "RESP_JOB_ID" \
-        "$RESP_INFERENCE_SUBMITTED" "$RESP_INFERENCE_FAILED" "$RESP_INFERENCE_COMPLETE" \
-        "query response generation" "RESP_JOB_ID"
-    
-    monitor_and_verify_job "$RESP_JOB_ID" "RESP" "$VERIFIERS_QUERIES_FILE" \
-        "$SCORED_RESPONSES_FILE" "$RESP_INFERENCE_COMPLETE" "$RESP_INFERENCE_FAILED" \
-        "90" "query response generation"
-fi
+# Get the continuation point
+CONTINUE_FROM=$(determine_continuation_point)
+echo "Continuing pipeline execution from: $CONTINUE_FROM"
 
-# Step 5: Build SFT dataset
-if skip_step "Step 5 (SFT dataset building)" "SKIP_SFT" "$SFT_DATASET_BUILT"; then
-    : # Step was skipped, continue to next step
-else
-    echo "Starting Step 5: Build SFT dataset"
-    
-    execute_step "SFT: Building SFT dataset from scored responses" "$SFT_DATASET_BUILT" \
-        "python src/build_sft.py \"$SCORED_RESPONSES_FILE\" --output_dir \"$SFT_DATASET_DIR\" --score_threshold \"$SCORE_THRESHOLD\" --test" \
-        "SFT dataset building failed!"
-    
-    echo "SFT: Dataset built successfully!"
-fi
+case $CONTINUE_FROM in
+    "AUG_START")
+        if ! skip_step "Instruction augmentation" "SKIP_AUGMENTATION"; then
+            echo "Starting augmentation phase"
+            echo "Using seed instructions file: $SEED_FILE"
+
+            execute_step "AUG: Pre-processing instructions" "$AUG_PREPROCESSING" \
+                "python src/create_instructions_input.py --seed_file $SEED_FILE --output_file $AUGMENT_INPUT_FILE --num_instructions $NUM_OF_AUGMENTED_INSTRUCTIONS" \
+                "Pre-processing failed!"
+        fi
+        ;&  # Fallthrough
+    "AUG_INFERENCE")
+        if [[ "$SKIP_AUGMENTATION" != "true" ]]; then
+            handle_job_submission "launch_augment_instructions.sh" "AUG_JOB_ID" \
+                "$AUG_INFERENCE_SUBMITTED" "$AUG_INFERENCE_FAILED" "$AUG_INFERENCE_COMPLETE" \
+                "instruction augmentation" "AUG_JOB_ID"
+        fi
+        ;&  # Fallthrough
+    "AUG_MONITOR")
+        if [[ "$SKIP_AUGMENTATION" != "true" ]]; then
+            monitor_and_verify_job "$AUG_JOB_ID" "AUG" "$AUGMENT_INPUT_FILE" \
+                "$AUGMENT_OUTPUT_FILE" "$AUG_INFERENCE_COMPLETE" "$AUG_INFERENCE_FAILED" \
+                "100" "augmentation"
+        fi
+        ;&  # Fallthrough
+    "AUG_POSTPROCESS")
+        if [[ "$SKIP_AUGMENTATION" != "true" ]]; then
+            execute_step "AUG: Post-processing inference results" "$AUG_POSTPROCESSING" \
+                "python src/process_instructions_output.py --input_file $AUGMENT_OUTPUT_FILE --output_file $AUGMENTED_INSTRUCTIONS_FILE --seed_file $SEED_FILE --language $LANGUAGE --max_instructions $NUM_OF_AUGMENTED_INSTRUCTIONS" \
+                "Post-processing failed!"
+        fi
+        ;&  # Fallthrough
+    "VER_START")
+        if ! skip_step "Verifier generation" "SKIP_VERIFIERS"; then
+            echo "Starting verifier generation phase"
+            
+            execute_step "VER: Pre-processing instructions for verifier generation" "$VER_PREPROCESSING" \
+                "python src/create_verifiers_input.py --instructions_file $AUGMENTED_INSTRUCTIONS_FILE --output_file $VERIFIERS_INPUT_FILE" \
+                "Verifier pre-processing failed!"
+        fi
+        ;&  # Fallthrough
+    "VER_INFERENCE")
+        if [[ "$SKIP_VERIFIERS" != "true" ]]; then
+            handle_job_submission "launch_generate_verifiers.sh" "VER_JOB_ID" \
+                "$VER_INFERENCE_SUBMITTED" "$VER_INFERENCE_FAILED" "$VER_INFERENCE_COMPLETE" \
+                "verifier generation" "VER_JOB_ID"
+        fi
+        ;&  # Fallthrough
+    "VER_MONITOR")
+        if [[ "$SKIP_VERIFIERS" != "true" ]]; then
+            monitor_and_verify_job "$VER_JOB_ID" "VER" "$VERIFIERS_INPUT_FILE" \
+                "$VERIFIERS_OUTPUT_FILE" "$VER_INFERENCE_COMPLETE" "$VER_INFERENCE_FAILED" \
+                "90" "verifier generation"
+        fi
+        ;&  # Fallthrough
+    "VER_CROSSVAL")
+        if [[ "$SKIP_VERIFIERS" != "true" ]]; then
+            execute_step "VER: Cross-validating and filtering verifiers" "$VER_CROSS_VALIDATION" \
+                "python src/verifiers_cross_validation.py --verifiers_file $VERIFIERS_OUTPUT_FILE --output_all_file $VERIFIERS_ALL_FILE --output_filtered_file $VERIFIERS_FILTERED_FILE" \
+                "Cross-validation failed!"
+            echo "Phase 1 pipeline completed successfully!"
+            echo "Generated verifiers are available at: $VERIFIERS_FILTERED_FILE"
+        fi
+        ;&  # Fallthrough
+    "CONCAT_START")
+        echo "Starting Phase 2: Concat queries with instructions, generate responses and build SFT dataset"
+        if ! skip_step "Query concatenation" "SKIP_CONCAT"; then
+            echo "Starting query concatenation phase"
+            echo "Using queries dataset: $QUERIES_DATASET"
+            
+            # Prepare concat queries command with conditional arguments
+            CONCAT_CMD="python src/concat_queries.py \
+                --verifiers_file \"$VERIFIERS_FILTERED_FILE\" \
+                --output_file \"$VERIFIERS_QUERIES_FILE\" \
+                --queries_dataset \"$QUERIES_DATASET\" \
+                --query_column_name \"$QUERY_COLUMN_NAME\" \
+                --response_column_name \"$RESPONSE_COLUMN_NAME\" \
+                --query_max_len \"$QUERY_MAX_LEN\" \
+                --instructions_per_query \"$INSTRUCTIONS_PER_QUERY\" \
+                --num_output_lines \"$NUM_OUTPUT_LINES\" \
+                --turns \"$TURNS\" \
+                --messages_key \"$MESSAGES_KEY\""
+            
+            [[ "$MESSAGES_FORMAT" == "true" ]] && CONCAT_CMD="$CONCAT_CMD --messages_format"
+            [[ "$NO_FOLLOWUP" == "true" ]] && CONCAT_CMD="$CONCAT_CMD --no-followup"
+            
+            execute_step "CONCAT: Concat queries" "$CONCAT_QUERIES_CONCATED" \
+                "$CONCAT_CMD" "Concat queries failed!"
+        fi
+        ;&  # Fallthrough
+    "RESP_START")
+        if ! skip_step "Response generation" "SKIP_RESPONSES"; then
+            echo "Starting response generation phase"
+            handle_job_submission "launch_generate_query_responses.sh" "RESP_JOB_ID" \
+                "$RESP_INFERENCE_SUBMITTED" "$RESP_INFERENCE_FAILED" "$RESP_INFERENCE_COMPLETE" \
+                "query response generation" "RESP_JOB_ID"
+        fi
+        ;&  # Fallthrough
+    "RESP_MONITOR")
+        if [[ "$SKIP_RESPONSES" != "true" ]]; then
+            monitor_and_verify_job "$RESP_JOB_ID" "RESP" "$VERIFIERS_QUERIES_FILE" \
+                "$SCORED_RESPONSES_FILE" "$RESP_INFERENCE_COMPLETE" "$RESP_INFERENCE_FAILED" \
+                "90" "query response generation"
+        fi
+        ;&  # Fallthrough
+    "SFT_START")
+        if ! skip_step "SFT dataset building" "SKIP_SFT"; then
+            echo "Starting SFT dataset building phase"
+            execute_step "SFT: Building SFT dataset from scored responses" "$SFT_DATASET_BUILT" \
+                "python src/build_sft.py \"$SCORED_RESPONSES_FILE\" --output_dir \"$SFT_DATASET_DIR\" --score_threshold \"$SCORE_THRESHOLD\" --test" \
+                "SFT dataset building failed!"
+            echo "SFT: Dataset built successfully!"
+        fi
+        ;&  # Fallthrough
+    "COMPLETE")
+        echo "Pipeline completed successfully!"
+        echo "Generated verifiers are available at: $VERIFIERS_FILTERED_FILE"
+        echo "Query-instruction pairs with verifiers are available at: $VERIFIERS_QUERIES_FILE"
+        echo "Scored responses are available at: $SCORED_RESPONSES_FILE"
+        echo "SFT dataset is available at: $SFT_DATASET_DIR"
+        ;;
+esac
 
 echo ""
 echo "Pipeline completed successfully!"
