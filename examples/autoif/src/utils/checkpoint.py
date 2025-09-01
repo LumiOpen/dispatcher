@@ -49,22 +49,36 @@ def determine_continuation_point(checkpoint_file):
     if not last_checkpoint:
         return "AUG_START"
         
-    # Define the state transitions
+    # Define the state transitions - complete mapping from checkpoint states to pipeline case states
     transitions = {
+        # Augmentation phase
         "AUG_PREPROCESSING": "AUG_INFERENCE",
         "AUG_INFERENCE_COMPLETE": "AUG_POSTPROCESS",
+        "AUG_INFERENCE_FAILED": "AUG_INFERENCE",
         "AUG_POSTPROCESSING": "VER_START",
+        
+        # Verifier phase
         "VER_PREPROCESSING": "VER_INFERENCE",
         "VER_INFERENCE_COMPLETE": "VER_CROSSVAL",
+        "VER_INFERENCE_FAILED": "VER_INFERENCE",
         "VER_CROSS_VALIDATION": "CONCAT_START",
+        
+        # Concatenation phase
         "CONCAT_QUERIES_CONCATED": "RESP_START",
+        
+        # Response generation phase
         "RESP_INFERENCE_COMPLETE": "SFT_START",
+        "RESP_INFERENCE_FAILED": "RESP_START",
+        
+        # SFT phase
         "SFT_DATASET_BUILT": "COMPLETE"
     }
     
-    # Special handling for SUBMITTED states
+    # Special handling for SUBMITTED states - extract phase prefix to match pipeline case names
     if last_checkpoint.endswith("_SUBMITTED"):
-        return f"{last_checkpoint[:-9]}_MONITOR" if job_id else f"{last_checkpoint[:-9]}_INFERENCE"
+        # Extract the phase prefix (AUG, VER, RESP)
+        phase_prefix = last_checkpoint.split("_")[0]
+        return f"{phase_prefix}_MONITOR" if job_id else f"{phase_prefix}_INFERENCE"
     
     return transitions.get(last_checkpoint, "AUG_START")
 
