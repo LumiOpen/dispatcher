@@ -58,8 +58,8 @@ while true; do
       ;;
     COMPLETED)
       echo "$prefix: Job $job_id completed successfully"
-      echo "Waiting $check_interval seconds for file operations to complete..."
-      sleep "$check_interval"
+      echo "Waiting 5 seconds for file operations to complete..."
+      sleep 5
       exit 0
       ;;
     *)

@@ -6,6 +6,7 @@ Provides functions to check and modify checkpoint state.
 import datetime
 import os
 import sys
+import json
 
 def is_step_completed(checkpoint_file, step_name):
     """Check if a step has been completed."""
@@ -26,61 +27,66 @@ def mark_step_completed(checkpoint_file, step_name):
 
 def determine_continuation_point(checkpoint_file):
     """Determine which pipeline step to continue from based on the checkpoint file."""
-    if not os.path.exists(checkpoint_file):
-        return "AUG_START"
     
-    # Read the last two lines from the file
+    default_res = {"step": "AUG_START", "job_id": None}
+    if not os.path.exists(checkpoint_file):
+        return json.dumps(default_res)
+
     with open(checkpoint_file, 'r') as f:
         lines = f.readlines()
-        last_lines = lines[-2:] if len(lines) >= 2 else lines
-    
-    # Extract the last checkpoint and check for job ID
+        last_lines = lines[-10:] if len(lines) >= 10 else lines
+
     last_checkpoint = None
     job_id = None
     
+    # First, find the last checkpoint step
     for line in reversed(last_lines):
         line = line.strip()
-        if '_JOB_ID=' in line:  # Job ID line
-            job_id = line.split('=')[1]
-        elif ' - ' in line:  # Step record line
+        if not last_checkpoint and ' - ' in line:
             last_checkpoint = line.split(' - ')[1]
             break
-    
+
     if not last_checkpoint:
-        return "AUG_START"
-        
-    # Define the state transitions - complete mapping from checkpoint states to pipeline case states
+        return json.dumps(default_res)
+
+    # Determine which job ID prefix to look for based on the checkpoint
+    job_id_prefix = None
+    if last_checkpoint.startswith("AUG_"):
+        job_id_prefix = "AUG_JOB_ID"
+    elif last_checkpoint.startswith("VER_"):
+        job_id_prefix = "VER_JOB_ID"
+    elif last_checkpoint.startswith("RESP_"):
+        job_id_prefix = "RESP_JOB_ID"
+    
+    # Now look for the latest job ID with the specific prefix
+    # We need to search the entire file, not just the last 10 lines,
+    # to handle cases where there are multiple job IDs due to restarts
+    if job_id_prefix:
+        job_id = get_last_job_id(checkpoint_file, job_id_prefix)
+
     transitions = {
-        # Augmentation phase
         "AUG_PREPROCESSING": "AUG_INFERENCE",
         "AUG_INFERENCE_COMPLETE": "AUG_POSTPROCESS",
         "AUG_INFERENCE_FAILED": "AUG_INFERENCE",
         "AUG_POSTPROCESSING": "VER_START",
-        
-        # Verifier phase
         "VER_PREPROCESSING": "VER_INFERENCE",
         "VER_INFERENCE_COMPLETE": "VER_CROSSVAL",
         "VER_INFERENCE_FAILED": "VER_INFERENCE",
         "VER_CROSS_VALIDATION": "CONCAT_START",
-        
-        # Concatenation phase
         "CONCAT_QUERIES_CONCATED": "RESP_START",
-        
-        # Response generation phase
         "RESP_INFERENCE_COMPLETE": "SFT_START",
         "RESP_INFERENCE_FAILED": "RESP_START",
-        
-        # SFT phase
         "SFT_DATASET_BUILT": "COMPLETE"
     }
-    
+
     # Special handling for SUBMITTED states - extract phase prefix to match pipeline case names
     if last_checkpoint.endswith("_SUBMITTED"):
-        # Extract the phase prefix (AUG, VER, RESP)
         phase_prefix = last_checkpoint.split("_")[0]
-        return f"{phase_prefix}_MONITOR" if job_id else f"{phase_prefix}_INFERENCE"
-    
-    return transitions.get(last_checkpoint, "AUG_START")
+        next_step = f"{phase_prefix}_MONITOR" if job_id else f"{phase_prefix}_INFERENCE"
+        return json.dumps({"step": next_step, "job_id": job_id})
+
+    next_step = transitions.get(last_checkpoint, "AUG_START")
+    return json.dumps({"step": next_step, "job_id": job_id})
 
 def get_last_job_id(checkpoint_file, job_id_prefix):
     """Get the last job ID with the given prefix from checkpoint file."""
@@ -152,8 +158,8 @@ def main():
         print(f"Saved job ID {args.job_id} with prefix {args.prefix}")
     
     elif args.command == "get-continuation":
-        continuation_point = determine_continuation_point(args.checkpoint_file)
-        print(continuation_point)
+        continuation_json = determine_continuation_point(args.checkpoint_file)
+        print(continuation_json)
         sys.exit(0)
 
 if __name__ == "__main__":
