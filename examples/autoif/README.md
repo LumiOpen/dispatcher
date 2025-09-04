@@ -16,10 +16,10 @@ The implementation is divided into two phases:
 The entire AutoIF pipeline (both Phase 1 and Phase 2) can be executed with a single command:
 
 ```bash
-sh pipeline.sh [ --seed_file data/seed_instructions.txt ] [ --queries_dataset data/queries.jsonl ] [ --out_dir out1 ] [ model/path ]
+sh pipeline.sh [ --seed_file data/seed_instructions.txt ] [ --queries_dataset data/queries.jsonl ] [ --out_dir data/out1 ] [ model/path ]
 ```
 
-The pipeline utilizes checkpointing mechanism (stored in `data/{out_dir}/state_tracker.log`) that tracks completion of each step, enabling safe restarts if any step fails or needs to be rerun.
+The pipeline utilizes checkpointing mechanism (stored in `{out_dir}/state_tracker.log`) that tracks completion of each step, enabling safe restarts if any step fails or needs to be rerun.
 
 You can also explicitly skip any step by setting the SKIP_{STEP} environment variables. 
 
@@ -28,7 +28,7 @@ For example, if you want to perform only the second phase of the pipeline (after
 ```bash
 SKIP_AUGMENTATION=true SKIP_VERIFIERS=true sh pipeline.sh [ model/path ] \
 [ --queries_dataset data/queries.jsonl ] \
-[ --out_dir out1 ]
+[ --out_dir data/out1 ]
 ```
 
 Alternatively, if you want to stop the pipeline after generating verifiers and before concatenating the queries from a dataset (a reason might be that you might not yet have the queries data or you might only be interested in the verifiers phase) then run
@@ -36,7 +36,7 @@ Alternatively, if you want to stop the pipeline after generating verifiers and b
 ```bash
 SKIP_CONCAT=true SKIP_RESPONSES=true SKIP_SFT=true sh pipeline.sh [ model/path ] \
 [ --seed_file data/seed_instructions.txt ] \
-[ --out_dir out1 ]
+[ --out_dir data/out1 ]
 ```
 
 ## Configuration
@@ -49,7 +49,7 @@ LANGUAGE=en
 VENV_DIR=.venv
 REQUIREMENTS_FILE=requirements.txt
 MODEL=meta-llama/Llama-3.3-70B-Instruct
-OUT_DIR=ifeval # path to all data files under data/{OUT_DIR}/. cmdline arg --out_dir will overwrite this
+OUT_DIR=data/ifeval # path to all data files. cmdline arg --out_dir will overwrite this
 HF_HOME=/scratch/project_462000353/hf_cache
 
 # step skipping conf
@@ -61,16 +61,16 @@ SKIP_SFT=false
 
 # instruction augmentation conf
 SEED_FILE=data/seed_instructions_ifeval.txt # cmdline arg --seed_file will overwrite this
-AUGMENT_INPUT_FILE=data/${OUT_DIR}/aug_input.jsonl
-AUGMENT_OUTPUT_FILE=data/${OUT_DIR}/aug_output.jsonl
+AUGMENT_INPUT_FILE=${OUT_DIR}/aug_input.jsonl
+AUGMENT_OUTPUT_FILE=${OUT_DIR}/aug_output.jsonl
 NUM_OF_AUGMENTED_INSTRUCTIONS=100
-AUGMENTED_INSTRUCTIONS_FILE=data/${OUT_DIR}/augmented_instructions.csv
+AUGMENTED_INSTRUCTIONS_FILE=${OUT_DIR}/augmented_instructions.csv
 
 # verifiers generation conf
-VERIFIERS_INPUT_FILE=data/${OUT_DIR}/verifiers_input.jsonl
-VERIFIERS_OUTPUT_FILE=data/${OUT_DIR}/verifiers_output.jsonl
-VERIFIERS_ALL_FILE=data/${OUT_DIR}/verifiers_all.jsonl
-VERIFIERS_FILTERED_FILE=data/${OUT_DIR}/verifiers_filtered.jsonl
+VERIFIERS_INPUT_FILE=${OUT_DIR}/verifiers_input.jsonl
+VERIFIERS_OUTPUT_FILE=${OUT_DIR}/verifiers_output.jsonl
+VERIFIERS_ALL_FILE=${OUT_DIR}/verifiers_all.jsonl
+VERIFIERS_FILTERED_FILE=${OUT_DIR}/verifiers_filtered.jsonl
 # cross-validation params
 FUNCTION_TIMEOUT=5
 MIN_FUNCTIONS=1
@@ -78,7 +78,7 @@ MIN_TEST_CASES=1
 ACCURACY_THRESHOLD=0.8
 
 # queries-instructions concatenation conf
-VERIFIERS_QUERIES_FILE=data/${OUT_DIR}/verifiers_queries.jsonl # the output of this step
+VERIFIERS_QUERIES_FILE=${OUT_DIR}/verifiers_queries.jsonl # the output of this step
 QUERIES_DATASET=/scratch/project_462000353/posttraining_data/lmsys-chat-1m/unredacted_filtered_dedup_eng.jsonl # cmdline arg --queries_dataset will overwrite this
 QUERY_COLUMN_NAME=queries # used only if MESSAGES_FORMAT=false
 RESPONSE_COLUMN_NAME==responses # used only if MESSAGES_FORMAT=false
@@ -91,11 +91,11 @@ TURNS=2
 NO_FOLLOWUP=true
 
 # response generation conf
-SCORED_RESPONSES_FILE=data/${OUT_DIR}/scored_responses.jsonl
+SCORED_RESPONSES_FILE=${OUT_DIR}/scored_responses.jsonl
 SCORE_THRESHOLD=4 # Here used for intermediate judgements in multi-turn generations. Also used in next step building sft data
 
 # build sft conf
-SFT_DATASET_DIR=data/${OUT_DIR}/sft_dataset
+SFT_DATASET_DIR=${OUT_DIR}/sft_dataset
 ```
 
 ## Examples
@@ -109,7 +109,7 @@ TURNS=2 \
 INSTRUCTIONS_PER_QUERY=2 \
 QUERY_MAX_LEN=500 \
 NUM_OUTPUT_LINES=300000 \
-OUT_DIR=ifeval-lmsys-2turn-2constraint \
+OUT_DIR=data/ifeval-lmsys-2turn-2constraint \
 QUERIES_DATASET=/scratch/project_462000353/posttraining_data/lmsys-chat-1m/unredacted_filtered_dedup_eng.jsonl \
 sh pipeline.sh /scratch/project_462000353/zosaelai2/models/Llama-3.3-70B-Instruct
 
@@ -123,7 +123,7 @@ TURNS=2 \
 INSTRUCTIONS_PER_QUERY=2 \
 QUERY_MAX_LEN=500 \
 NUM_OUTPUT_LINES=300000 \
-OUT_DIR=ifeval-lmsys-2turn-2constraint \
+OUT_DIR=data/ifeval-lmsys-2turn-2constraint \
 QUERIES_DATASET=/scratch/project_462000353/posttraining_data/lmsys-chat-1m/unredacted_filtered_dedup_eng.jsonl \
 sh pipeline.sh /scratch/project_462000353/zosaelai2/models/Llama-3.3-70B-Instruct
 ```

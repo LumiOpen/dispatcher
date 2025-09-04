@@ -58,7 +58,7 @@ done
 
 # Read these from args, otherwise read from env vars, lastly fallback to defaults
 MODEL="${MODEL_ARG:-${MODEL:-meta-llama/Llama-3.3-70B-Instruct}}"
-export OUT_DIR="${OUT_DIR_ARG:-${OUT_DIR:-ifeval}}" # exported for verifiers_cross_validation.py to access
+export OUT_DIR="${OUT_DIR_ARG:-${OUT_DIR:-data/ifeval}}" # exported for verifiers_cross_validation.py to access
 SEED_FILE="${SEED_FILE_ARG:-${SEED_FILE:-data/seed_instructions_ifeval.txt}}"
 QUERIES_DATASET="${QUERIES_DATASET_ARG:-${QUERIES_DATASET:-/scratch/project_462000353/posttraining_data/lmsys-chat-1m/unredacted_filtered_dedup_eng.jsonl}}"
 
@@ -84,12 +84,12 @@ export LANGUAGE
 export HF_HOME="${HF_HOME:-/scratch/project_462000353/hf_cache}"
 
 # Intermediate files (exported for launch scripts)
-export AUGMENT_INPUT_FILE="${AUGMENT_INPUT_FILE:-data/${OUT_DIR}/aug_input.jsonl}"
-export AUGMENT_OUTPUT_FILE="${AUGMENT_OUTPUT_FILE:-data/${OUT_DIR}/aug_output.jsonl}"
-export VERIFIERS_INPUT_FILE="${VERIFIERS_INPUT_FILE:-data/${OUT_DIR}/verifiers_input.jsonl}"
-export VERIFIERS_OUTPUT_FILE="${VERIFIERS_OUTPUT_FILE:-data/${OUT_DIR}/verifiers_output.jsonl}"
-export VERIFIERS_QUERIES_FILE="${VERIFIERS_QUERIES_FILE:-data/${OUT_DIR}/verifiers_queries.jsonl}"
-export SCORED_RESPONSES_FILE="${SCORED_RESPONSES_FILE:-data/${OUT_DIR}/scored_responses.jsonl}"
+export AUGMENT_INPUT_FILE="${AUGMENT_INPUT_FILE:-${OUT_DIR}/aug_input.jsonl}"
+export AUGMENT_OUTPUT_FILE="${AUGMENT_OUTPUT_FILE:-${OUT_DIR}/aug_output.jsonl}"
+export VERIFIERS_INPUT_FILE="${VERIFIERS_INPUT_FILE:-${OUT_DIR}/verifiers_input.jsonl}"
+export VERIFIERS_OUTPUT_FILE="${VERIFIERS_OUTPUT_FILE:-${OUT_DIR}/verifiers_output.jsonl}"
+export VERIFIERS_QUERIES_FILE="${VERIFIERS_QUERIES_FILE:-${OUT_DIR}/verifiers_queries.jsonl}"
+export SCORED_RESPONSES_FILE="${SCORED_RESPONSES_FILE:-${OUT_DIR}/scored_responses.jsonl}"
 
 # =============================================================================
 # STEP 1: INSTRUCTION AUGMENTATION CONFIGURATION
@@ -97,14 +97,14 @@ export SCORED_RESPONSES_FILE="${SCORED_RESPONSES_FILE:-data/${OUT_DIR}/scored_re
 # Input files
 
 NUM_OF_AUGMENTED_INSTRUCTIONS="${NUM_OF_AUGMENTED_INSTRUCTIONS:-100}"
-AUGMENTED_INSTRUCTIONS_FILE="${AUGMENTED_INSTRUCTIONS_FILE:-data/${OUT_DIR}/augmented_instructions.csv}"
+AUGMENTED_INSTRUCTIONS_FILE="${AUGMENTED_INSTRUCTIONS_FILE:-${OUT_DIR}/augmented_instructions.csv}"
 
 # =============================================================================
 # STEP 2: VERIFIER GENERATION CONFIGURATION  
 # =============================================================================
 
-VERIFIERS_ALL_FILE="${VERIFIERS_ALL_FILE:-data/${OUT_DIR}/verifiers_all.jsonl}"
-VERIFIERS_FILTERED_FILE="${VERIFIERS_FILTERED_FILE:-data/${OUT_DIR}/verifiers_filtered.jsonl}"
+VERIFIERS_ALL_FILE="${VERIFIERS_ALL_FILE:-${OUT_DIR}/verifiers_all.jsonl}"
+VERIFIERS_FILTERED_FILE="${VERIFIERS_FILTERED_FILE:-${OUT_DIR}/verifiers_filtered.jsonl}"
 
 # Verifier execution settings (exported for launch scripts)
 export FUNCTION_TIMEOUT="${FUNCTION_TIMEOUT:-5}"
@@ -139,11 +139,11 @@ export SCORE_THRESHOLD="${SCORE_THRESHOLD:-4}"
 # =============================================================================
 
 # final SFT dataset
-SFT_DATASET_DIR="${SFT_DATASET_DIR:-data/${OUT_DIR}/sft_dataset}"
+SFT_DATASET_DIR="${SFT_DATASET_DIR:-${OUT_DIR}/sft_dataset}"
 
 # Checkpointing mechanism
 mkdir -p logs
-CHECKPOINT_FILE="${CHECKPOINT_FILE:-data/${OUT_DIR}/state_tracker.log}"
+CHECKPOINT_FILE="${CHECKPOINT_FILE:-${OUT_DIR}/state_tracker.log}"
 touch "$CHECKPOINT_FILE"
 
 # =============================================================================
