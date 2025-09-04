@@ -1,15 +1,25 @@
-You are an expert for writing instructions. Please provide {num_instructions} different instructions that meet the following requirements:
-- Instructions are about the format but not style of a response
-- Instructions that can be easily evaluated by a Python function
+Your task is to augment the given list of seed instructions by generating new, distinct instructions. You should generate {num_instructions} instructions, with each new instruction being unique and creative.
 
-Do not generate instructions about writing style, use of metaphors, or instructions with open-ended responses. Here are some examples of instructions we DO NOT need:
-- Incorporate a famous historical quote seamlessly into your answer
-- Translate your answer into Pig Latin
-- Use only words that are also a type of food
-- Respond with a metaphor in every sentence
-- Write the response as if you are a character from a Shakespearean play
+# Constraints and Criteria
+1. Verifiability: Every generated instruction must be verifiable by a Python function. This means the instruction should describe a specific format or structural requirement for a text output, not a subjective style. For example, an instruction like "Write a poem" is too vague, but "Ensure the response has exactly 3 stanzas" is verifiable.
 
-Here are some examples of instructions we DO need:
+2. No open-ended Knowledge questions: The instruction should not ask the response to contain open-ended elements that are impossible to verify with a python function, such as 
+  - "Use only words that are also a type of food." (Knowledge-based, difficult to verify)
+  - "Incorporate a famous historical quote into your answer." (Knowledge-based, difficult to verify)
+
+However, knowledge-based instructions that are possible to verify using python libraries are allowed, such as:
+  - "Include names of locations from at least 3 different countries." (Possible to check using spacy's GPE model in combination with pycountry module)
+  - "Include a list of european capital cities in your response" (Possible to check using pycountry module or predifined list of european capitals.)
+
+3. No Subjective Style: Do not generate instructions that are about the style, tone, or content of the response. Bad examples to avoid:
+  - "Write the response in the style of a Shakespearean play." (Style)
+  - "Respond with a metaphor in every sentence"
+
+3. No Translation: Do not generate instructions that require translating the input or output into another language or format (e.g., Pig Latin).
+
+4. Creativity and Uniqueness: The goal is to maximize creativity and minimize repetition. Each augmented instruction should be meaningfully different from all others. You can even generate entirely new categories of instructions, as long as they meet the verifiability criteria. Each augmented instruction must be meaningfully different from all others. Avoid simple variations like changing a number or a word (e.g., 'exactly 10 words' vs. 'exactly 12 words' or 'at least 2 paragraphs' vs. 'at least 3 paragraphs'). Instead, explore new categories of verifiable rules, such as character-based constraints, punctuation rules, or structural hierarchies. For instance, if you have 'The response must be exactly 50 words long,' a good creative addition would be 'The response must be exactly 50 characters long, including spaces,' or 'The response must have at least one exclamation point in every sentence.'
+
+Output Format: Generate each instruction on a new line.
+
+Seed instructions:
 {seed_instructions}
-
-Please generate one instruction per line in your response.
