@@ -152,11 +152,6 @@ touch "$CHECKPOINT_FILE"
 
 # Get pipeline continuation point from the Python implementation
 determine_continuation_point() {
-    if [ ! -f "$CHECKPOINT_FILE" ]; then
-        echo "AUG_START"
-        return
-    fi
-
     python src/utils/checkpoint.py --checkpoint_file "$CHECKPOINT_FILE" get-continuation
 }
 
@@ -246,14 +241,20 @@ handle_job_submission() {
         echo "${job_id_prefix%%_*}: Previous inference job failed, resubmitting..."
         submit_slurm_job "$launch_script" "$job_id_prefix" "$submitted_step" "$job_type_label"
         eval "${job_var_name}=\$LAST_SUBMITTED_JOB_ID"
+        # Update CHECKPOINT_JOB_ID to the newly submitted job
+        CHECKPOINT_JOB_ID="$LAST_SUBMITTED_JOB_ID"
     elif ! step_completed "$submitted_step"; then
         submit_slurm_job "$launch_script" "$job_id_prefix" "$submitted_step" "$job_type_label"
         eval "${job_var_name}=\$LAST_SUBMITTED_JOB_ID"
+        # Update CHECKPOINT_JOB_ID to the newly submitted job
+        CHECKPOINT_JOB_ID="$LAST_SUBMITTED_JOB_ID"
     else
         echo "${job_id_prefix%%_*}: Inference job already submitted, retrieving job ID."
         local job_id=$(python src/utils/checkpoint.py --checkpoint_file "$CHECKPOINT_FILE" get-job --prefix "$job_id_prefix")
         echo "Retrieved ${job_type_label} Job ID: $job_id"
         eval "${job_var_name}=\$job_id"
+        # Update CHECKPOINT_JOB_ID to the retrieved job ID
+        CHECKPOINT_JOB_ID="$job_id"
     fi
 }
 
@@ -383,8 +384,14 @@ else
 fi
 
 # Get the continuation point
-CONTINUE_FROM=$(determine_continuation_point)
+CONTINUATION_JSON=$(determine_continuation_point)
+CONTINUE_FROM=$(echo "$CONTINUATION_JSON" | jq -r '.step')
+CHECKPOINT_JOB_ID=$(echo "$CONTINUATION_JSON" | jq -r '.job_id // ""')
+
 echo "Continuing pipeline execution from: $CONTINUE_FROM"
+if [[ -n "$CHECKPOINT_JOB_ID" ]]; then
+    echo "Using checkpointed job ID: $CHECKPOINT_JOB_ID"
+fi
 
 case $CONTINUE_FROM in
     "AUG_START")
@@ -406,7 +413,9 @@ case $CONTINUE_FROM in
         ;&  # Fallthrough
     "AUG_MONITOR")
         if [[ "$SKIP_AUGMENTATION" != "true" ]]; then
-            monitor_and_verify_job "$AUG_JOB_ID" "AUG" "$AUGMENT_INPUT_FILE" \
+            # Use checkpointed job ID if available, otherwise use the one from job submission
+            MONITOR_JOB_ID="${CHECKPOINT_JOB_ID:-$AUG_JOB_ID}"
+            monitor_and_verify_job "$MONITOR_JOB_ID" "AUG" "$AUGMENT_INPUT_FILE" \
                 "$AUGMENT_OUTPUT_FILE" "$AUG_INFERENCE_COMPLETE" "$AUG_INFERENCE_FAILED" \
                 "100" "augmentation"
         fi
@@ -414,7 +423,7 @@ case $CONTINUE_FROM in
     "AUG_POSTPROCESS")
         if [[ "$SKIP_AUGMENTATION" != "true" ]]; then
             execute_step "AUG: Post-processing inference results" "$AUG_POSTPROCESSING" \
-                "python src/process_instructions_output.py --input_file $AUGMENT_OUTPUT_FILE --output_file $AUGMENTED_INSTRUCTIONS_FILE --seed_file $SEED_FILE --language $LANGUAGE --max_instructions $NUM_OF_AUGMENTED_INSTRUCTIONS" \
+                "python src/process_instructions_output.py --input_file $AUGMENT_OUTPUT_FILE --output_file $AUGMENTED_INSTRUCTIONS_FILE --language $LANGUAGE --max_instructions $NUM_OF_AUGMENTED_INSTRUCTIONS" \
                 "Post-processing failed!"
         fi
         ;&  # Fallthrough
@@ -436,7 +445,9 @@ case $CONTINUE_FROM in
         ;&  # Fallthrough
     "VER_MONITOR")
         if [[ "$SKIP_VERIFIERS" != "true" ]]; then
-            monitor_and_verify_job "$VER_JOB_ID" "VER" "$VERIFIERS_INPUT_FILE" \
+            # Use checkpointed job ID if available, otherwise use the one from job submission
+            MONITOR_JOB_ID="${CHECKPOINT_JOB_ID:-$VER_JOB_ID}"
+            monitor_and_verify_job "$MONITOR_JOB_ID" "VER" "$VERIFIERS_INPUT_FILE" \
                 "$VERIFIERS_OUTPUT_FILE" "$VER_INFERENCE_COMPLETE" "$VER_INFERENCE_FAILED" \
                 "90" "verifier generation"
         fi
@@ -486,7 +497,9 @@ case $CONTINUE_FROM in
         ;&  # Fallthrough
     "RESP_MONITOR")
         if [[ "$SKIP_RESPONSES" != "true" ]]; then
-            monitor_and_verify_job "$RESP_JOB_ID" "RESP" "$VERIFIERS_QUERIES_FILE" \
+            # Use checkpointed job ID if available, otherwise use the one from job submission
+            MONITOR_JOB_ID="${CHECKPOINT_JOB_ID:-$RESP_JOB_ID}"
+            monitor_and_verify_job "$MONITOR_JOB_ID" "RESP" "$VERIFIERS_QUERIES_FILE" \
                 "$SCORED_RESPONSES_FILE" "$RESP_INFERENCE_COMPLETE" "$RESP_INFERENCE_FAILED" \
                 "90" "query response generation"
         fi
