@@ -7,10 +7,6 @@ Your task is to augment the given list of seed instructions by generating new, d
   - "Use only words that are also a type of food." (Knowledge-based, difficult to verify)
   - "Incorporate a famous historical quote into your answer." (Knowledge-based, difficult to verify)
 
-However, knowledge-based instructions that are possible to verify using python libraries are allowed, such as:
-  - "Include names of locations from at least 3 different countries." (Possible to check using spacy's GPE model in combination with pycountry module)
-  - "Include a list of european capital cities in your response" (Possible to check using pycountry module or predifined list of european capitals.)
-
 3. No Subjective Style: Do not generate instructions that are about the style, tone, or content of the response. Bad examples to avoid:
   - "Write the response in the style of a Shakespearean play." (Style)
   - "Respond with a metaphor in every sentence"
