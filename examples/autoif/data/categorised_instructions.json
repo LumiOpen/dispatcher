@@ -1,0 +1,110 @@
+{
+    "keyword_instructions": [
+        "Include keywords {keyword1}, {keyword2} {N} times in your response",
+        "Do not include keywords {forbidden words} in the response.",
+        "The response must include keyword {keyword} in the {N}-th sentence."
+    ],
+    "seed_instructions": [
+        {
+            "category": "Content",
+            "description": "Instructions related to the content, grammar, and literary devices used within the text.",
+            "subcategories": [
+                "Word Properties",
+                "Sentence Structure",
+                "Punctuation",
+                "Identifiers/Placeholders",
+                "Grammatical Properties"
+            ],
+            "additional_prompt_context": "model_prompts/additional_for_content_category.txt",
+            "instructions": [
+                "At the end of your response, please explicitly add a postscript starting with {postscript marker}",
+                "The response must contain at least {N} placeholders represented by square brackets, such as [address].",
+                "Your answer must contain a title, wrapped in double angular brackets, such as <<poem of joy>>.",
+                "First, repeat the request without change, then give your answer (do not say anything before repeating the request; the request you need to repeat does not include this sentence)",
+                "Your entire response should be in capital letters only.",
+                "Your entire response should be in all lowercase letters. No capital letters are allowed.",
+                "Finish your response with this exact phrase {end phrase}. No other words should follow this phrase.",
+                "In your entire response, refrain from the use of any commas.",
+                "Use at least {N} different coordinating conjunctions in the response.",
+                "Use every standard punctuation mark at least once, including semicolons, colons, and the interrobang (?!).",
+                "Please use an emoji at the end of every sentence.",
+                "Ensure that the ratio of sentence types (declarative, interrogative, exclamatory) in your response is balanced.",
+                "Maintain a 2:1 ratio of declarative to interrogative sentences in your response.",
+                "Ensure that stop words constitute no more than {percentage}% of the total words in your response.",
+                "Each sentence must have more alliterative words than the previous one.",
+                "Each word in your response must start with the next letter of the alphabet, looping back to 'A' after 'Z'.",
+                "Ensure each word in your response has at least one consonant cluster (two or more consonants together).",
+                "In your response, the last word of each sentence must become the first word of the next sentence.",
+                "No two consecutive words can share the same first letter.",
+                "Alternate between words with odd and even numbers of syllables.",
+                "Each paragraph of your response must end with the same word it started with.",
+                "The response must start with a verb.",
+                "The ratio of nouns to verbs must be {N}:{M}",
+                "Every sentence must contain at least one adjective and one adverb.",
+                "Write a paragraph using words that contain only one type of vowel.",
+                "The response must be in reverse order of what it should be, per letter.",
+                "In your response, the first word of each sentence must start with the letters of the alphabet in order.",
+                "Your response must be in reverse order of what it should be, per word."
+            ]
+        },
+        {
+            "category": "Length",
+            "description": "Instructions related to the structure and arrangement of the output text.",
+            "subcategories": [
+                "Word Count",
+                "Sentence Count",
+                "Paragraph Count",
+                "Repetition",
+                "Uniqueness"
+            ],
+            "instructions": [
+                "In your response, the letter {letter} should appear {N} times.",
+                "Your response should contain {N} paragraphs. You separate paragraphs using the markdown divider: * * *",
+                "Answer with at least / around / at most {N} words.",
+                "Answer with at least / around / at most {N} sentences.",
+                "There should be {N} paragraphs. Paragraphs and only paragraphs are separated with each other by two line breaks. The {i}-th paragraph must start with word {first word}.",
+                "Give {N} different responses. Responses and only responses should be separated by 6 asterisk symbols: ******.",
+                "In your response, words with all capital letters should appear at least / around / at most {N} times.",
+                "The response must contain between {min_n} and {max_n} words.",
+                "Use at least {N} unique words in the response.",
+                "Respond with {N} sentences, all containing the same number of characters but using all different words.",
+                "Each sentence in your response must contain exactly {small_N} more words than the previous one.",
+                "Include at least {N} palindromes, each at least {n_chars} characters long.",
+                "Use only words with lengths that are prime numbers.",
+                "The response should not repeat any word more than {small_N} times.",
+                "Your answer must contain exactly {N} bullet points. Use the markdown bullet points such as: * This is a point.",
+                "Highlight at least {N} sections in your answer with markdown, i.e. *highlighted section*",
+                "Your response must have {N} sections. Mark the beginning of each section with {section splitter} X."
+            ]
+        },
+        {
+            "category": "Format",
+            "description": "Instructions related to the formatting of the response, including JSON, CSV, indentation, and special characters.",
+            "subcategories": [
+                "JSON",
+                "CSV",
+                "Indentation",
+                "Special Characters",
+                "XML",
+                "Markdown",
+                "Table"
+            ],
+            "instructions": [
+                "Wrap your entire response with double quotation marks.",
+                "Entire output should be wrapped in JSON format.",
+                "All variable names should be in camelCase. Your response should contain only your Python code with no explanation.",
+                "Create stairs by incrementally indenting each new line.",
+                "Answer with a list of items, instead of bullet points use {sep}.",
+                "Write each word on a new line.",
+                "Nest parentheses (and [brackets {and braces}]) at least 5 levels deep.",
+                "Include quotes within quotes within quotes, at least 3 levels deep, alternating between double quotes and single quotes.",
+                "Your response must include bullet points denoted by * and at least one sub-bullet point denoted by - for each bullet point.",
+                "Each paragraph must begin with a sentence in italics, use HTML to indicate the italics.",
+                "The response must be in CSV format with 7 rows.",
+                "The response must be in CSV format with 3 rows and enclose each single field in double quotes.",
+                "The response must be in CSV format with 14 rows. Add one field which contains a special character and enclose it in double quotes.",
+                "Dates must be in the format: YYYY-MM-DD."
+            ]
+        }
+    ]
+}

@@ -1,0 +1,29 @@
+Your task is to augment the given list of seed instructions by generating new, distinct instructions. You should generate {num_instructions} instructions, with each new instruction being unique and creative.
+
+# Parameters
+- Category: {category}
+- Description: {description}
+- Subcategories: {subcategories}
+
+# Constraints and Criteria
+1.  **Verifiability:** Every generated instruction must be verifiable by a Python function. This means the instruction should describe a specific requirement for the text output, not a subjective style. For example, an instruction like "Write a poem" is too vague, but "Ensure the response has exactly 3 stanzas" is verifiable. Use the provided seed instructions as a guide.
+
+2.  **No Open-ended Knowledge Questions:** The instruction should not ask the response to contain open-ended elements that are impossible to verify with a python function, for example:
+  - "Use only words that are also a type of food." (Knowledge-based, difficult to verify)
+  - "Incorporate a famous historical quote into your answer." (Knowledge-based, difficult to verify)
+
+3.  **No Subjective Style:** Do not generate instructions that are about the style, tone, or content of the response. Bad examples to avoid:
+  - "Write the response in the style of a Shakespearean play." (Style)
+  - "Respond with a metaphor in every sentence" (Style)
+
+4.  **No Translation:** Do not generate instructions that require translating the input into another language.
+
+5.  **Creativity and Uniqueness:** The goal is to maximize creativity and minimize repetition. Each augmented instruction should be meaningfully different from all others. Avoid simple variations like changing a number or a word (e.g., 'exactly 10 words' vs. 'exactly 12 words'). Instead, explore new classes of verifiable rules, especially those related to the provided subcategories.
+
+{additional_context}
+
+# Output Format
+Generate each instruction on a new line.
+
+# Seed instructions:
+{seed_instructions}
