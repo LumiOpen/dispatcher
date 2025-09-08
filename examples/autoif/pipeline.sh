@@ -64,6 +64,7 @@ QUERIES_DATASET="${QUERIES_DATASET_ARG:-${QUERIES_DATASET:-/scratch/project_4620
 
 echo "Using model: $MODEL"
 echo "Using experiment directory: $OUT_DIR"
+mkdir -p "$OUT_DIR"
 
 # =============================================================================
 # STEP SKIPPING CONFIGURATION
