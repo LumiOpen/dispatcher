@@ -1,0 +1,13 @@
+Create a math problem related to the persona described below. The problem must be in {language} language.
+<persona>
+{persona}
+</persona>
+
+Note:
+1. The math problem should be challenging and involve advanced mathematical skills and knowledge. Only top talents can solve it correctly.
+2. You should make full use of the persona description to create the math problem to ensure that the math problem is unique and specific to the persona.
+3. Your response should always start with "PROBLEM:". Your response should not include a solution to the created math problem.
+4. Your created math problem should include no more than 2 sub-problems.
+5. Make sure the problem is in {language}.
+
+NOTE:  \"PROBLEM\" keyword must be kept in English without any change while the generated problem should be in {language}.

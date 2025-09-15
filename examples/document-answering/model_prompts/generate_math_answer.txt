@@ -1,0 +1,8 @@
+Provide solution to the math problem below. The solution must be in {language} language.
+
+<problem>
+{math_problem}
+</problem>
+
+Note: Provide your solution step-by-step. Make sure your solution is in {language}. End your solution in a new line with the words "FINAL ANSWER" as in the format given below. Keep the keywords "FINAL ANSWER" in English even if the solution is in {language}.
+FINAL ANSWER: $\\boxed{{final_answer}}$

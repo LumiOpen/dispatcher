@@ -1,0 +1,9 @@
+Provide a solution to the given {programming_lang} coding problem.
+
+Coding problem: 
+{code_problem}
+
+Note:
+1. The response should follow the Markdown syntax where a code block is wrapped inside three backticks (```{programming_lang}).
+2. The solution should start with the function definition and end with the final return statement.
+3. Provide an explanation of the solution in {language}.

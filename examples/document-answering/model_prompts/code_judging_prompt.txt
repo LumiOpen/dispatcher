@@ -1,0 +1,23 @@
+Below is a {programming_lang} coding problem and the proposed solution. Your task is to evaluate whether the proposed solution correctly solves the problem and that the solution is explained correctly. Since the problem is in {language}, the explanation to the proposed solution should also be in {language}.
+
+Please rate the solution on a scale of 1 to 5, where:
+
+1 = Completely incorrect (does not address the problem at all) or has syntax errors (will not compile correctly). The explanation is not in {language}.
+
+2 = Mostly incorrect (major flaws, only partially related). The code is not well explained in {language}.
+
+3 = Partially correct (addresses some parts, but misses important requirements). The explanation is satisfactory.
+
+4 = Mostly correct (works in most cases but may have minor flaws or missing edge cases). The code is explained well.
+
+5 = Fully correct (solves the problem as stated, handles a very large majority of cases, including edge cases). The explanation is excellent and is in {language}.
+
+After analysing the coding problem and snippet, perform the following:
+- Briefly justify your score, up to 100 words. 
+- Conclude with the score using the format: \"Score: X/5\"
+
+PROBLEM:
+{problem}
+
+PROPOSED SOLUTION:
+{solution} 

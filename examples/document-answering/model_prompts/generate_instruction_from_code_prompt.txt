@@ -1,0 +1,13 @@
+Below is a {programming_lang} code snippet. Your task is to generate a coding problem that this code snippet solves. Assume that the interviewer and interviewee speak {language}.
+
+The problem statement should include:
+1. A clear description of the problem in {language}.
+2. The format of the input and output.
+3. Any important constraints (size limits, data types, performance expectations).
+4. The expected programming language of the solution.
+
+Do not explain what the code does — instead, phrase it as a challenge for someone to solve. Make sure the problem is in {language}.
+
+Here is the code snippet:
+
+{code}

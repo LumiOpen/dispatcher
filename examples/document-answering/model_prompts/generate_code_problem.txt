@@ -1,0 +1,12 @@
+{persona}
+
+Assume you are the persona described above and you are asking a {programming_lang} programming question in stackoverflow. Assume the persona speaks {language} therefore the question must be in {language}.
+
+Note:
+1. Your question should be solvable by medium- to high-level {programming_lang} programmers.
+2. Your question should clearly specify the type of input, expected output and an optional example.
+3. Your response should always start with "QUESTION:"
+4. Your response should NOT include a solution to the created coding problem.
+5. Make sure the question is in {language}.
+
+NOTE: The \"QUESTION\" keyword must be kept in English without any change while the generated question should be in {language}.
