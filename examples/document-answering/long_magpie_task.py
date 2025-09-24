@@ -13,10 +13,12 @@ import logging
 
 __all__ = ["LongMagpieTask"]
 
+QWEN_SYSTEM_START = "<|im_start|>system\n"
 QWEN_USER_START = "\n<|im_start|>user\n"
 QWEN_ASSISTANT_START = "\n<|im_start|>assistant\n"
 QWEN_END = "<|im_end|>"
 
+LLAMA_SYSTEM_START = "<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\n"
 LLAMA_USER_START = "<|start_header_id|>user<|end_header_id|>\n\n"
 LLAMA_ASSISTANT_START = "<|start_header_id|>assistant<|end_header_id|>\n\n"
 LLAMA_END = "<|eot_id|>"
@@ -32,6 +34,10 @@ ERROR_TYPES = {
     "invalid_query": "model did not produce a valid query",
 }
 
+SYSTEM_PROMPTS = {
+    "en": "You are a helpful, respectful, and honest assistant.",
+    "fi": "Olet avulias, kunnioittava ja rehellinen avustaja."
+}
 
 
 class LongMagpieTask(GeneratorTask):
@@ -54,11 +60,11 @@ class LongMagpieTask(GeneratorTask):
     def create_query_generation_request(self, document: str, messages: List[Dict[str, str]] = None):
         if len(messages) == 0:
             if "qwen" in MODEL.lower():
-                prompt_text = document + QWEN_USER_START
+                prompt_text = document + QWEN_SYSTEM_START + SYSTEM_PROMPTS[LANGUAGE] + QWEN_END + QWEN_USER_START
             else:
-                prompt_text = document + LLAMA_USER_START
+                prompt_text = document + LLAMA_SYSTEM_START + SYSTEM_PROMPTS[LANGUAGE] + LLAMA_END + LLAMA_USER_START
         else:
-            prompt_text = document
+            prompt_text = document 
             for turn, message in enumerate(messages):
                 if "qwen" in MODEL.lower():
                     if message["role"] == "user":

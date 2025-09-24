@@ -1,0 +1,6 @@
+DOCUMENT:
+{document}
+
+TASK:
+1. Given the above document, please propose 5 {language} questions that require summarization or integration from multiple parts of the text. Make sure they are diverse and cover all parts of the text.
+2. Each question should be in a separate line. Give your response in the following format: "1: ", "2: ", ...
