@@ -53,7 +53,7 @@ class MultipleResponsesTask(GeneratorTask):
         # self.data is prepopulated with the data from the jsonl row being
         # processed
         messages = self.data.get("messages")
-        id = self.data.get("id")
+        # id = self.data.get("id")
         responses_array = []
 
         # Step 1 – get n responses for prompt
@@ -87,7 +87,7 @@ class MultipleResponsesTask(GeneratorTask):
             responses_array.append({"response": resp_text, "score": score})
 
         return {
-            "id": id,
+            # "id": id,
             "prompt": user_prompt,
             "responses": responses_array
         }
