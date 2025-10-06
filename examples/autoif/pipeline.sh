@@ -67,13 +67,29 @@ echo "Using experiment directory: $OUT_DIR"
 mkdir -p "$OUT_DIR"
 
 # =============================================================================
-# STEP SKIPPING CONFIGURATION
+# STEP EXECUTION CONFIGURATION
 # =============================================================================
-SKIP_AUGMENTATION="${SKIP_AUGMENTATION:-false}"
-SKIP_VERIFIERS="${SKIP_VERIFIERS:-false}"
-SKIP_CONCAT="${SKIP_CONCAT:-false}"
-SKIP_RESPONSES="${SKIP_RESPONSES:-false}"
-SKIP_SFT="${SKIP_SFT:-false}"
+EXECUTE_AUGMENTATION="${EXECUTE_AUGMENTATION:-}"
+EXECUTE_VERIFIERS="${EXECUTE_VERIFIERS:-}"
+EXECUTE_CONCAT="${EXECUTE_CONCAT:-}"
+EXECUTE_RESPONSES="${EXECUTE_RESPONSES:-}"
+EXECUTE_SFT="${EXECUTE_SFT:-}"
+
+# If no steps are explicitly configured, execute all steps
+if [[ -z "$EXECUTE_AUGMENTATION" && -z "$EXECUTE_VERIFIERS" && -z "$EXECUTE_CONCAT" && -z "$EXECUTE_RESPONSES" && -z "$EXECUTE_SFT" ]]; then
+    EXECUTE_AUGMENTATION="true"
+    EXECUTE_VERIFIERS="true"
+    EXECUTE_CONCAT="true"
+    EXECUTE_RESPONSES="true"
+    EXECUTE_SFT="true"
+fi
+
+# Set defaults for unspecified steps
+EXECUTE_AUGMENTATION="${EXECUTE_AUGMENTATION:-false}"
+EXECUTE_VERIFIERS="${EXECUTE_VERIFIERS:-false}"
+EXECUTE_CONCAT="${EXECUTE_CONCAT:-false}"
+EXECUTE_RESPONSES="${EXECUTE_RESPONSES:-false}"
+EXECUTE_SFT="${EXECUTE_SFT:-false}"
 
 # =============================================================================
 # LAUNCH SCRIPT CONFIGURATION (exported for use by SLURM launch scripts)
@@ -97,7 +113,8 @@ export SCORED_RESPONSES_FILE="${SCORED_RESPONSES_FILE:-${OUT_DIR}/scored_respons
 # =============================================================================
 # Input files
 
-NUM_OF_AUGMENTED_INSTRUCTIONS="${NUM_OF_AUGMENTED_INSTRUCTIONS:-100}"
+NUM_OF_AUGMENTED_INSTRUCTIONS_PER_CATEGORY="${NUM_OF_AUGMENTED_INSTRUCTIONS_PER_CATEGORY:-50}"
+MAX_AUGMENTED_INSTRUCTIONS="${MAX_AUGMENTED_INSTRUCTIONS:-200}"
 AUGMENTED_INSTRUCTIONS_FILE="${AUGMENTED_INSTRUCTIONS_FILE:-${OUT_DIR}/augmented_instructions.csv}"
 
 # =============================================================================
@@ -111,7 +128,7 @@ VERIFIERS_FILTERED_FILE="${VERIFIERS_FILTERED_FILE:-${OUT_DIR}/verifiers_filtere
 export FUNCTION_TIMEOUT="${FUNCTION_TIMEOUT:-5}"
 export MIN_FUNCTIONS="${MIN_FUNCTIONS:-1}"
 export MIN_TEST_CASES="${MIN_TEST_CASES:-1}"
-export ACCURACY_THRESHOLD="${ACCURACY_THRESHOLD:-0.8}"
+export FUNCTION_PASS_RATE="${FUNCTION_PASS_RATE:-0.8}"
 
 # =============================================================================
 # STEP 3: QUERIES CONCATENATION CONFIGURATION
@@ -125,8 +142,9 @@ QUERY_MAX_LEN="${QUERY_MAX_LEN:-200}"
 NUM_OUTPUT_LINES="${NUM_OUTPUT_LINES:-300000}"
 MESSAGES_FORMAT="${MESSAGES_FORMAT:-true}"
 MESSAGES_KEY="${MESSAGES_KEY:-messages}"
-TURNS="${TURNS:-2}"
+TURNS="${TURNS:-1}"
 NO_FOLLOWUP="${NO_FOLLOWUP:-true}"
+BALANCE_CATEGORIES="${BALANCE_CATEGORIES:-true}"
 
 # =============================================================================
 # STEP 4: RESPONSE GENERATION CONFIGURATION
@@ -169,17 +187,19 @@ mark_step_completed() {
     python src/utils/checkpoint.py --checkpoint_file "$CHECKPOINT_FILE" mark --step "$step_name"
 }
 
-# Function to check if a step should be skipped
-skip_step() {
+# Function to check if a step should be executed
+execute_step_check() {
     local step_name="$1"
-    local skip_var="$2"
+    local execute_var="$2"
     
-    if [[ "${!skip_var}" == "true" ]]; then
-        echo "${skip_var}=true: Skipping ${step_name}"
-        echo "${step_name} skipped - using existing files"
-        return 0  # Step should be skipped
+    if [[ "${!execute_var}" == "true" ]]; then
+        echo "Executing ${step_name}"
+        return 0  # Step should be executed
+    else
+        echo "${execute_var}=false: Skipping ${step_name}"
+        echo "${step_name} skipped"
+        return 1  # Step should be skipped
     fi
-    return 1  # Step should be executed
 }
 
 # Function to execute a simple step with checkpoint management
@@ -396,24 +416,24 @@ fi
 
 case $CONTINUE_FROM in
     "AUG_START")
-        if ! skip_step "Instruction augmentation" "SKIP_AUGMENTATION"; then
+        if execute_step_check "Instruction augmentation" "EXECUTE_AUGMENTATION"; then
             echo "Starting augmentation phase"
             echo "Using seed instructions file: $SEED_FILE"
 
             execute_step "AUG: Pre-processing instructions" "$AUG_PREPROCESSING" \
-                "python src/create_instructions_input.py --seed_file $SEED_FILE --output_file $AUGMENT_INPUT_FILE --num_instructions $NUM_OF_AUGMENTED_INSTRUCTIONS" \
+                "python src/create_instructions_input.py --seed_file $SEED_FILE --output_file $AUGMENT_INPUT_FILE --num_instructions_per_category $NUM_OF_AUGMENTED_INSTRUCTIONS_PER_CATEGORY" \
                 "Pre-processing failed!"
         fi
         ;&  # Fallthrough
     "AUG_INFERENCE")
-        if [[ "$SKIP_AUGMENTATION" != "true" ]]; then
+        if [[ "$EXECUTE_AUGMENTATION" == "true" ]]; then
             handle_job_submission "launch_augment_instructions.sh" "AUG_JOB_ID" \
                 "$AUG_INFERENCE_SUBMITTED" "$AUG_INFERENCE_FAILED" "$AUG_INFERENCE_COMPLETE" \
                 "instruction augmentation" "AUG_JOB_ID"
         fi
         ;&  # Fallthrough
     "AUG_MONITOR")
-        if [[ "$SKIP_AUGMENTATION" != "true" ]]; then
+        if [[ "$EXECUTE_AUGMENTATION" == "true" ]]; then
             # Use checkpointed job ID if available, otherwise use the one from job submission
             MONITOR_JOB_ID="${CHECKPOINT_JOB_ID:-$AUG_JOB_ID}"
             monitor_and_verify_job "$MONITOR_JOB_ID" "AUG" "$AUGMENT_INPUT_FILE" \
@@ -422,14 +442,14 @@ case $CONTINUE_FROM in
         fi
         ;&  # Fallthrough
     "AUG_POSTPROCESS")
-        if [[ "$SKIP_AUGMENTATION" != "true" ]]; then
+        if [[ "$EXECUTE_AUGMENTATION" == "true" ]]; then
             execute_step "AUG: Post-processing inference results" "$AUG_POSTPROCESSING" \
-                "python src/process_instructions_output.py --input_file $AUGMENT_OUTPUT_FILE --output_file $AUGMENTED_INSTRUCTIONS_FILE --language $LANGUAGE --max_instructions $NUM_OF_AUGMENTED_INSTRUCTIONS" \
+                "python src/process_instructions_output.py --seed_file $SEED_FILE --input_file $AUGMENT_OUTPUT_FILE --output_file $AUGMENTED_INSTRUCTIONS_FILE --language $LANGUAGE --max_instructions $MAX_AUGMENTED_INSTRUCTIONS" \
                 "Post-processing failed!"
         fi
         ;&  # Fallthrough
     "VER_START")
-        if ! skip_step "Verifier generation" "SKIP_VERIFIERS"; then
+        if execute_step_check "Verifier generation" "EXECUTE_VERIFIERS"; then
             echo "Starting verifier generation phase"
             
             execute_step "VER: Pre-processing instructions for verifier generation" "$VER_PREPROCESSING" \
@@ -438,14 +458,14 @@ case $CONTINUE_FROM in
         fi
         ;&  # Fallthrough
     "VER_INFERENCE")
-        if [[ "$SKIP_VERIFIERS" != "true" ]]; then
+        if [[ "$EXECUTE_VERIFIERS" == "true" ]]; then
             handle_job_submission "launch_generate_verifiers.sh" "VER_JOB_ID" \
                 "$VER_INFERENCE_SUBMITTED" "$VER_INFERENCE_FAILED" "$VER_INFERENCE_COMPLETE" \
                 "verifier generation" "VER_JOB_ID"
         fi
         ;&  # Fallthrough
     "VER_MONITOR")
-        if [[ "$SKIP_VERIFIERS" != "true" ]]; then
+        if [[ "$EXECUTE_VERIFIERS" == "true" ]]; then
             # Use checkpointed job ID if available, otherwise use the one from job submission
             MONITOR_JOB_ID="${CHECKPOINT_JOB_ID:-$VER_JOB_ID}"
             monitor_and_verify_job "$MONITOR_JOB_ID" "VER" "$VERIFIERS_INPUT_FILE" \
@@ -454,7 +474,7 @@ case $CONTINUE_FROM in
         fi
         ;&  # Fallthrough
     "VER_CROSSVAL")
-        if [[ "$SKIP_VERIFIERS" != "true" ]]; then
+        if [[ "$EXECUTE_VERIFIERS" == "true" ]]; then
             execute_step "VER: Cross-validating and filtering verifiers" "$VER_CROSS_VALIDATION" \
                 "python src/verifiers_cross_validation.py --verifiers_file $VERIFIERS_OUTPUT_FILE --output_all_file $VERIFIERS_ALL_FILE --output_filtered_file $VERIFIERS_FILTERED_FILE" \
                 "Cross-validation failed!"
@@ -464,7 +484,7 @@ case $CONTINUE_FROM in
         ;&  # Fallthrough
     "CONCAT_START")
         echo "Starting Phase 2: Concat queries with instructions, generate responses and build SFT dataset"
-        if ! skip_step "Query concatenation" "SKIP_CONCAT"; then
+        if execute_step_check "Query concatenation" "EXECUTE_CONCAT"; then
             echo "Starting query concatenation phase"
             echo "Using queries dataset: $QUERIES_DATASET"
             
@@ -483,13 +503,14 @@ case $CONTINUE_FROM in
             
             [[ "$MESSAGES_FORMAT" == "true" ]] && CONCAT_CMD="$CONCAT_CMD --messages_format"
             [[ "$NO_FOLLOWUP" == "true" ]] && CONCAT_CMD="$CONCAT_CMD --no-followup"
+            [[ "$BALANCE_CATEGORIES" == "true" ]] && CONCAT_CMD="$CONCAT_CMD --balance_categories"
             
             execute_step "CONCAT: Concat queries" "$CONCAT_QUERIES_CONCATED" \
                 "$CONCAT_CMD" "Concat queries failed!"
         fi
         ;&  # Fallthrough
     "RESP_START")
-        if ! skip_step "Response generation" "SKIP_RESPONSES"; then
+        if execute_step_check "Response generation" "EXECUTE_RESPONSES"; then
             echo "Starting response generation phase"
             handle_job_submission "launch_generate_query_responses.sh" "RESP_JOB_ID" \
                 "$RESP_INFERENCE_SUBMITTED" "$RESP_INFERENCE_FAILED" "$RESP_INFERENCE_COMPLETE" \
@@ -497,7 +518,7 @@ case $CONTINUE_FROM in
         fi
         ;&  # Fallthrough
     "RESP_MONITOR")
-        if [[ "$SKIP_RESPONSES" != "true" ]]; then
+        if [[ "$EXECUTE_RESPONSES" == "true" ]]; then
             # Use checkpointed job ID if available, otherwise use the one from job submission
             MONITOR_JOB_ID="${CHECKPOINT_JOB_ID:-$RESP_JOB_ID}"
             monitor_and_verify_job "$MONITOR_JOB_ID" "RESP" "$VERIFIERS_QUERIES_FILE" \
@@ -506,7 +527,7 @@ case $CONTINUE_FROM in
         fi
         ;&  # Fallthrough
     "SFT_START")
-        if ! skip_step "SFT dataset building" "SKIP_SFT"; then
+        if execute_step_check "SFT dataset building" "EXECUTE_SFT"; then
             echo "Starting SFT dataset building phase"
             mkdir -p "$SFT_DATASET_DIR"
             execute_step "SFT: Building SFT dataset from scored responses" "$SFT_DATASET_BUILT" \
@@ -523,12 +544,5 @@ case $CONTINUE_FROM in
         echo "SFT dataset is available at: $SFT_DATASET_DIR"
         ;;
 esac
-
-echo ""
-echo "Pipeline completed successfully!"
-echo "Generated verifiers are available at: $VERIFIERS_FILTERED_FILE"
-echo "Query-instruction pairs with verifiers are available at: $VERIFIERS_QUERIES_FILE"
-echo "Scored responses are available at: $SCORED_RESPONSES_FILE"
-echo "SFT dataset is available at: $SFT_DATASET_DIR"
 
 deactivate

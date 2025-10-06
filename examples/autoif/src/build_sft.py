@@ -24,6 +24,7 @@ def main():
     parser.add_argument("--score_threshold", type=int, default=4, help="Minimum score threshold for filtering messages.")
     parser.add_argument("--max_train_outrows", type=int, default=30000, help="Maximum number of rows in the train.jsonl file.")
     parser.add_argument("--test", action="store_true", help="If set, remaining entries after max_train_outrows will be written to test.jsonl.")
+    parser.add_argument("--max_test_outrows", type=int, default=3000, help="Maximum number of rows in the test.jsonl file.")
     args = parser.parse_args()
     
     # Create output directory if it doesn't exist
@@ -40,10 +41,10 @@ def main():
     
     # Determine sampling strategy
     train_target = min(args.max_train_outrows, total_valid)
-    test_target = max(0, total_valid - args.max_train_outrows) if args.test else 0
-    
-    print(f"Target: {train_target} train entries, {test_target} test entries")
-    
+    test_target = min(args.max_test_outrows, max(0, total_valid - args.max_train_outrows)) if args.test else 0
+
+    print(f"Target: {train_target} train entries (args.max_train_outrows = {args.max_train_outrows}), {test_target} test entries (args.max_test_outrows = {args.max_test_outrows})")
+
     # Calculate sampling probabilities
     train_prob = train_target / total_valid
     
@@ -88,12 +89,12 @@ def main():
                         if random.random() < prob:
                             f_train.write(json.dumps(output) + '\n')
                             train_written += 1
-                        elif f_test:
+                        elif f_test and test_written < test_target:
                             f_test.write(json.dumps(output) + '\n')
                             test_written += 1
                 else:
                     # Train quota filled, everything goes to test
-                    if f_test:
+                    if f_test and test_written < test_target:
                         f_test.write(json.dumps(output) + '\n')
                         test_written += 1
     

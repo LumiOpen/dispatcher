@@ -9,7 +9,7 @@
 #SBATCH --exclusive=user
 #SBATCH --hint=nomultithread
 #SBATCH --gpus-per-node=mi250:8
-#SBATCH --account=project_462000353
+#SBATCH --account=project_462000963
 #SBATCH --output=logs/%j_augment.out
 #SBATCH --error=logs/%j_augment.err
 
@@ -35,14 +35,14 @@ NUM_GENERATIONS=1
 # Sampling parameters
 MIN_P=0
 TOP_P=0.9
-TEMPERATURE=0.6
+TEMPERATURE=0.75
 
 # Model configuration
 # Use environment variable if already set by parent script phase1_pipeline.sh, otherwise use default
 : "${MODEL:=meta-llama/Llama-3.3-70B-Instruct}"
 GPUS_PER_TASK=4
-MAX_MODEL_LEN=8192
-MAX_TOKENS=4096
+MAX_MODEL_LEN=16384
+MAX_TOKENS=8192
 
 ###
 # Job execution

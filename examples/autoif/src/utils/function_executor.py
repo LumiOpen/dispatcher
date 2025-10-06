@@ -63,7 +63,7 @@ class FunctionExecutor:
         
         return True, None
 
-    def execute_with_response(self, func_str: str, response: str, log_errors: bool = True) -> Optional[int]:
+    def execute_with_response(self, func_str: str, response: str, log_errors: bool = True, **kwargs) -> Optional[int]:
         """
         Execute an evaluation function with a response string.
         
@@ -71,6 +71,7 @@ class FunctionExecutor:
             func_str: Function code as string
             response: Response text to evaluate
             log_errors: Whether to log errors
+            **kwargs: Additional keyword arguments to pass to the evaluation function
             
         Returns:
             Integer result or None if execution failed
@@ -99,7 +100,8 @@ class FunctionExecutor:
             signal.alarm(FUNCTION_TIMEOUT)
             
             try:
-                result = evaluate_func(response)
+                # Pass response as first argument and any additional kwargs
+                result = evaluate_func(response, **kwargs)
                 return int(result) if result is not None else None
             finally:
                 signal.alarm(0)  # Disable the alarm
@@ -177,7 +179,14 @@ class FunctionExecutor:
             
             try:
                 # Run the test case
-                result = evaluate_func(test_case['input'])
+                # Handle new format with kwargs (dict input) vs old format (single input)
+                if isinstance(test_case['input'], dict):
+                    # New format: pass all key-value pairs as keyword arguments
+                    result = evaluate_func(**test_case['input'])
+                else:
+                    # Old format: pass input as single positional argument
+                    result = evaluate_func(test_case['input'])
+                
                 # Normalize expected output
                 expected = (test_case['output'] if isinstance(test_case['output'], bool) 
                           else test_case['output'].lower() == 'true')
