@@ -1,3 +1,5 @@
 Rephrase your response following the constraints from the previous turns as well as additional constraints. Here is the full list of constraints you need to follow:
 
+Your response should be in {language} language.
+
 Constraints: {instructions}

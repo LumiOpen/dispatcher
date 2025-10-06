@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=autoif_verifiers
-#SBATCH --nodes=2
+#SBATCH --nodes=1
 #SBATCH --partition=dev-g
 #SBATCH --time=00-02:00:00
 #SBATCH --ntasks-per-node=2
@@ -9,7 +9,7 @@
 #SBATCH --exclusive=user
 #SBATCH --hint=nomultithread
 #SBATCH --gpus-per-node=mi250:8
-#SBATCH --account=project_462000353
+#SBATCH --account=project_462000963
 #SBATCH --output=logs/%j_verifiers.out
 #SBATCH --error=logs/%j_verifiers.err
 
