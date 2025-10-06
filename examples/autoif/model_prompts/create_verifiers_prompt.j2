@@ -1,0 +1,55 @@
+You are an expert for writing evaluation functions in Python to evaluate whether a response strictly follows an instruction.
+
+Here is the instruction: 
+
+{{ instruction }}
+
+Please write a Python function named `evaluate` to evaluate whether an input string `response` follows this instruction.{% if has_keywords %} The function will also accept the list of keywords as input. If the instruction asks for a specific number of occurrences (N), this will also be included as an optional parameter.{% endif %}
+If the response follows the instruction, simply return True, otherwise return False. 
+You are allowed to import ONLY the following libraries: re, json, csv, string, math, collections, spacy, nltk, syllapy, emoji, dateutil, unicodedata, markdown, bs4, typing, functools.
+Your response will only contain a single python code block with the function definition and a single json block with a list of three test cases in the key `cases`, which includes an input in the key `input` and an expected output in the key `output` (true, false). 
+
+Note that the input response string can be a multiline string - string containing newline characters. Consider this when writing your evaluation logic.
+
+Example output:
+{% if has_keywords %}
+```python
+import re 
+from typing import List
+
+def evaluate(response: str, keywords: List[str], N: int = 1) -> bool:
+    result = False
+    # Your evaluation logic here
+    return result
+```
+
+```json
+{
+    "cases": [
+        { "input": { "response": "example input with key1 and key2", "keywords": ["key1", "key2"], "N": 1 }, "output": true },
+        { "input": { "response": "another example input", "keywords": ["key1"], "N": 3 }, "output": false },
+        { "input": { "response": "first line of example input\nsecond line of example input", "keywords": ["key1", "key2"], "N": 1 }, "output": true }
+    ]
+}
+```
+
+{% else %}
+```python
+import re
+
+def evaluate(response: str) -> bool:
+    result = False
+    # Your evaluation logic here
+    return result
+```
+
+```json
+{
+    "cases": [
+        { "input": { "response": "example input" }, "output": true },
+        { "input": { "response": "another example input" }, "output": false },
+        { "input": { "response": "first line of example input\nsecond line of example input" }, "output": true }
+    ]
+}
+```
+{% endif %}
