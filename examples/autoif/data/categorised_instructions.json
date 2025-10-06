@@ -1,7 +1,7 @@
 {
     "keyword_instructions": [
         "Include keywords {keyword1}, {keyword2} {N} times in your response",
-        "Do not include keywords {forbidden words} in the response.",
+        "Do not include keywords {forbidden_words} in the response.",
         "The response must include keyword {keyword} in the {N}-th sentence."
     ],
     "seed_instructions": [
@@ -37,7 +37,7 @@
                 "In your response, the last word of each sentence must become the first word of the next sentence.",
                 "No two consecutive words can share the same first letter.",
                 "Alternate between words with odd and even numbers of syllables.",
-                "Each paragraph of your response must end with the same word it started with.",
+                "Each paragraph of your response must end with the same word it started with. Each paragraph is separated by two line breaks.",
                 "The response must start with a verb.",
                 "The ratio of nouns to verbs must be {N}:{M}",
                 "Every sentence must contain at least one adjective and one adverb.",

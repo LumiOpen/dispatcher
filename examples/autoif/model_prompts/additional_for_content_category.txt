@@ -8,6 +8,6 @@ Your generated instructions must be verifiable by a Python script. This means yo
     * **Semantic Meaning:** avoid instructions that require understanding the meaning of a word, such as "consistent use of imagery" or "no colloquialisms."
 
 **Bad examples to avoid:**
-* `The response should contain exactly 2 sentences with a passive voice construction.`
-* `The response must contain at least 1 sentence with an oxymoron.`
-* `The response should contain exactly 1 sentence with a consistent use of irony.`
+* The response should contain exactly 2 sentences with a passive voice construction.
+* The response must contain at least 1 sentence with an oxymoron.
+* The response should contain exactly 1 sentence with a consistent use of irony.

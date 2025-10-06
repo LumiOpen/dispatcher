@@ -1,21 +1,23 @@
-Your task is to augment the given list of seed instructions by generating new, distinct instructions. You should generate {num_instructions} instructions, with each new instruction being unique and creative.
+Your task is to augment the given list of seed instructions by generating new, distinct instructions in {language} language. You should generate {num_instructions} instructions, with each new instruction being unique and creative.
 
 # Constraints and Criteria
 1. Verifiability: Every generated instruction must be verifiable by a Python function. This means the instruction should describe a specific format or structural requirement for a text output, not a subjective style. For example, an instruction like "Write a poem" is too vague, but "Ensure the response has exactly 3 stanzas" is verifiable.
 
-2. No open-ended Knowledge questions: The instruction should not ask the response to contain open-ended elements that are impossible to verify with a python function, such as 
+2. Specificity: Instructions must be specific enough for a Python function to verify the output without ambiguity. When an instruction refers to a structural element (e.g., paragraph, list, section) whose formatting is not universally standardized in plain text, you must explicitly define how it is delineated. For example, instead of "The response should contain 3 paragraphs," specify "The response should contain 3 paragraphs, with each paragraph separated by a double newline."
+
+3. No open-ended Knowledge questions: The instruction should not ask the response to contain open-ended elements that are impossible to verify with a python function, such as 
   - "Use only words that are also a type of food." (Knowledge-based, difficult to verify)
   - "Incorporate a famous historical quote into your answer." (Knowledge-based, difficult to verify)
 
-3. No Subjective Style: Do not generate instructions that are about the style, tone, or content of the response. Bad examples to avoid:
+4. No Subjective Style: Do not generate instructions that are about the style, tone, or content of the response. Bad examples to avoid:
   - "Write the response in the style of a Shakespearean play." (Style)
   - "Respond with a metaphor in every sentence"
 
-3. No Translation: Do not generate instructions that require translating the input or output into another language or format (e.g., Pig Latin).
+5. No Translation: Do not generate instructions that require translating the input or output into another language or format (e.g., Pig Latin).
 
-4. Creativity and Uniqueness: The goal is to maximize creativity and minimize repetition. Each augmented instruction should be meaningfully different from all others. You can even generate entirely new categories of instructions, as long as they meet the verifiability criteria. Each augmented instruction must be meaningfully different from all others. Avoid simple variations like changing a number or a word (e.g., 'exactly 10 words' vs. 'exactly 12 words' or 'at least 2 paragraphs' vs. 'at least 3 paragraphs'). Instead, explore new categories of verifiable rules, such as character-based constraints, punctuation rules, or structural hierarchies. For instance, if you have 'The response must be exactly 50 words long,' a good creative addition would be 'The response must be exactly 50 characters long, including spaces,' or 'The response must have at least one exclamation point in every sentence.'
+6. Creativity and Uniqueness: The goal is to maximize creativity and minimize repetition. Each augmented instruction should be meaningfully different from all others. You can even generate entirely new categories of instructions, as long as they meet the verifiability criteria. Each augmented instruction must be meaningfully different from all others. Avoid simple variations like changing a number or a word (e.g., 'exactly 10 words' vs. 'exactly 12 words' or 'at least 2 paragraphs' vs. 'at least 3 paragraphs'). Instead, explore new categories of verifiable rules, such as character-based constraints, punctuation rules, or structural hierarchies. For instance, if you have 'The response must be exactly 50 words long,' a good creative addition would be 'The response must be exactly 50 characters long, including spaces,' or 'The response must have at least one exclamation point in every sentence.'
 
-Output Format: Generate each instruction on a new line.
+Output Format: Generate each instruction on a new line. Note that seed instructions can contain placeholders such as {{N}}, {{end phrase}}, etc. Replace these placeholders with appropriate values.
 
 Seed instructions:
 {seed_instructions}
