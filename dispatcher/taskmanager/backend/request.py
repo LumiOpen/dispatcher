@@ -3,7 +3,7 @@ This file defines the Request and Response classes used for communication
 between the TaskManager and a backend processing service.
 """
 import copy
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Union, List
 
 class Request:
     """
@@ -60,8 +60,8 @@ class Response:
         """Create a response representing an error."""
         return cls(request=request, content=None, error=error, model_name=model_name)
 
-    def get_text(self) -> Optional[str]:
-        """Extracts model response text from standard response formats.
+    def get_text(self, n: Optional[int] = None) -> Optional[Union[str, List[str]]]:
+        """Extracts model response text from standard response formats. Extracts multiple texts if n is specified.
 
         Works for both *chat* and *text* completion payloads.  Returns *None*
         if extraction fails or ``self.content`` is not a dict.
@@ -70,10 +70,16 @@ class Response:
             return None
         try:
             # Chat completion schema
-            return self.content["choices"][0]["message"]["content"]
+            if n is not None:
+                return [choice["message"]["content"] for choice in self.content["choices"][:n]]
+            else:
+                return self.content["choices"][0]["message"]["content"]
         except Exception:
             try:
                 # Text completion schema
-                return self.content["choices"][0]["text"]
+                if n is not None:
+                    return [choice["text"] for choice in self.content["choices"][:n]]
+                else:
+                    return self.content["choices"][0]["text"]
             except Exception:
                 return None
