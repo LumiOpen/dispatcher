@@ -20,8 +20,8 @@ export LANGUAGE="${1:-fi}"
 export MODEL=${2:-"/scratch/project_462000353/zosaelai2/models/Qwen2.5-72B-Instruct"}
 MODEL_NAME=$(basename "$MODEL")
 INPUT_FILE=/scratch/project_462000353/posttraining_data/Llama-Nemotron-Post-Training-Dataset/SFT-math-sample-10.jsonl
-FILE_NAME=$(basename "$INPUT_FILE")
-OUTPUT_FILE=${FILE_NAME}_${LANGUAGE}.jsonl
+FILE_NAME=$(basename "$INPUT_FILE" .jsonl)
+OUTPUT_FILE=${FILE_NAME}_${MODEL_NAME}_${LANGUAGE}.jsonl
 TASK=translation_task.TranslationTask
 
 echo "Using model: $MODEL"
@@ -51,7 +51,7 @@ WORK_TIMEOUT=1800   # time for dispatcher to give up on a work item and reissue 
 #
 
 GPUS_PER_TASK=4     # enough for the model and large batch size
-MAX_MODEL_LEN=4096 # for efficiency, only as much as you think you need for efficiency
+MAX_MODEL_LEN=8192 # for efficiency, only as much as you think you need for efficiency
 
 # end configuration
 ###################
