@@ -48,17 +48,36 @@ LANGUAGE_NAMES = {
 }
 
 TRANSLATION_PROMPT = """
-You are a professional translator. Your task is to translate the following text faithfully and accurately into {language}.
+You are a professional translator. Your task is to translate the following math problem faithfully and accurately into {language}. Translate the problem only, DO NOT answer the problem.
 
 Guidelines:
 
 1. Preserve the original meaning, tone, and nuance.
-2. Do not summarize, omit, or add information.
-3. Keep names, numbers, and technical terms unchanged unless a standard translation exists.
+2. Do not summarize, omit, or add information. 
+3. Keep mathematical notations, numbers, technical terms unchanged unless a standard translation exists.
 4. Maintain the style and register (formal/informal, literary/technical, etc.) of the source text.
 5. If a phrase could be translated multiple ways, choose the one that best matches the author’s intent and note any ambiguity.
 
 Do not explain your translation; output only the translated text unless asked otherwise.
+
+Problem to translate:
+{text}
+"""
+
+
+DEEPSEEK_R1_TRANSLATION_PROMPT = """
+You are a professional translator specializing in mathematics and scientific texts. Your task is to translate the following content faithfully and accurately into {language}.
+
+Guidelines:
+
+1. Preserve all LaTeX code, equations, symbols, and formatting exactly as written.
+2. Translate only the surrounding natural language, not the math expressions inside \( ... \), \[ ... \], or $$ ... $$.
+3. Maintain the precise meaning, tone, and logical structure of the original text.
+4. Use the standard mathematical terminology of the target language.
+5. Do not simplify, interpret, or solve the math; your goal is linguistic translation only.
+6. Keep variable names, constants, and notation unchanged.
+7. If an English math term has multiple valid equivalents in the target language, choose the most widely accepted in academic usage.
+8. Do not explain your translation; output only the translated text unless asked otherwise.
 
 Text to translate:
 {text}
@@ -70,7 +89,7 @@ class TranslationTask(GeneratorTask):
     TRANSLATION_GEN_PARAMS: Dict[str, Any] = {
         "temperature": 0.0,
         "top_p": 1.0,
-        "max_tokens": 4096,
+        "max_tokens": 8192,
     }
     
     logger = logging.getLogger(__name__)
@@ -89,7 +108,7 @@ class TranslationTask(GeneratorTask):
         input_messages = [
             {
                 "role": "user", 
-                "content": TRANSLATION_PROMPT.format(language=LANGUAGE_NAMES.get(LANGUAGE, ["English"])[0], 
+                "content": DEEPSEEK_R1_TRANSLATION_PROMPT.format(language=LANGUAGE_NAMES.get(LANGUAGE, ["English"])[0], 
                                                           text=text_to_translate)
             }
         ]
