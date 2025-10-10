@@ -1,4 +1,4 @@
-"""Task description: question + answer generation from documents. Prompts are taken from the EuroLLM technical report https://arxiv.org/abs/2506.04079"""
+"""Task description: translation task."""
 from typing import Any, Dict, Generator, List, Union
 
 from dispatcher.taskmanager.backend.request import Request, Response
@@ -10,41 +10,18 @@ import os
 import re
 import logging
 
+from preprocess import preprocess_for_few_shot_translation
+from language_names import LANGUAGE_NAMES
+from postprocess import reconstruct_translated_text
+
 __all__ = ["TranslationTask"]
 
 LANGUAGE=os.environ.get("LANGUAGE")
+FEW_SHOT_PROMPT=os.environ.get("FEW_SHOT_PROMPT", "false").lower() == "true"
+N_SHOTS=int(os.environ.get("N_SHOTS", "5"))  # Default to 5 shots
 
 ERROR_TYPES = {
     "invalid_query": "model did not produce a valid query",
-}
-
-LANGUAGE_NAMES = {
-    "bg": ["Bulgarian", "bul"],
-    "cs": ["Czech", "ces"],
-    "da": ["Danish", "dan"],
-    "de": ["German", "deu"],
-    "el": ["Greek", "ell"],
-    "en": ["English", "eng"],
-    "es": ["Spanish", "spa"],
-    "et": ["Estonian", "est"],
-    "fi": ["Finnish", "fin"],
-    "fr": ["French", "fra"],
-    "ga": ["Irish", "gle"],
-    "hr": ["Croatian", "hrv"],
-    "hu": ["Hungarian", "hun"],
-    "it": ["Italian", "ita"],
-    "lt": ["Lithuanian", "lit"],
-    "lv": ["Latvian", "lav"],
-    "mt": ["Maltese", "mlt"],
-    "nl": ["Dutch", "nld"],
-    "pl": ["Polish", "pol"],
-    "pt": ["Portuguese", "por"],
-    "ro": ["Romanian", "ron"],
-    "sk": ["Slovak", "slk"],
-    "sl": ["Slovenian", "slv"],
-    "sv": ["Swedish", "swe"],
-    "is": ["Icelandic", "isl"],
-    "no": ["Norwegian", "nob"],
 }
 
 TRANSLATION_PROMPT = """
@@ -85,35 +62,86 @@ Text to translate:
 
 class TranslationTask(GeneratorTask):
     """Translation implementation."""
-    
+
     TRANSLATION_GEN_PARAMS: Dict[str, Any] = {
         "temperature": 0.0,
         "top_p": 1.0,
-        "max_tokens": 8192,
+        "max_tokens": 512,
     }
     
     logger = logging.getLogger(__name__)
 
-    
     # --------------- generator ---------------
     def task_generator(self) -> Generator[Union[Request, List[Request]], Any, Dict[str, Any]]:
         # self.data is prepopulated with the data from the jsonl row being processed
         messages_to_translate = self.data.get("input")
         text_to_translate = messages_to_translate[0]['content']
+        
         return_dict = {
-                        "text": messages_to_translate[0]['content'],
-                        "translation": "",
-                    }
-    
-        input_messages = [
-            {
-                "role": "user", 
-                "content": DEEPSEEK_R1_TRANSLATION_PROMPT.format(language=LANGUAGE_NAMES.get(LANGUAGE, ["English"])[0], 
-                                                          text=text_to_translate)
-            }
-        ]
-        resp: Response = yield Request({"messages": input_messages, **self.TRANSLATION_GEN_PARAMS})
-        resp_text = resp.get_text()
-        self.logger.info(f"\n\nTRANSLATION:\n{resp_text}\n")
-        return_dict["translation"] = resp_text.strip()
+            "text": text_to_translate,
+            "translation": "",
+        }
+
+        # Check if few-shot prompting is enabled
+        if FEW_SHOT_PROMPT:
+            self.TRANSLATION_GEN_PARAMS["stop"] = ["##", "###"]  # Used in few-shot prompting as separator
+
+            target_lang_name = LANGUAGE_NAMES.get(LANGUAGE, ["English"])[0]
+            
+            # Preprocess text for line-by-line translation
+            line_prompts, structure_info = preprocess_for_few_shot_translation(
+                text_to_translate,
+                source_lang_code="eng",  # Always use English as source
+                target_lang_code=LANGUAGE,
+                target_lang_name=target_lang_name,
+                n_shots=N_SHOTS
+            )
+            
+            if not line_prompts:
+                self.logger.warning("No lines to translate after preprocessing")
+                return return_dict
+            
+            self.logger.info(f"Processing {len(line_prompts)} lines with few-shot prompting")
+            
+            # Yield requests for each line
+            line_translations = []
+            for i, line_prompt in enumerate(line_prompts):
+                self.logger.info(f"Processing line {i+1}/{len(line_prompts)}")
+                resp: Response = yield Request({"prompt": line_prompt, **self.TRANSLATION_GEN_PARAMS})
+                
+                # Extract translation from response
+                resp_text = resp.get_text()
+                self.logger.info(f"Raw response for line {i+1}: {resp_text}")
+                line_translations.append(resp_text.strip())
+            
+            # Reconstruct the full translated text
+            full_translation = reconstruct_translated_text(line_translations, structure_info)
+            self.logger.info(f"FULL TRANSLATION:\n{full_translation}\n")
+            return_dict["translation"] = full_translation
+            return_dict["prompt"] = line_prompts
+            
+        else:
+            # Use original instruction-based prompting for chat models
+            prompt_content = TRANSLATION_PROMPT.format(
+                language=LANGUAGE_NAMES.get(LANGUAGE, ["English"])[0], 
+                text=text_to_translate
+            )
+            # prompt_content = DEEPSEEK_R1_TRANSLATION_PROMPT.format(
+            #     language=LANGUAGE_NAMES.get(LANGUAGE, ["English"])[0], 
+            #     text=text_to_translate
+            # )
+            input_messages = [
+                {
+                    "role": "user", 
+                    "content": prompt_content
+                }
+            ]
+            resp: Response = yield Request({"messages": input_messages, **self.TRANSLATION_GEN_PARAMS})
+            
+            resp_text = resp.get_text()
+            self.logger.info(f"\n\nTRANSLATION:\n{resp_text}\n")
+            return_dict["translation"] = resp_text.strip()
+            return_dict["prompt"] = prompt_content.strip()
+        
         return return_dict
+    

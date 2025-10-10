@@ -18,6 +18,14 @@
 # configure the following.
 export LANGUAGE="${1:-fi}"
 export MODEL=${2:-"/scratch/project_462000353/zosaelai2/models/Qwen2.5-72B-Instruct"}
+export FEW_SHOT_PROMPT=false
+for arg in "$@"; do
+    if [ "$arg" = "--few_shot_prompt" ]; then
+        export FEW_SHOT_PROMPT=true
+        break
+    fi
+done
+
 MODEL_NAME=$(basename "$MODEL")
 INPUT_FILE=/scratch/project_462000353/posttraining_data/Llama-Nemotron-Post-Training-Dataset/SFT-math-sample-10.jsonl
 FILE_NAME=$(basename "$INPUT_FILE" .jsonl)
@@ -72,10 +80,7 @@ module load pytorch/2.5
 export HF_HOME="/scratch/project_462000353/hf_cache"
 export SSL_CERT_FILE=$(python -m certifi)
 
-cd /scratch/project_462000353/zosaelai2/LumiOpen/translation/dispatcher
-pip install -e .
-# pip install fasttext
-cd /scratch/project_462000353/zosaelai2/LumiOpen/translation/dispatcher/examples/translation
+pip install git+https://github.com/LumiOpen/dispatcher.git
 
 # dispatcher server will run on the first node, before we launch the worker
 # tasks.
