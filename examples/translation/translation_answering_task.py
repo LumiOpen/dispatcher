@@ -71,7 +71,7 @@ You are a professional translator specializing in mathematics and scientific tex
 Guidelines:
 
 1. Preserve all LaTeX code, equations, symbols, and formatting exactly as written.
-2. Translate only the surrounding natural language, not the math expressions inside \( ... \), \[ ... \], or $$ ... $$.
+2. Translate only the surrounding natural language, not the math expressions inside ( ... ), [ ... ], or $$ ... $$.
 3. Maintain the precise meaning, tone, and logical structure of the original text.
 4. Use the standard mathematical terminology of the target language.
 5. Do not simplify, interpret, or solve the math; your goal is linguistic translation only.
