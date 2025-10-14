@@ -127,12 +127,12 @@ def build_few_shot_prompt(
     # Add few-shot examples
     for source_text, target_text in few_shot_examples:
         prompt_parts.append(f"## English: {source_text}")
-        prompt_parts.append(f"## Slovensky: {target_text}")
+        prompt_parts.append(f"## {target_lang_name}: {target_text}")
         prompt_parts.append("") # to have double new-lines between shots
 
     # Add the current text to translate
     prompt_parts.append(f"## English: {current_text}")
-    prompt_parts.append(f"## Slovensky: ")
+    prompt_parts.append(f"## {target_lang_name}: ")
 
     return "\n".join(prompt_parts)
 
