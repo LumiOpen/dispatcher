@@ -2,7 +2,7 @@
 #SBATCH --job-name=resp
 #SBATCH --nodes=4
 #SBATCH --partition=standard-g
-#SBATCH --time=16:00:00
+#SBATCH --time=18:00:00
 #SBATCH --ntasks-per-node=2
 #SBATCH --mem=480G
 #SBATCH --cpus-per-task=7
@@ -117,6 +117,7 @@ srun -l \
         --max-model-len '"$MAX_MODEL_LEN"' \
         --tensor-parallel '"$GPUS_PER_TASK"' \
         --model '"$MODEL"' \
+        --port $VLLM_PORT \
         --startup-timeout '"$STARTUP_TIMEOUT"' \
         --request-timeout '"$REQUEST_TIMEOUT"'
         # --silence-vllm-logs
