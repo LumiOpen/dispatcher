@@ -119,11 +119,16 @@ class InstructionSelector:
         accumulated_verifiers = []
         
         for turn in range(turns):
+            n_instructions = instructions_per_query
+            if instructions_per_query == 3:
+                choices = [1, 2, 3]
+                weights = [0.5, 0.25, 0.25]
+                n_instructions = random.choices(choices, weights=weights, k=1)[0]
             # Find available instruction IDs (not used in this conversation)
             available_ids = [instruction_id for instruction_id in self.verifiers.keys() 
                            if instruction_id not in used_instructions_in_conversation]
             
-            if len(available_ids) < instructions_per_query:
+            if len(available_ids) < n_instructions:
                 # If we don't have enough unused instructions, reset and use all available
                 available_ids = list(self.verifiers.keys())
                 used_instructions_in_conversation = set()
@@ -142,7 +147,7 @@ class InstructionSelector:
                 
                 selected_ids = []
                 
-                for i in range(instructions_per_query):
+                for i in range(n_instructions):
                     # Find the category with minimum usage count to ensure uniform distribution across categories
                     available_categories = [cat for cat in temp_categories.keys() 
                                           if any(inst_id not in selected_ids for inst_id in temp_categories[cat])]
@@ -186,7 +191,7 @@ class InstructionSelector:
                 selected_ids = []
                 current_usage = min_usage
                 
-                while len(selected_ids) < instructions_per_query:
+                while len(selected_ids) < n_instructions:
                     # Get available IDs with current usage count
                     candidates = [inst_id for inst_id in available_ids
                                 if self.instruction_usage_count[inst_id] == current_usage and inst_id not in selected_ids]
@@ -196,7 +201,7 @@ class InstructionSelector:
                         continue
                     
                     # Randomly select from candidates
-                    needed = min(instructions_per_query - len(selected_ids), len(candidates))
+                    needed = min(n_instructions - len(selected_ids), len(candidates))
                     selected_from_current = random.sample(candidates, needed)
                     selected_ids.extend(selected_from_current)
             
