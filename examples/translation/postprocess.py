@@ -4,6 +4,13 @@ import re
 from typing import List
 
 
+def extract_translation(response_text: str) -> str:
+    match = re.search(r"<translation>(.*?)</translation>", response_text, re.DOTALL | re.IGNORECASE)
+    if match:
+        return match.group(1).strip()
+    return response_text  # fallback if tags missing
+
+
 def reconstruct_translated_text(translations: List[str], structure_info: List[str]) -> str:
     """
     Reconstruct the full translated text from line translations and structure info.

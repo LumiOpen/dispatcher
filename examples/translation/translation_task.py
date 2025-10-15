@@ -12,7 +12,7 @@ import logging
 
 from preprocess import preprocess_for_few_shot_translation
 from language_names import LANGUAGE_NAMES
-from postprocess import reconstruct_translated_text
+from postprocess import reconstruct_translated_text, extract_translation
 
 __all__ = ["TranslationTask"]
 
@@ -58,6 +58,21 @@ Guidelines:
 
 Text to translate:
 {text}
+"""
+
+QWEN3_TRANSLATION_PROMPT = """
+You are a professional translator.
+
+Task: Translate the following text in the <original></original> tags from English to {language}.
+
+Rules:
+- Output only the translated text enclosed inside <translation></translation> tags.
+- Do not include any reasoning, explanations, or commentary.
+- Do not include anything outside the <translation> tags.
+- Preserve all mathematical notation, LaTeX syntax, and numbers exactly as they appear.
+
+Text to translate:
+<original>{text}</original>
 """
 
 class TranslationTask(GeneratorTask):
@@ -122,23 +137,32 @@ class TranslationTask(GeneratorTask):
             
         else:
             # Use original instruction-based prompting for chat models
-            prompt_content = TRANSLATION_PROMPT.format(
-                language=LANGUAGE_NAMES.get(LANGUAGE, ["English"])[0], 
-                text=text_to_translate
-            )
+            # prompt_content = TRANSLATION_PROMPT.format(
+            #     language=LANGUAGE_NAMES.get(LANGUAGE, ["English"])[0], 
+            #     text=text_to_translate
+            # )
             # prompt_content = DEEPSEEK_R1_TRANSLATION_PROMPT.format(
             #     language=LANGUAGE_NAMES.get(LANGUAGE, ["English"])[0], 
             #     text=text_to_translate
             # )
+            prompt_content = QWEN3_TRANSLATION_PROMPT.format(
+                language=LANGUAGE_NAMES.get(LANGUAGE, ["English"])[0], 
+                text=text_to_translate
+            )
             input_messages = [
                 {
                     "role": "user", 
                     "content": prompt_content
                 }
             ]
+
+            self.logger.info(f"\n\PROMPT:\n{prompt_content}\n")
+
+            self.TRANSLATION_GEN_PARAMS['extra_body'] = {"chat_template_kwargs": {"enable_thinking": False}} # disable thinking mode in Qwen3-32B
             resp: Response = yield Request({"messages": input_messages, **self.TRANSLATION_GEN_PARAMS})
             
             resp_text = resp.get_text()
+            # resp_text = extract_translation(resp_text)
             self.logger.info(f"\n\nTRANSLATION:\n{resp_text}\n")
             return_dict["translation"] = resp_text.strip()
             return_dict["prompt"] = prompt_content.strip()
