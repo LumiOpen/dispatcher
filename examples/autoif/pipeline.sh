@@ -125,7 +125,7 @@ VERIFIERS_ALL_FILE="${VERIFIERS_ALL_FILE:-${OUT_DIR}/verifiers_all.jsonl}"
 VERIFIERS_FILTERED_FILE="${VERIFIERS_FILTERED_FILE:-${OUT_DIR}/verifiers_filtered.jsonl}"
 
 # Verifier execution settings (exported for launch scripts)
-export FUNCTION_TIMEOUT="${FUNCTION_TIMEOUT:-5}"
+export FUNCTION_TIMEOUT="${FUNCTION_TIMEOUT:-10}"
 export MIN_FUNCTIONS="${MIN_FUNCTIONS:-1}"
 export MIN_TEST_CASES="${MIN_TEST_CASES:-1}"
 export FUNCTION_PASS_RATE="${FUNCTION_PASS_RATE:-0.8}"

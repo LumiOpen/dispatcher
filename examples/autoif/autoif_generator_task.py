@@ -56,8 +56,6 @@ class GenerateQueryResponsesTask(GeneratorTask):
         instructions = self.data.get("instructions", [])
         instruction_categories = self.data.get("instruction_categories", [])
         eval_funcs = self.data.get("eval_funcs", [])
-
-        print(f"DEBUG INIT instruction_ids: {instruction_ids}")
         
         num_turns = len(prompts)
         queries_messages = []
@@ -82,7 +80,7 @@ class GenerateQueryResponsesTask(GeneratorTask):
                 instruction_categories=instruction_categories[turn_idx] if turn_idx < len(instruction_categories) else [],
                 instructions=instructions[turn_idx] if turn_idx < len(instructions) else [],
                 instruction_ids=instruction_ids[turn_idx] if turn_idx < len(instruction_ids) else [],
-                query=queries[turn_idx] if turn_idx < len(queries) else ""
+                query=queries[0] if is_no_followup else queries[turn_idx] if turn_idx < len(queries) else "" # for no-followup case we want to potentially generate keywords for all turns that are related only to the first (and only) query
             )
 
             # Process keyword generation for this turn if needed
@@ -169,9 +167,14 @@ class GenerateQueryResponsesTask(GeneratorTask):
                     "content": response_text
                 }
             ])
-
-        print(f"DEBUG FINAL instruction_ids: {instruction_ids}")
         
+        # Dump eval_funcs as dicts with instruction_ids as keys
+        eval_funcs_dict = {}
+        for turn_idx, turn_instruction_ids in enumerate(instruction_ids):
+            for instr_idx, instruction_id in enumerate(turn_instruction_ids):
+                if instruction_id not in eval_funcs_dict and turn_idx < len(eval_funcs) and instr_idx < len(eval_funcs[turn_idx]):
+                    eval_funcs_dict[instruction_id] = eval_funcs[turn_idx][instr_idx]
+
         # Return results
         return {
             'instruction_ids': instruction_ids,
@@ -181,7 +184,7 @@ class GenerateQueryResponsesTask(GeneratorTask):
             'queries_responses': queries_responses,
             'query_metadata': self.data.get("query_metadata"),
             'responses': all_responses,
-            'eval_funcs': eval_funcs,
+            'eval_funcs': eval_funcs_dict,
             'prompts': final_prompts,
             'messages': final_messages,
             'scores': all_scores,

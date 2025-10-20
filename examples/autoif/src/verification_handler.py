@@ -212,7 +212,7 @@ class VerificationHandler:
             for func in instruction_funcs:
                 try:
                     # Execute function with timeout protection
-                    result = executor.execute_with_response(func, response, log_errors=True, **instruction_kwargs)
+                    result = executor.execute_with_response(func, response, **instruction_kwargs)
                     if result is not None:
                         instruction_acc.append(result)
                 except Exception as e:

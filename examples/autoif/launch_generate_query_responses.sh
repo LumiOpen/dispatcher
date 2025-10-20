@@ -17,7 +17,7 @@
 ###
 # configure the following.
 export LANGUAGE=${LANGUAGE:-eng}
-export FUNCTION_TIMEOUT=${FUNCTION_TIMEOUT:-5}
+export FUNCTION_TIMEOUT=${FUNCTION_TIMEOUT:-10}
 INPUT_FILE=${VERIFIERS_QUERIES_FILE:-data/verifiers_queries.jsonl}
 OUTPUT_FILE=${SCORED_RESPONSES_FILE:-data/scored_responses.jsonl}
 TASK=autoif_generator_task.GenerateQueryResponsesTask

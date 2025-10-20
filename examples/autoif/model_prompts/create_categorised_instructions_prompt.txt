@@ -6,26 +6,55 @@ Your task is to augment the given list of seed instructions by generating new, d
 - Subcategories: {subcategories}
 
 # Constraints and Criteria
-1.  **Verifiability:** Every generated instruction must be verifiable by a Python function. This means the instruction should describe a specific requirement for the text output, not a subjective style. For example, an instruction like "Write a poem" is too vague, but "Ensure the response has exactly 3 stanzas" is verifiable. Use the provided seed instructions as a guide.
+1.  **Verifiability:** Every generated instruction must be verifiable by a Python function. This means the instruction should describe a specific requirement for the text output, not a subjective style. 
 
-2.  **Specificity**: Instructions must be specific enough for a Python function to verify the output without ambiguity. When an instruction refers to a structural element (e.g., paragraph, list, section) whose formatting is not universally standardized in plain text, you must explicitly define how it is delineated. For example, instead of "The response should contain 3 paragraphs," specify "The response should contain 3 paragraphs, with each paragraph separated by a double newline."
+- Bad examples to avoid:
+  - "Write a beautiful poem about time." (subjective, unverifiable)
+  - "Summarize a Wikipedia article about physics." (requires external knowledge)
+  - "Include a clever pun in your answer." (subjective)
 
-3.  **No Open-ended Knowledge Questions:** The instruction should not ask the response to contain open-ended elements that are impossible to verify with a python function, for example:
-  - "Use only words that are also a type of food." (Knowledge-based, difficult to verify)
-  - "Incorporate a famous historical quote into your answer." (Knowledge-based, difficult to verify)
+2.  **Specificity**: Instructions must be specific enough for a Python function to verify the output without ambiguity. If an instruction mentions structures (paragraphs, sections, lists), you must define their boundaries explicitly.
 
-4.  **No Subjective Style:** Do not generate instructions that are about the style, tone, or content of the response. Bad examples to avoid:
+- Bad examples to avoid:
+  - "Write 3 paragraphs." (ambiguous paragraph definition)
+  - "Provide a structured list." (structure not defined)
+  - "Include several sections." (unclear what counts as a ‘section’)
+
+- Good examples:
+  - "Write exactly 3 paragraphs, where each paragraph is separated by a double newline (\n\n)." (clear paragraph definition)
+  - "Provide a numbered list with at least 5 items." (clear structure)
+  - "Include exactly 2 sections, each starting with a heading in uppercase letters." (clear section definition)
+
+3.  **No Open-ended Knowledge Questions:** Avoid instructions that require external or factual knowledge, depend on world understanding or .
+
+- Bad examples to avoid:
+  - "Use only words that are also a type of food." (requires knowledge)
+  - "Incorporate a famous historical quote into your answer." (requires knowledge)
+  - "List the capital cities of 5 European countries." (requires knowledge)
+  - "Name 3 books by famous authors." (knowledge-based)
+  - "Mention one historical event per century." (requires external context)
+
+4.  **No Subjective Style:** Do not request stylistic, tonal, or emotional instructions. Focus on verifiable structure, not style or tone.
   - "Write the response in the style of a Shakespearean play." (Style)
   - "Respond with a metaphor in every sentence" (Style)
+  - "Write the response in a humorous tone." (Tone)
+  - "Respond as if you were a pirate." (Tone)
+  - "Create an inspiring speech." (Tone)
 
 5.  **No Translation:** Do not generate instructions that require translating the input into another language.
 
-6.  **Creativity and Uniqueness:** The goal is to maximize creativity and minimize repetition. Each augmented instruction should be meaningfully different from all others. Avoid simple variations like changing a number or a word (e.g., 'exactly 10 words' vs. 'exactly 12 words'). Instead, explore new classes of verifiable rules, especially those related to the provided subcategories.
+6.  **Creativity and Uniqueness:** The goal is to maximize creativity and minimize repetition. Each instruction should introduce a new kind of verifiable rule, not minor variations (like changing a number or word). Explore different structural, lexical, and positional constraints.
+
+7. **Atomicity:** Each instruction should focus on a single, clear requirement. Avoid combining multiple requirements into one instruction.
+- Bad examples to avoid:
+  - "Write a paragraph of 3 sentences, and each sentence must rhyme." (multiple checks)
+  - "Produce 2 paragraphs, each with 3 bullet points." (two levels of constraints)
+  - "Create a poem with 4 lines and make the last word ‘sunrise’." (structure + content)
 
 {additional_context}
 
 # Output Format
-Generate each instruction on a new line. Note that seed instructions can contain placeholders such as {{N}}, {{end phrase}}, etc. Replace these placeholders with appropriate values.
+Generate each instruction on a new line. Note that seed instructions can contain placeholders such as {{N}}, {{end phrase}}, etc. In your response, replace these placeholders with actual appropriate values. Do not ask for unreasonable values that would make the response overly long, such as "20+ paragraphs"; use common-sense.
 
 # Seed instructions:
 {seed_instructions}
