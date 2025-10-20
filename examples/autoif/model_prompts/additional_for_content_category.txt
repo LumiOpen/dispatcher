@@ -1,0 +1,13 @@
+# Important Note on Verifiability: Avoid Semantic and Stylistic Constraints
+Your generated instructions must be verifiable by a Python script. This means you must avoid rules that depend on deep, subjective understanding of language, such as:
+
+* **Grammatical Concepts:** Do not ask for specific grammatical constructions that are difficult to identify programmatically, such as passive voice, dangling modifiers, cleft sentences, or run-on sentences. These require a deep understanding of syntax that is beyond the scope of simple verification.
+* **Rhetorical or Stylistic Devices:** Do not ask for figurative language or stylistic elements that depend on human interpretation. This includes:
+    * **Tone or Emotion:** humor, sarcasm, irony, consistent tone.
+    * **Figurative Language:** symbolism, metaphors, idioms, euphemisms, allusions, hyperbole, etc., unless their presence is trivially verifiable (e.g., checking for the word "like" or "as" in a simile, which is too simple).
+    * **Semantic Meaning:** avoid instructions that require understanding the meaning of a word, such as "consistent use of imagery" or "no colloquialisms."
+
+**Bad examples to avoid:**
+* The response should contain exactly 2 sentences with a passive voice construction.
+* The response must contain at least 1 sentence with an oxymoron.
+* The response should contain exactly 1 sentence with a consistent use of irony.

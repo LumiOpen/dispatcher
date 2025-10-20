@@ -6,10 +6,19 @@ import os
 from dispatcher.taskmanager.backend.request import Request, Response
 from dispatcher.taskmanager.task.base import GeneratorTask, TaskFailed
 
-from src.utils.response_handler import response_verify, extract_score, construct_scoring_messages, format_instructions_with_conjunctions, is_no_followup_case, construct_rephrase_scoring_messages
+from src.utils.text_utils import format_instructions_with_conjunctions
+from src.keyword_handler import KeywordHandler
+from src.scoring_handler import ScoringHandler
+from src.verification_handler import VerificationHandler
 
 __all__ = ["GenerateQueryResponsesTask"]
 
+def is_no_followup_case(queries: List[str]) -> bool:
+    """Check if this is a no_followup case (queries after first are empty)."""
+    if len(queries) <= 1:
+        return False
+    # Check if all queries after the first one are empty
+    return all(query.strip() == "" for query in queries[1:])
 
 class GenerateQueryResponsesTask(GeneratorTask):
     """Generate query responses with verifiers"""
@@ -30,49 +39,23 @@ class GenerateQueryResponsesTask(GeneratorTask):
         # processed
         # these are queries with verifiers of format
         # {
-        #     'instruction_ids': instruction_ids, # backwards compatible with 'instruction_id'
-        #     'instructions': instructions, # backwards compatible with 'instruction'
-        #     'queries': queries, # backwards compatible with 'query'
-        #     'queries_responses': queries_responses, # backwards compatible with 'query_response'
+        #     'instruction_ids': [[instruction_ids_turn1], [instruction_ids_turn2], ...],
+        #     'instructions': [[instructions_turn1], [instructions_turn2], ...],
+        #     'instruction_categories': [[categories_turn1], [categories_turn2], ...],
+        #     'queries': [query1, query2, ...],
+        #     'queries_responses': [response1, response2, ...],
         #     'query_metadata': query_metadata,
-        #     'eval_funcs': [["def evaluate():...",],], # backwards compatible with 'eval_func' ["def evaluate():...",]
-        #     'cases': [[{'input', 'output'},],], # backwards compatible with 'cases' [{'input', 'output'},]
-        #     'prompts': prompts # backwards compatible with 'prompt'
+        #     'eval_funcs': [["def evaluate():...",], ["def evaluate():...",], ...],
+        #     'prompts': [prompt1, prompt2, ...]
         # }
-        
-        # Determine if this is multi-turn (check for plural keys)
-        prompts = self.data.get("prompts", [self.data.get("prompt")] if self.data.get("prompt") else [])
-        queries = self.data.get("queries", [self.data.get("query")] if self.data.get("query") else [])
-        queries_responses = self.data.get("queries_responses", [self.data.get("query_response")] if self.data.get("query_response") else [])
-        
-        # Handle instructions - can be list of lists (multi-turn) or single list/string (single-turn)
-        instructions_data = self.data.get("instructions", self.data.get("instruction", []))
-        if not isinstance(instructions_data[0], list) if instructions_data else True:
-            # Single-turn format: wrap in list
-            instructions_per_turn = [instructions_data] if instructions_data else [[]]
-        else:
-            # Multi-turn format: already list of lists
-            instructions_per_turn = instructions_data
-        
-        # Handle instruction_ids similarly
-        instruction_ids_data = self.data.get("instruction_ids", self.data.get("instruction_id", []))
-        if not isinstance(instruction_ids_data[0], list) if instruction_ids_data else True:
-            instruction_ids_per_turn = [instruction_ids_data] if instruction_ids_data else [[]]
-        else:
-            instruction_ids_per_turn = instruction_ids_data
-        
-        # Handle eval_funcs and cases
-        eval_funcs_data = self.data.get("eval_funcs", self.data.get("eval_func", []))
-        if not isinstance(eval_funcs_data[0], list) if eval_funcs_data else True:
-            eval_funcs_per_turn = [eval_funcs_data] if eval_funcs_data else [[]]
-        else:
-            eval_funcs_per_turn = eval_funcs_data
-            
-        cases_data = self.data.get("cases", [])
-        if not isinstance(cases_data[0], list) if cases_data else True:
-            cases_per_turn = [cases_data] if cases_data else [[]]
-        else:
-            cases_per_turn = cases_data
+        # Get data fields
+        prompts = self.data.get("prompts", [])
+        queries = self.data.get("queries", [])
+        queries_responses = self.data.get("queries_responses", [])
+        instruction_ids = self.data.get("instruction_ids", [])
+        instructions = self.data.get("instructions", [])
+        instruction_categories = self.data.get("instruction_categories", [])
+        eval_funcs = self.data.get("eval_funcs", [])
         
         num_turns = len(prompts)
         queries_messages = []
@@ -80,16 +63,38 @@ class GenerateQueryResponsesTask(GeneratorTask):
         all_scores = []
         all_scoring_responses = []
         final_messages = []
+        final_instructions = []
+        final_prompts = []
         
         # Determine if this is a no_followup case
+        # meaning next turns after the first one will ask to rephrase the previous response 
+        # instead of following up with another user question
         is_no_followup = is_no_followup_case(queries)
         
         # Process each turn
         for turn_idx in range(num_turns):
-            # Add user message for this turn
+            current_prompt = prompts[turn_idx]
+            # Step 0 (optional) - Create per-turn keyword handler and process keywords if needed
+            keyword_handler = KeywordHandler(
+                turn_idx=turn_idx,
+                instruction_categories=instruction_categories[turn_idx] if turn_idx < len(instruction_categories) else [],
+                instructions=instructions[turn_idx] if turn_idx < len(instructions) else [],
+                instruction_ids=instruction_ids[turn_idx] if turn_idx < len(instruction_ids) else [],
+                query=queries[0] if is_no_followup else queries[turn_idx] if turn_idx < len(queries) else "" # for no-followup case we want to potentially generate keywords for all turns that are related only to the first (and only) query
+            )
+
+            # Process keyword generation for this turn if needed
+            if keyword_handler.has_keyword_instructions():
+                yield from keyword_handler.process_keyword_generation(self.GEN_PARAMS)
+                current_prompt = keyword_handler.apply_keyword_modifications_to_prompt(current_prompt)
+            
+            # Store the final prompt (potentially modified with keywords)
+            final_prompts.append(current_prompt)
+            
+            # Add user message for this turn (potentially modified with new keywords)
             queries_messages.append({
                 "role": "user",
-                "content": prompts[turn_idx]
+                "content": current_prompt
             })
             
             # Step 1 – get response for the current turn
@@ -97,40 +102,36 @@ class GenerateQueryResponsesTask(GeneratorTask):
             response_text = queries_resp.get_text()
             all_responses.append(response_text)
             
-            # Step 2 - verify response 
-            # Instructions are already accumulated in the data structure
-            verification_data = self._prepare_verification_data(turn_idx, instruction_ids_per_turn, 
-                                                               instructions_per_turn, eval_funcs_per_turn, 
-                                                               cases_per_turn)
-            response_verify(response_text, verification_data, turn=turn_idx)
-            
+            # Step 2 - verify response
+            verification_handler = VerificationHandler(
+                turn_idx=turn_idx,
+                instruction_ids=instruction_ids,
+                instructions=instructions,
+                eval_funcs=eval_funcs,
+                instruction_categories=instruction_categories,
+                keyword_handler=keyword_handler
+            )
+            verification_handler.verify_response(response_text)
+
             # Step 3 - score the response for this turn
-            if is_no_followup and turn_idx > 0:
-                # For no_followup case after first turn, use rephrase scoring
-                scoring_messages = construct_rephrase_scoring_messages(
-                    response_text, all_responses[0], queries[0], 
-                    instruction_ids_per_turn, instructions_per_turn, turn_idx
-                )
-            else:
-                # Regular scoring - instructions are already accumulated in the data structure
-                scoring_data = self._prepare_scoring_data(turn_idx, instruction_ids_per_turn, 
-                                                         instructions_per_turn, eval_funcs_per_turn, 
-                                                         cases_per_turn)
-                scoring_messages = construct_scoring_messages(response_text, scoring_data)
-            
+            scoring_handler = ScoringHandler(
+                turn_idx=turn_idx,
+                is_no_followup=is_no_followup,
+                instruction_ids=instruction_ids,
+                instructions=instructions,
+                queries=queries,
+                all_responses=all_responses
+            )
+
+            scoring_messages = scoring_handler.construct_scoring_messages(response_text)
             scored_resp: Response = yield Request({"messages": scoring_messages, **self.GEN_PARAMS})
             scoring_text = scored_resp.get_text()
-            score = extract_score(scoring_text, turn=turn_idx)
-            
+
+            # Extract score and check threshold
+            score = scoring_handler.extract_and_check_score(scoring_text)
+
             all_scores.append(score)
             all_scoring_responses.append(scoring_text)
-            
-            # Check if score meets threshold - if not, fail the task
-            if score < self.SCORE_THRESHOLD:
-                raise TaskFailed(
-                    message=f"Score {score} at turn {turn_idx + 1} is below threshold {self.SCORE_THRESHOLD}. Scoring response: <response>{scoring_text}</response>",
-                    error_type=f"turn{turn_idx + 1}_score_below_threshold"
-                )
             
             # Add assistant response to conversation for next turn
             queries_messages.append({
@@ -140,14 +141,20 @@ class GenerateQueryResponsesTask(GeneratorTask):
             
             # Build final messages format for this turn
             query = queries[turn_idx] if turn_idx < len(queries) else ""
-            instructions_text = format_instructions_with_conjunctions(instructions_per_turn[turn_idx])
             
-            # Only include query if it's not empty
+            # Get final instructions with keyword replacements applied (if any)
+            turn_final_instructions = keyword_handler.get_final_instructions()
+            final_instructions.append(turn_final_instructions)
+            
+            # Format instructions with proper conjunctions
+            instructions_text = format_instructions_with_conjunctions(turn_final_instructions)
+            
+            # Construct user_content consistently for both keyword and non-keyword cases
             if query.strip():
                 if not re.search(r'[.!?]$', query):
                     query += "."
                 user_content = f"{query} {instructions_text}"
-            else:
+            else: # rephrasing message - only instructions without any "query"
                 user_content = instructions_text
             
             final_messages.extend([
@@ -161,48 +168,25 @@ class GenerateQueryResponsesTask(GeneratorTask):
                 }
             ])
         
-        # Return results - use plural format for consistency
+        # Dump eval_funcs as dicts with instruction_ids as keys
+        eval_funcs_dict = {}
+        for turn_idx, turn_instruction_ids in enumerate(instruction_ids):
+            for instr_idx, instruction_id in enumerate(turn_instruction_ids):
+                if instruction_id not in eval_funcs_dict and turn_idx < len(eval_funcs) and instr_idx < len(eval_funcs[turn_idx]):
+                    eval_funcs_dict[instruction_id] = eval_funcs[turn_idx][instr_idx]
+
+        # Return results
         return {
-            'instruction_ids': instruction_ids_per_turn,
-            'instructions': instructions_per_turn,
+            'instruction_ids': instruction_ids,
+            'instructions': final_instructions,
+            'instruction_categories': instruction_categories,
             'queries': queries,
             'queries_responses': queries_responses,
             'query_metadata': self.data.get("query_metadata"),
             'responses': all_responses,
-            'eval_funcs': eval_funcs_per_turn,
-            'cases': cases_per_turn,
-            'prompts': prompts,
+            'eval_funcs': eval_funcs_dict,
+            'prompts': final_prompts,
             'messages': final_messages,
             'scores': all_scores,
             'scoring_responses': all_scoring_responses
-        }
-    
-    def _prepare_verification_data(self, turn_idx: int, instruction_ids_per_turn: List[List], 
-                                  instructions_per_turn: List[List], eval_funcs_per_turn: List[List], 
-                                  cases_per_turn: List[List]) -> Dict[str, Any]:
-        """Prepare verification data for a specific turn.
-        
-        Instructions are already accumulated in the data structure, so we just use the current turn's data.
-        """
-        return {
-            'instruction_ids': instruction_ids_per_turn[turn_idx] if turn_idx < len(instruction_ids_per_turn) else [],
-            'instructions': instructions_per_turn[turn_idx] if turn_idx < len(instructions_per_turn) else [],
-            'eval_funcs': eval_funcs_per_turn[turn_idx] if turn_idx < len(eval_funcs_per_turn) else [],
-            'cases': cases_per_turn[turn_idx] if turn_idx < len(cases_per_turn) else [],
-            **{k: v for k, v in self.data.items() if k not in ['instruction_ids', 'instructions', 'eval_funcs', 'cases']}
-        }
-    
-    def _prepare_scoring_data(self, turn_idx: int, instruction_ids_per_turn: List[List], 
-                             instructions_per_turn: List[List], eval_funcs_per_turn: List[List], 
-                             cases_per_turn: List[List]) -> Dict[str, Any]:
-        """Prepare scoring data for a specific turn.
-        
-        Instructions are already accumulated in the data structure, so we just use the current turn's data.
-        """
-        return {
-            'instruction_ids': instruction_ids_per_turn[turn_idx] if turn_idx < len(instruction_ids_per_turn) else [],
-            'instructions': instructions_per_turn[turn_idx] if turn_idx < len(instructions_per_turn) else [],
-            'eval_funcs': eval_funcs_per_turn[turn_idx] if turn_idx < len(eval_funcs_per_turn) else [],
-            'cases': cases_per_turn[turn_idx] if turn_idx < len(cases_per_turn) else [],
-            **{k: v for k, v in self.data.items() if k not in ['instruction_ids', 'instructions', 'eval_funcs', 'cases']}
         }

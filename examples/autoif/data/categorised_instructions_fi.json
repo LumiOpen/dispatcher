@@ -1,0 +1,110 @@
+{
+    "keyword_instructions": [
+        "Sisällytä avainsanat {keyword1}, {keyword2} {N} kertaa vastaukseesi",
+        "Älä sisällytä avainsanoja {forbidden_words} vastaukseen.",
+        "Vastauksen on sisällettävä avainsana {keyword} {N}:nnessä lauseessa."
+    ],
+    "seed_instructions": [
+        {
+            "category": "Sisältö",
+            "description": "Ohjeet, jotka liittyvät tekstissä käytettyyn sisältöön, kielioppiin ja kirjallisiin keinoihin.",
+            "subcategories": [
+                "Sanojen ominaisuudet",
+                "Lauseen rakenne",
+                "Välimerkit",
+                "Tunnisteet/Paikkamerkit",
+                "Kieliopilliset ominaisuudet"
+            ],
+            "additional_prompt_context": "model_prompts/additional_for_content_category.txt",
+            "instructions": [
+                "Vastauksesi loppuun, lisää selkeästi jälkikirjoitus, joka alkaa {postscript marker}",
+                "Vastauksen on sisällettävä vähintään {N} hakasulkeilla esitettyä paikkamerkkiä, esimerkiksi [osoite].",
+                "Vastauksesi on sisällettävä otsikko, joka on kaksoiskulmasulkeissa, esimerkiksi <<ilon runo>>.",
+                "Toista ensin pyyntö muuttamatta sitä, ja anna sitten vastauksesi (älä sano mitään ennen pyynnön toistamista; toistettava pyyntö ei sisällä tätä lausetta)",
+                "Koko vastauksesi tulee olla vain isoin kirjaimin.",
+                "Koko vastauksesi tulee olla vain pienin kirjaimin. Isokirjaimiset eivät ole sallittuja.",
+                "Lopeta vastauksesi tällä täsmällisellä fraasilla {end phrase}. Mitään muita sanoja ei saa seurata tätä fraasia.",
+                "Koko vastauksessasi pidättäydy kaikkien pilkkujen käytöstä.",
+                "Käytä vastauksessa vähintään {N} eri rinnastuskonjunktiota.",
+                "Käytä jokaista standardivälimerkkiä vähintään kerran, mukaan lukien puolipisteet, kaksoispisteet ja huutokysymykset (?!).",
+                "Käytä emojia jokaisen lauseen lopussa.",
+                "Varmista, että lausetyyppien (toteavat, kysyvät, huudahduslauseet) suhde vastauksessasi on tasapainoinen.",
+                "Säilytä vastauksessasi toteavien ja kysyvien lauseiden 2:1 suhde.",
+                "Varmista, että stoppisanat muodostavat enintään {percentage}% vastauksesi kokonaissanoista.",
+                "Jokaisessa lauseessa on oltava enemmän alliteroivia sanoja kuin edellisessä.",
+                "Jokaisen sanan vastauksessasi on aloitettava seuraavalla kirjaimella aakkosissa, ja palauduttava 'A':han 'Z':n jälkeen.",
+                "Varmista, että jokaisessa sanassa vastauksessasi on vähintään yksi konsonanttiklusteri (kaksi tai useampi konsonantti yhdessä).",
+                "Vastauksessasi jokaisen lauseen viimeisestä sanasta on tultava seuraavan lauseen ensimmäinen sana.",
+                "Kaksi peräkkäistä sanaa ei saa jakaa samaa alkukirjainta.",
+                "Vaihtele sanoja, joissa on pariton ja parillinen määrä tavuja.",
+                "Jokaisen vastauksesi kappaleen on päätyttävä samalla sanalla, jolla se alkoi. Jokainen kappale on erotettu kahdella rivinvaihdolla.",
+                "Vastauksen on alettava verbillä.",
+                "Substantiivien ja verbien suhde on oltava {N}:{M}",
+                "Jokaisen lauseen on sisällettävä vähintään yksi adjektiivi ja yksi adverbi.",
+                "Kirjoita kappale käyttäen vain yhtä vokaalityyppiä sisältäviä sanoja.",
+                "Vastauksen on oltava käänteisessä järjestyksessä siitä, mitä sen pitäisi olla, kirjaimen mukaan.",
+                "Vastauksessasi jokaisen lauseen ensimmäisen sanan on alettava aakkosjärjestyksessä olevilla kirjaimilla.",
+                "Vastauksesi on oltava käänteisessä järjestyksessä siitä, mitä sen pitäisi olla, sanan mukaan."
+            ]
+        },
+        {
+            "category": "Pituus",
+            "description": "Ohjeet, jotka liittyvät tulostetekstin rakenteeseen ja järjestelyyn.",
+            "subcategories": [
+                "Sanamäärä",
+                "Lausesanmäärä",
+                "Kappalemäärä",
+                "Toisto",
+                "Ainutlaatuisuus"
+            ],
+            "instructions": [
+                "Vastauksessasi kirjaimen {letter} on esiinnyttävä {N} kertaa.",
+                "Vastauksesi tulee sisältää {N} kappaletta. Erotat kappaleet käyttämällä markdown-jakajaa: * * *",
+                "Vastaa vähintään / noin / enintään {N} sanalla.",
+                "Vastaa vähintään / noin / enintään {N} lauseella.",
+                "Kappaleita tulee olla {N}. Kappaleet ja vain kappaleet erotetaan toisistaan kahdella rivinvaihdolla. {i}:s kappaleen on alettava sanalla {first word}.",
+                "Anna {N} erilaista vastausta. Vastaukset ja vain vastaukset tulee erottaa 6 tähtimerkillä: ******.",
+                "Vastauksessasi sanojen, jotka ovat kokonaan isoilla kirjaimilla, tulee esiintyä vähintään / noin / enintään {N} kertaa.",
+                "Vastauksen on sisällettävä {min_n} ja {max_n} sanan välillä.",
+                "Käytä vastauksessa vähintään {N} ainutlaatuista sanaa.",
+                "Vastaa {N} lauseella, joissa kaikissa on sama määrä merkkejä, mutta käytetään eri sanoja.",
+                "Jokaisen lauseen vastauksessasi on sisällettävä tasan {small_N} sanaa enemmän kuin edellisessä.",
+                "Sisällytä vähintään {N} palindromia, joista jokainen on vähintään {n_chars} merkkiä pitkä.",
+                "Käytä vain sanoja, joiden pituus on alkuluku.",
+                "Vastaus ei saa toistaa samaa sanaa useammin kuin {small_N} kertaa.",
+                "Vastauksesi on sisällettävä tasan {N} luetelmakohtaa. Käytä markdown-luetelmia, kuten: * Tämä on kohta.",
+                "Korosta vähintään {N} osiota vastauksessasi markdownilla, eli *korostettu osio*",
+                "Vastauksessasi on oltava {N} osiota. Merkitse jokaisen osion alku {section splitter} X:llä."
+            ]
+        },
+        {
+            "category": "Muotoilu",
+            "description": "Ohjeet, jotka liittyvät vastauksen muotoiluun, mukaan lukien JSON, CSV, sisennys ja erikoismerkit.",
+            "subcategories": [
+                "JSON",
+                "CSV",
+                "Sisennys",
+                "Erikoismerkit",
+                "XML",
+                "Markdown",
+                "Taulukko"
+            ],
+            "instructions": [
+                "Kääri koko vastauksesi lainausmerkkeihin.",
+                "Koko tulosteen tulee olla JSON-muodossa.",
+                "Kaikkien muuttujien nimien on oltava camelCase-muodossa. Vastauksesi tulee sisältää vain Python-koodisi ilman selityksiä.",
+                "Luo portaat sisennyksiä lisäämällä jokaiselle uudelle riville.",
+                "Vastaa luettelona kohteita, käytä luetelmien sijaan {sep}.",
+                "Kirjoita jokainen sana uudelle riville.",
+                "Sisennä sulkeita (ja [hakasulkeita {ja aaltosulkeita}]) vähintään 5 tasoa syvälle.",
+                "Sisällytä lainauksia lainausten sisään lainausten sisään, vähintään 3 tasoa syvälle, vuorotellen kaksoislainausmerkkien ja yksittäisten lainausmerkkien välillä.",
+                "Vastauksesi on sisällettävä luetelmakohtia, jotka on merkitty * ja vähintään yksi alaluetelmakohta, joka on merkitty - jokaiselle luetelmakohdalle.",
+                "Jokaisen kappaleen on alettava kursivoidulla lauseella, käytä HTML:ää kursivoinnin osoittamiseen.",
+                "Vastauksen on oltava CSV-muodossa 7 rivillä.",
+                "Vastauksen on oltava CSV-muodossa 3 rivillä ja jokainen yksittäinen kenttä on suljettava kaksoislainausmerkkeihin.",
+                "Vastauksen on oltava CSV-muodossa 14 rivillä. Lisää yksi kenttä, joka sisältää erikoismerkin ja sulje se kaksoislainausmerkkeihin.",
+                "Päivämäärät on oltava muodossa: VVVV-KK-PP."
+            ]
+        }
+    ]
+}

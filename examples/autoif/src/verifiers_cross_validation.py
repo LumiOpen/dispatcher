@@ -8,9 +8,10 @@ Cross-validation process:
 1. Parse functions and test cases from LLM responses
 2. Validate function safety (no harmful code patterns)
 3. Deduplicate test cases
-4. Filter test cases that pass at least MIN_FUNCTIONS functions
-5. Keep only functions that meet ACCURACY_THRESHOLD (how many test cases they pass)
-6. Output results for further processing
+4. Filter responses with less than MIN_FUNCTIONS parsable functions and less than MIN_TEST_CASES parsable test cases
+5. Filter out test cases that don't pass any function
+6. Keep only functions that meet FUNCTION_PASS_RATE (how many test cases they pass)
+7. Output results for further processing
 
 Author: AutoIF Team
 """
@@ -32,19 +33,19 @@ from src.utils.response_parser import ResponseParser
 from src.utils.function_executor import FunctionExecutor
 from src.utils.lang_id import detect_language
 
-# Cross validation configuration, set in parent script ../phase1_pipeline.sh
-MIN_FUNCTIONS = int(os.getenv('MIN_FUNCTIONS', 1))  # Minimum number of functions required
-MIN_TEST_CASES = int(os.getenv('MIN_TEST_CASES', 1))  # Minimum number of test cases required
-ACCURACY_THRESHOLD = float(os.getenv('ACCURACY_THRESHOLD', 0.8))  # Minimum accuracy threshold for functions
+MIN_FUNCTIONS = int(os.getenv('MIN_FUNCTIONS', 1))  # Minimum number of parsable functions required
+MIN_TEST_CASES = int(os.getenv('MIN_TEST_CASES', 1))  # Minimum number of parsable test cases required
+FUNCTION_PASS_RATE = float(os.getenv('FUNCTION_PASS_RATE', 0.8))  # Proportion of generated test cases a function must pass
 LANGUAGE = os.getenv('LANGUAGE', 'eng')  # Language code for filtering test cases
 OUT_DIR = os.getenv('OUT_DIR', 'exp1') # sub-directory for the output files in data/
 
 class CrossValidationResult:
     """Container for cross-validation results of a single instruction."""
     
-    def __init__(self, instruction_id: str, instruction: str):
+    def __init__(self, instruction_id: str, instruction: str, instruction_category: Optional[str] = None):
         self.instruction_id = instruction_id
         self.instruction = instruction
+        self.instruction_category = instruction_category
         self.filtered = True
         self.reason = None
         # Raw data (all parsed functions and cases before any filtering)
@@ -59,6 +60,7 @@ class CrossValidationResult:
         return {
             'instruction_id': self.instruction_id,
             'instruction': self.instruction,
+            'instruction_category': self.instruction_category,
             'filtered': self.filtered,
             'reason': self.reason,
             'eval_func': self.raw_eval_func,  # Use raw data for "all" output
@@ -70,6 +72,7 @@ class CrossValidationResult:
         return {
             'instruction_id': self.instruction_id,
             'instruction': self.instruction,
+            'instruction_category': self.instruction_category,
             'eval_func': self.eval_func,
             'cases': self.cases
         }
@@ -123,8 +126,9 @@ class InstructionProcessor:
             original = data['original']
             instruction = original['instruction']
             instruction_id = original['instruction_id']
+            instruction_category = original['instruction_category']
             
-            result = CrossValidationResult(instruction_id, instruction)
+            result = CrossValidationResult(instruction_id, instruction, instruction_category)
             
             # Step 2: Parse responses to extract functions and test cases
             # In this step parsing errors can occur, which will be logged
@@ -278,17 +282,41 @@ class InstructionProcessor:
     
     def _cross_validate_functions_and_cases(self, functions: List[str], test_cases: List[Dict[str, Any]], instruction_id: str) -> tuple[List[str], List[Dict[str, Any]]]:
         """
-        Cross-validate functions against test cases.
+        Cross-validate functions against test cases in a single pass.
         
-        Steps:
+        Performs both filtering operations simultaneously:
         1. Filter test cases that pass at least one function
         2. Filter functions that meet accuracy threshold
         
         Returns:
             Tuple of (final_functions, final_test_cases)
         """
-        # Step 1: Keep only test cases that pass at least one function
-        passing_test_cases = self._filter_passing_test_cases(functions, test_cases)
+        # Track which test cases pass at least one function
+        case_passes = [False] * len(test_cases)
+        # Track functions that meet accuracy threshold
+        accurate_functions = []
+        
+        # Single pass through functions
+        for func_idx, function in enumerate(functions):
+            correct_count = 0
+            
+            # Test this function against all test cases
+            for case_idx, test_case in enumerate(test_cases):
+                passed, _ = self.executor.test_function(function, test_case, func_idx, case_idx, log_errors=False)
+                if passed:
+                    case_passes[case_idx] = True
+                    correct_count += 1
+            
+            # Check if this function meets accuracy threshold
+            accuracy = correct_count / len(test_cases) if test_cases else 0
+            if accuracy >= FUNCTION_PASS_RATE:
+                accurate_functions.append(function)
+        
+        # Filter test cases that passed at least one function
+        passing_test_cases = [
+            test_case for case_idx, test_case in enumerate(test_cases)
+            if case_passes[case_idx]
+        ]
         
         if not passing_test_cases:
             num_functions_tested = len(functions)
@@ -299,45 +327,7 @@ class InstructionProcessor:
             )
             return [], []
         
-        # Step 2: Keep only functions that meet accuracy threshold
-        accurate_functions = self._filter_accurate_functions(functions, passing_test_cases)
-        
         return accurate_functions, passing_test_cases
-    
-    def _filter_passing_test_cases(self, functions: List[str], test_cases: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Filter test cases that pass at least one function."""
-        passing_cases = []
-        
-        for case_idx, test_case in enumerate(test_cases):
-            case_passes = False
-            for func_idx, function in enumerate(functions):
-                passed, _ = self.executor.test_function(function, test_case, func_idx, case_idx, log_errors=False)
-                if passed:
-                    case_passes = True
-                    break
-            
-            if case_passes:
-                passing_cases.append(test_case)
-        
-        return passing_cases
-    
-    def _filter_accurate_functions(self, functions: List[str], test_cases: List[Dict[str, Any]]) -> List[str]:
-        """Filter functions that meet the accuracy threshold."""
-        accurate_functions = []
-        
-        for func_idx, function in enumerate(functions):
-            correct = 0
-            for case_idx, test_case in enumerate(test_cases):
-                passed, _ = self.executor.test_function(function, test_case, func_idx, case_idx, log_errors=False)
-                if passed:
-                    correct += 1
-            
-            accuracy = correct / len(test_cases) if test_cases else 0
-            
-            if accuracy >= ACCURACY_THRESHOLD:
-                accurate_functions.append(function)
-        
-        return accurate_functions
 
     def _deduplicate_test_cases(self, cases: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
@@ -416,7 +406,7 @@ def cross_validate_verifiers(verifiers_file: str, output_all_file: str, output_f
     5. Log comprehensive summary
     """
     # Set up logging
-    logfile = f"data/{OUT_DIR}/{os.path.basename(output_all_file)}.log"
+    logfile = f"{OUT_DIR}/{os.path.basename(output_all_file)}.log"
     os.makedirs(os.path.dirname(logfile), exist_ok=True)
     logger = CrossValidationLogger(logfile)
     
@@ -431,9 +421,7 @@ def cross_validate_verifiers(verifiers_file: str, output_all_file: str, output_f
     passed_results = []
     
     for data in verifier_data:
-        instruction_id = data['original']['instruction_id']
         logger.increment_total_verifiers()
-        
         result = processor.process_instruction(data)
         all_results.append(result)
         

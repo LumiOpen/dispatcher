@@ -35,6 +35,72 @@ GLOT_LANG_DICT = {
     'swe': 'sv'   # Swedish
 }
 
+LANG_MAP = {
+    'en': 'English',
+    'fr': 'French',
+    'de': 'German',
+    'es': 'Spanish',
+    'it': 'Italian',
+    'pt': 'Portuguese',
+    'nl': 'Dutch',
+    'sv': 'Swedish',
+    'da': 'Danish',
+    'fi': 'Finnish',
+    'cs': 'Czech',
+    'pl': 'Polish',
+    'hu': 'Hungarian',
+    'ro': 'Romanian',
+    'sk': 'Slovak',
+    'sl': 'Slovenian',
+    'hr': 'Croatian',
+    'bg': 'Bulgarian',
+    'et': 'Estonian',
+    'lv': 'Latvian',
+    'lt': 'Lithuanian',
+    'mt': 'Maltese',
+    'ga': 'Irish'
+}
+
+def get_language_name(lang_code, default=None):
+    """
+    Convert a language code (2 or 3 letters) to full language name.
+    
+    Args:
+        lang_code (str): Two-letter (ISO 639-1) or three-letter (ISO 639-2) language code
+        
+    Returns:
+        str: Full language name, or None if code not found
+        
+    Examples:
+        >>> get_language_name('en')
+        'English'
+        >>> get_language_name('eng')
+        'English'
+        >>> get_language_name('de')
+        'German'
+        >>> get_language_name('deu')
+        'German'
+    """
+    if not lang_code:
+        return default
+    
+    lang_code = lang_code.lower().strip()
+    
+    # If it's a 2-letter code, try direct lookup in LANG_MAP
+    if len(lang_code) == 2:
+        return LANG_MAP.get(lang_code)
+    
+    # If it's a 3-letter code, convert to 2-letter first, then get full name
+    elif len(lang_code) == 3:
+        two_letter_code = GLOT_LANG_DICT.get(lang_code)
+        if two_letter_code:
+            return LANG_MAP.get(two_letter_code)
+        return default
+    
+    # Invalid length
+    return default
+
+
 def detect_language(text):
     """Given a text, it returns the Glotlid prediction as NLLB language code, e.g., Latn-eng
     """

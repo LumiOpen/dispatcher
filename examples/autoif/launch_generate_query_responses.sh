@@ -1,15 +1,15 @@
 #!/bin/bash
-#SBATCH --job-name=generate_responses
-#SBATCH --nodes=1
-#SBATCH --partition=dev-g
-#SBATCH --time=00:20:00
+#SBATCH --job-name=resp
+#SBATCH --nodes=4
+#SBATCH --partition=standard-g
+#SBATCH --time=18:00:00
 #SBATCH --ntasks-per-node=2
 #SBATCH --mem=480G
 #SBATCH --cpus-per-task=7
-#SBATCH --exclusive=user
+#SBATCH --exclusive
 #SBATCH --hint=nomultithread
 #SBATCH --gpus-per-node=mi250:8
-#SBATCH --account=project_462000353
+#SBATCH --account=project_462000963
 #SBATCH --output=logs/%j_responses.out
 #SBATCH --error=logs/%j_responses.err
 
@@ -17,8 +17,8 @@
 ###
 # configure the following.
 export LANGUAGE=${LANGUAGE:-eng}
-export FUNCTION_TIMEOUT=${FUNCTION_TIMEOUT:-5}
-INPUT_FILE=${VERIFIERS_QUERIES_FILE:-data/verifiers_queries_ifeval.jsonl}
+export FUNCTION_TIMEOUT=${FUNCTION_TIMEOUT:-10}
+INPUT_FILE=${VERIFIERS_QUERIES_FILE:-data/verifiers_queries.jsonl}
 OUTPUT_FILE=${SCORED_RESPONSES_FILE:-data/scored_responses.jsonl}
 TASK=autoif_generator_task.GenerateQueryResponsesTask
 
@@ -32,8 +32,9 @@ BATCH_SIZE=1        # amount of work to request from dispatcher. 1 is usually fi
 # Timeouts are safety valves and you should not hit them in the normal course
 # of your workflow.  if you do, it suggests you need to change something about
 # your configuration--tasks are usually written to expect success.
-REQUEST_TIMEOUT=${RESP_REQUEST_TIMEOUT:-600} # adjust as needed for your task so that you do not hit
-WORK_TIMEOUT=${RESP_WORK_TIMEOUT:-1800}   # time for dispatcher to give up on a work item and reissue it.  ideally this should never be hit.
+STARTUP_TIMEOUT=${RESP_STARTUP_TIMEOUT:-7200}
+REQUEST_TIMEOUT=${RESP_REQUEST_TIMEOUT:-3600} # adjust as needed for your task so that you do not hit
+WORK_TIMEOUT=${RESP_WORK_TIMEOUT:-7200}   # time for dispatcher to give up on a work item and reissue it.  ideally this should never be hit.
 
 #
 # If you are changing the model, be sure to update GPUS_PER_TASK and the
@@ -106,6 +107,8 @@ srun -l \
     module use /appl/local/csc/modulefiles
     module load pytorch/2.5
     export PYTHONUSERBASE=./pythonuserbase
+    export HF_HOME="${HF_HOME:-/scratch/project_462000353/hf_cache}"
+
     PYTHONPATH=. python -m dispatcher.taskmanager.cli \
         --dispatcher ${DISPATCHER_SERVER}:${DISPATCHER_PORT} \
         --task '"$TASK"' \
@@ -114,6 +117,9 @@ srun -l \
         --max-model-len '"$MAX_MODEL_LEN"' \
         --tensor-parallel '"$GPUS_PER_TASK"' \
         --model '"$MODEL"' \
-        --silence-vllm-logs
+        --port $VLLM_PORT \
+        --startup-timeout '"$STARTUP_TIMEOUT"' \
+        --request-timeout '"$REQUEST_TIMEOUT"'
+        # --silence-vllm-logs
 '
 

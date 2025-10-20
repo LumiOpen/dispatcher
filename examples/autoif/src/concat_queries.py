@@ -6,6 +6,228 @@ import re
 import os.path
 from datasets import load_dataset
 from src.utils.query_skip_tracker import QuerySkipTracker
+from src.utils.lang_id import get_language_name
+
+LANGUAGE = os.getenv('LANGUAGE', 'eng')  # Language code for building final prompts
+
+class InstructionSelector:
+    """Class to handle instruction selection logic with uniform distribution."""
+    
+    def __init__(self, verifiers_list: List[Dict], balance_categories: bool = False):
+        """Initialize the instruction selector.
+        
+        Args:
+            verifiers_list: List of verifier dictionaries with 'instruction_id' and optionally 'instruction_category'
+            balance_categories: Whether to balance instruction selection across categories
+        """
+        self.balance_categories = balance_categories
+        
+        # Create efficient lookup dictionary for verifiers by instruction_id
+        self.verifiers = {verifier['instruction_id']: verifier for verifier in verifiers_list}
+        
+        # Initialize usage count using instruction_id as key
+        self.instruction_usage_count = {verifier['instruction_id']: 0 for verifier in verifiers_list}
+        
+        # If balancing categories, create category mappings
+        if balance_categories:
+            self.categories = {}
+            for verifier in verifiers_list:
+                category = verifier.get('instruction_category', 'default')
+                if category not in self.categories:
+                    self.categories[category] = []
+                self.categories[category].append(verifier['instruction_id'])
+            self.category_usage_count = {cat: 0 for cat in self.categories.keys()}
+    
+    def _select_instructions_uniform(self, instructions_per_query: int) -> List[Dict]:
+        """Select instructions maintaining uniform distribution across all instructions."""
+        # Find the minimum usage count
+        min_usage = min(self.instruction_usage_count.values())
+        
+        # If we need more instructions than available with minimum usage,
+        # also include instructions with the next lowest usage count, and so on
+        selected_ids = []
+        current_usage = min_usage
+        
+        while len(selected_ids) < instructions_per_query:
+            # Get all IDs with current usage count that aren't already selected
+            available_ids = [instruction_id for instruction_id, count in self.instruction_usage_count.items() 
+                           if count == current_usage and instruction_id not in selected_ids]
+            
+            if not available_ids:
+                # Move to next usage level
+                current_usage += 1
+                continue
+            
+            # Randomly select from available IDs
+            needed = min(instructions_per_query - len(selected_ids), len(available_ids))
+            selected_from_current = random.sample(available_ids, needed)
+            selected_ids.extend(selected_from_current)
+        
+        # Update usage counts and collect selected verifiers
+        selected_verifiers = []
+        for instruction_id in selected_ids:
+            self.instruction_usage_count[instruction_id] += 1
+            selected_verifiers.append(self.verifiers[instruction_id])
+        
+        return selected_verifiers
+    
+    def _select_instructions_category_balanced(self, instructions_per_query: int) -> List[Dict]:
+        """Select instructions uniformly across categories and within categories."""
+        selected_verifiers = []
+        
+        for i in range(instructions_per_query):
+            # Find the category with minimum usage count to ensure uniform distribution across categories
+            min_category_usage = min(self.category_usage_count.values())
+            categories_with_min_usage = [cat for cat, count in self.category_usage_count.items() 
+                                       if count == min_category_usage]
+            
+            # Randomly select one category from those with minimum usage
+            selected_category = random.choice(categories_with_min_usage)
+            
+            # Within the selected category, find instructions with minimum usage
+            category_instruction_ids = self.categories[selected_category]
+            min_usage_in_category = min(self.instruction_usage_count[inst_id] for inst_id in category_instruction_ids)
+            
+            # Get available instructions in this category with minimum usage
+            available_in_category = [inst_id for inst_id in category_instruction_ids 
+                                   if self.instruction_usage_count[inst_id] == min_usage_in_category]
+            
+            # Randomly select one instruction from available options
+            selected_id = random.choice(available_in_category)
+            
+            # Update usage count and add to results
+            self.instruction_usage_count[selected_id] += 1
+            self.category_usage_count[selected_category] += 1
+            selected_verifiers.append(self.verifiers[selected_id])
+        
+        return selected_verifiers
+    
+    def select_instructions(self, instructions_per_query: int) -> List[Dict]:
+        """Select instructions using the configured strategy."""
+        if self.balance_categories:
+            return self._select_instructions_category_balanced(instructions_per_query)
+        else:
+            return self._select_instructions_uniform(instructions_per_query)
+    
+    def select_instructions_multi_turn(self, instructions_per_query: int, turns: int,
+                                     used_instructions_in_conversation: set = None) -> List[List[Dict]]:
+        """Select instructions for multiple turns with accumulation across turns."""
+        if used_instructions_in_conversation is None:
+            used_instructions_in_conversation = set()
+        
+        all_turn_instructions = []
+        accumulated_verifiers = []
+        
+        for turn in range(turns):
+            n_instructions = instructions_per_query
+            if instructions_per_query == 3:
+                choices = [1, 2, 3]
+                weights = [0.5, 0.25, 0.25]
+                n_instructions = random.choices(choices, weights=weights, k=1)[0]
+            # Find available instruction IDs (not used in this conversation)
+            available_ids = [instruction_id for instruction_id in self.verifiers.keys() 
+                           if instruction_id not in used_instructions_in_conversation]
+            
+            if len(available_ids) < n_instructions:
+                # If we don't have enough unused instructions, reset and use all available
+                available_ids = list(self.verifiers.keys())
+                used_instructions_in_conversation = set()
+            
+            # Select NEW instructions for this turn
+            if self.balance_categories:
+                # For category balanced selection with multi-turn, we need to modify the approach
+                # Create a temporary category mapping with only available instructions
+                temp_categories = {}
+                for inst_id in available_ids:
+                    verifier = self.verifiers[inst_id]
+                    category = verifier.get('instruction_category', 'default')
+                    if category not in temp_categories:
+                        temp_categories[category] = []
+                    temp_categories[category].append(inst_id)
+                
+                selected_ids = []
+                
+                for i in range(n_instructions):
+                    # Find the category with minimum usage count to ensure uniform distribution across categories
+                    available_categories = [cat for cat in temp_categories.keys() 
+                                          if any(inst_id not in selected_ids for inst_id in temp_categories[cat])]
+                    
+                    if not available_categories:
+                        # If all categories are exhausted, pick from any available instructions
+                        available_in_category = [inst_id for inst_id in available_ids 
+                                               if inst_id not in selected_ids]
+                        if available_in_category:
+                            min_usage = min(self.instruction_usage_count[inst_id] for inst_id in available_in_category)
+                            candidates = [inst_id for inst_id in available_in_category 
+                                        if self.instruction_usage_count[inst_id] == min_usage]
+                            selected_id = random.choice(candidates)
+                            selected_ids.append(selected_id)
+                        continue
+                    
+                    # Among available categories, find those with minimum usage
+                    min_category_usage = min(self.category_usage_count[cat] for cat in available_categories)
+                    categories_with_min_usage = [cat for cat in available_categories 
+                                               if self.category_usage_count[cat] == min_category_usage]
+                    
+                    # Randomly select one category from those with minimum usage
+                    selected_category = random.choice(categories_with_min_usage)
+                    
+                    # Within the selected category, find instructions with minimum usage
+                    category_instruction_ids = temp_categories[selected_category]
+                    available_in_category = [inst_id for inst_id in category_instruction_ids 
+                                           if inst_id not in selected_ids]
+                    
+                    if available_in_category:
+                        # Among available, select the one with minimum usage
+                        min_usage = min(self.instruction_usage_count[inst_id] for inst_id in available_in_category)
+                        candidates = [inst_id for inst_id in available_in_category 
+                                    if self.instruction_usage_count[inst_id] == min_usage]
+                        selected_id = random.choice(candidates)
+                        selected_ids.append(selected_id)
+            else:
+                # Regular uniform selection
+                min_usage = min(self.instruction_usage_count[inst_id] for inst_id in available_ids)
+                
+                selected_ids = []
+                current_usage = min_usage
+                
+                while len(selected_ids) < n_instructions:
+                    # Get available IDs with current usage count
+                    candidates = [inst_id for inst_id in available_ids
+                                if self.instruction_usage_count[inst_id] == current_usage and inst_id not in selected_ids]
+                    
+                    if not candidates:
+                        current_usage += 1
+                        continue
+                    
+                    # Randomly select from candidates
+                    needed = min(n_instructions - len(selected_ids), len(candidates))
+                    selected_from_current = random.sample(candidates, needed)
+                    selected_ids.extend(selected_from_current)
+            
+            # Update usage counts and tracking
+            new_verifiers = []
+            for inst_id in selected_ids:
+                self.instruction_usage_count[inst_id] += 1
+                used_instructions_in_conversation.add(inst_id)
+                new_verifiers.append(self.verifiers[inst_id])
+            
+            # Accumulate instructions: add new instructions to previous ones
+            accumulated_verifiers.extend(new_verifiers)
+            # Create a copy of accumulated verifiers for this turn
+            all_turn_instructions.append(accumulated_verifiers.copy())
+        
+        return all_turn_instructions
+    
+    def get_usage_stats(self) -> Dict:
+        """Get current usage statistics."""
+        stats = {
+            'instruction_usage': dict(self.instruction_usage_count)
+        }
+        if self.balance_categories:
+            stats['category_usage'] = dict(self.category_usage_count)
+            stats['categories'] = {cat: len(inst_ids) for cat, inst_ids in self.categories.items()}
+        return stats
 
 
 def load_verifiers(verifiers_path: str) -> List[Dict]:
@@ -65,9 +287,10 @@ def extract_query_from_messages(item: Dict, turns: int = 1, messages_key: str = 
         while len(assistant_responses) < turns:
             assistant_responses.append('')
             
-        return (user_messages[:turns], assistant_responses[:turns]), ""
-    
-    return None, "not_enough_turns"
+        return {
+            "user_messages": user_messages[:turns],
+            "assistant_responses": assistant_responses[:turns]
+        }, ""
 
 def parse_query_from_item(item: Dict, messages_format: bool, query_column_name: str, 
                          response_column_name: str, query_max_len: int, turns: int = 1, 
@@ -77,17 +300,29 @@ def parse_query_from_item(item: Dict, messages_format: bool, query_column_name: 
     Returns:
         Dict with 'queries', 'responses', and 'metadata' keys, or None if invalid
     """
-    
+
+    # Filter by language if LANGUAGE is set and 'lang' or 'language' key exists in item
+    if 'lang' in item and item['lang'] != LANGUAGE:
+        return None, f"language_mismatch_{item['lang']}_expected_{LANGUAGE}"
+    if 'language' in item and item['language'] != LANGUAGE:
+        return None, f"language_mismatch_{item['language']}_expected_{LANGUAGE}"
+
     query = {}
     
     if messages_format:
         # Extract from chat messages format
-        result, reason = extract_query_from_messages(item, turns, messages_key, no_followup)
+        result, reason = extract_query_from_messages(
+            item=item, 
+            turns=turns, 
+            messages_key=messages_key, 
+            no_followup=no_followup
+        )
         if not result:
             return None, reason
-        
-        user_messages, assistant_responses = result
-        
+
+        user_messages = result['user_messages']
+        assistant_responses = result['assistant_responses']
+
         # Check if any user message exceeds max length (only check non-empty messages)
         if any(len(msg) >= query_max_len for msg in user_messages if msg):
             return None, "length"
@@ -159,8 +394,16 @@ def load_queries_from_file(queries_file: str, messages_format: bool, query_colum
             
             try:
                 item = json.loads(line)
-                query, reason = parse_query_from_item(item, messages_format, query_column_name, 
-                                            response_column_name, query_max_len, turns, messages_key, no_followup)
+                query, reason = parse_query_from_item(
+                    item=item, 
+                    messages_format=messages_format, 
+                    query_column_name=query_column_name,
+                    response_column_name=response_column_name, 
+                    query_max_len=query_max_len, 
+                    turns=turns, 
+                    messages_key=messages_key, 
+                    no_followup=no_followup
+                )
                 if query:
                     queries.append(query)
                 else:
@@ -189,19 +432,31 @@ def load_queries_from_dataset_or_file(queries_dataset: str, query_column_name: s
     if os.path.exists(queries_dataset):
         print(f"Loading queries from local file: {queries_dataset}")
         return load_queries_from_file(
-            queries_dataset, messages_format, query_column_name, 
-            response_column_name, query_max_len, turns, messages_key, no_followup
+            queries_file=queries_dataset, 
+            messages_format=messages_format, 
+            query_column_name=query_column_name,
+            response_column_name=response_column_name, 
+            query_max_len=query_max_len, 
+            turns=turns, 
+            messages_key=messages_key, 
+            no_followup=no_followup
         )
     else:
         print(f"Loading queries from HuggingFace dataset: {queries_dataset}")
         return load_queries_from_dataset(
-            queries_dataset, query_column_name, response_column_name, 
-            query_max_len, turns, no_followup
+            queries_dataset=queries_dataset, 
+            messages_format=messages_format,
+            query_column_name=query_column_name, 
+            response_column_name=response_column_name,
+            query_max_len=query_max_len, 
+            turns=turns, 
+            messages_key=messages_key,
+            no_followup=no_followup
         )
 
-def load_queries_from_dataset(queries_dataset: str, query_column_name: str,
-                             response_column_name: str, query_max_len: int, turns: int = 1, 
-                             no_followup: bool = False) -> Tuple[List[Dict], int]:
+def load_queries_from_dataset(queries_dataset: str, messages_format: bool, query_column_name: str,
+                             response_column_name: str, query_max_len: int, turns: int = 1,
+                             messages_key: str = 'messages', no_followup: bool = False) -> Tuple[List[Dict], int]:
     """Load queries from a HuggingFace dataset.
     
     Returns:
@@ -212,180 +467,26 @@ def load_queries_from_dataset(queries_dataset: str, query_column_name: str,
     
     dataset = load_dataset(queries_dataset)
     for item in dataset['train']:
-        if query_column_name not in item:
-            skip_tracker.skip('key_not_in_item')
-            continue
-        if len(item[query_column_name]) >= query_max_len:
-            skip_tracker.skip('length')
-            continue
-        
-        # For multi-turn with no_followup, we only need one query
-        if turns == 1:
-            query = {
-                'queries': [item[query_column_name]],  # Convert to list format
-                'metadata': {k: v for k, v in item.items() 
-                            if k not in [query_column_name, response_column_name]}
-            }
-            
-            if response_column_name in item:
-                query['responses'] = [item[response_column_name]]
-            else:
-                query['responses'] = ['']
+        query, reason = parse_query_from_item(
+            item=item, 
+            messages_format=messages_format, 
+            query_column_name=query_column_name,
+            response_column_name=response_column_name, 
+            query_max_len=query_max_len, 
+            turns=turns, 
+            messages_key=messages_key, 
+            no_followup=no_followup
+        )
+        if query:
+            queries.append(query)
         else:
-            # Multi-turn logic for datasets
-            required_turns = 1 if no_followup else turns
-            
-            if isinstance(item.get(query_column_name), list):
-                if len(item[query_column_name]) < required_turns:
-                    return None, "not_enough_turns"
-                # Take the required number of queries and pad if needed
-                queries = item[query_column_name][:required_turns]
-                while len(queries) < turns:
-                    queries.append('')
-                query = {
-                    'queries': queries,
-                    'metadata': {k: v for k, v in item.items() 
-                                if k not in [query_column_name, response_column_name]}
-                }
-            else:
-                # Single string query
-                if no_followup:
-                    query = {
-                        'queries': [item[query_column_name]] + [''] * (turns - 1),
-                        'metadata': {k: v for k, v in item.items() 
-                                    if k not in [query_column_name, response_column_name]}
-                    }
-                else:
-                    return None, "invalid_format"
-            
-            # Handle responses for multi-turn
-            if response_column_name in item:
-                if isinstance(item[response_column_name], list):
-                    responses = item[response_column_name][:turns]
-                    while len(responses) < turns:
-                        responses.append('')
-                    query['responses'] = responses
-                else:
-                    query['responses'] = [item[response_column_name]] + [''] * (turns - 1)
-            else:
-                query['responses'] = [''] * turns
-        
-        queries.append(query)
+            skip_tracker.skip(reason)
 
     return queries, skip_tracker
 
-def select_instructions(verifiers_list: List[Dict], instructions_per_query: int,
-                       instruction_usage_count: Dict[int, int]) -> List[Dict]:
-    """Select instructions maintaining uniform distribution with random pairing.
-    
-    Returns:
-        List of selected verifier dictionaries
-    """
-    # Find the minimum usage count
-    min_usage = min(instruction_usage_count.values())
-    
-    # If we need more instructions than available with minimum usage,
-    # also include instructions with the next lowest usage count, and so on
-    selected_indices = []
-    current_usage = min_usage
-    
-    while len(selected_indices) < instructions_per_query:
-        # Get all indices with current usage count that aren't already selected
-        available_indices = [i for i, count in instruction_usage_count.items() 
-                           if count == current_usage and i not in selected_indices]
-        
-        if not available_indices:
-            # Move to next usage level
-            current_usage += 1
-            continue
-        
-        # Randomly select from available indices
-        needed = min(instructions_per_query - len(selected_indices), len(available_indices))
-        selected_from_current = random.sample(available_indices, needed)
-        selected_indices.extend(selected_from_current)
-    
-    # Update usage counts and collect selected verifiers
-    selected_verifiers = []
-    for idx in selected_indices:
-        instruction_usage_count[idx] += 1
-        selected_verifiers.append(verifiers_list[idx])
-    
-    return selected_verifiers
-
-def select_instructions_multi_turn(verifiers_list: List[Dict], instructions_per_query: int,
-                                  instruction_usage_count: Dict[int, int], turns: int,
-                                  used_instructions_in_conversation: set = None) -> List[List[Dict]]:
-    """Select instructions for multiple turns with accumulation across turns.
-    
-    For each turn, the instruction list includes all instructions from previous turns plus new ones.
-    For example, if instructions_per_query=1 and turns=2:
-    - Turn 0: [instruction_0]
-    - Turn 1: [instruction_0, instruction_1]
-    
-    Args:
-        verifiers_list: List of all available verifiers
-        instructions_per_query: Number of NEW instructions to add per turn
-        instruction_usage_count: Global usage count for uniform distribution
-        turns: Number of turns to generate instructions for
-        used_instructions_in_conversation: Set of instruction indices already used in this conversation
-    
-    Returns:
-        List of lists - accumulated instruction lists per turn
-    """
-    if used_instructions_in_conversation is None:
-        used_instructions_in_conversation = set()
-    
-    all_turn_instructions = []
-    accumulated_verifiers = []
-    
-    for turn in range(turns):
-        # Find the minimum usage count among unused instructions
-        available_indices = [i for i in range(len(verifiers_list)) 
-                           if i not in used_instructions_in_conversation]
-        
-        if len(available_indices) < instructions_per_query:
-            # If we don't have enough unused instructions, we'll have to reuse some
-            # Reset and use all available
-            available_indices = list(range(len(verifiers_list)))
-            used_instructions_in_conversation = set()
-        
-        min_usage = min(instruction_usage_count[i] for i in available_indices)
-        
-        # Select NEW instructions for this turn
-        selected_indices = []
-        current_usage = min_usage
-        
-        while len(selected_indices) < instructions_per_query:
-            # Get available indices with current usage count
-            candidates = [i for i in available_indices
-                         if instruction_usage_count[i] == current_usage and i not in selected_indices]
-            
-            if not candidates:
-                current_usage += 1
-                continue
-            
-            # Randomly select from candidates
-            needed = min(instructions_per_query - len(selected_indices), len(candidates))
-            selected_from_current = random.sample(candidates, needed)
-            selected_indices.extend(selected_from_current)
-        
-        # Update usage counts and tracking
-        new_verifiers = []
-        for idx in selected_indices:
-            instruction_usage_count[idx] += 1
-            used_instructions_in_conversation.add(idx)
-            new_verifiers.append(verifiers_list[idx])
-        
-        # Accumulate instructions: add new instructions to previous ones
-        accumulated_verifiers.extend(new_verifiers)
-        # Create a copy of accumulated verifiers for this turn
-        all_turn_instructions.append(accumulated_verifiers.copy())
-    
-    return all_turn_instructions
-
 def create_output_entry(query: Dict, selected_verifiers: List[Dict] = None, source: str = None, 
                        turns: int = 1, selected_verifiers_multi_turn: List[List[Dict]] = None,
-                       no_followup: bool = False) -> Dict:
+                       no_followup: bool = False, language: str = "") -> Dict:
     """Create the output dictionary for a single query-instruction pair or multi-turn conversation."""
     
     # For single turn, wrap selected_verifiers in a list to unify with multi-turn logic
@@ -402,8 +503,8 @@ def create_output_entry(query: Dict, selected_verifiers: List[Dict] = None, sour
     prompts = []
     all_instruction_ids = []
     all_instructions = []
+    all_instruction_categories = []
     all_eval_funcs = []
-    all_cases = []
     
     for turn_idx in range(turns):
         turn_verifiers = verifiers_by_turn[turn_idx]
@@ -418,44 +519,44 @@ def create_output_entry(query: Dict, selected_verifiers: List[Dict] = None, sour
             template_file = "model_prompts/generate_response_prompt.txt"
             turn_query = query['queries'][turn_idx]
             prompt_template = open(template_file).read().strip()
-            prompt = prompt_template.format(query=turn_query, instructions=current_instructions_text)
+            prompt = prompt_template.format(query=turn_query, instructions=current_instructions_text, language=language)
         elif turn_idx == 0:
             # First turn of multi-turn conversation
             template_file = "model_prompts/generate_response_turn1_prompt.txt"
             turn_query = query['queries'][turn_idx]
             prompt_template = open(template_file).read().strip()
-            prompt = prompt_template.format(query=turn_query, instructions=current_instructions_text)
+            prompt = prompt_template.format(query=turn_query, instructions=current_instructions_text, language=language)
         else:
             # Subsequent turns of multi-turn conversation
             if no_followup:
                 # Use rephrase prompt (no query needed)
                 template_file = "model_prompts/rephrase_response_turnN_prompt.txt"
                 prompt_template = open(template_file).read().strip()
-                prompt = prompt_template.format(instructions=current_instructions_text)
+                prompt = prompt_template.format(instructions=current_instructions_text, language=language)
             else:
                 # Use regular turnN prompt with query
                 template_file = "model_prompts/generate_response_turnN_prompt.txt"
                 turn_query = query['queries'][turn_idx]
                 prompt_template = open(template_file).read().strip()
-                prompt = prompt_template.format(query=turn_query, instructions=current_instructions_text)
+                prompt = prompt_template.format(query=turn_query, instructions=current_instructions_text, language=language)
         
         prompts.append(prompt)
         
         # Collect instruction data for this turn (already accumulated)
         all_instruction_ids.append([v['instruction_id'] for v in turn_verifiers])
         all_instructions.append([v['instruction'] for v in turn_verifiers])
+        all_instruction_categories.append([v.get('instruction_category', 'default') for v in turn_verifiers])
         all_eval_funcs.append([v['eval_func'] for v in turn_verifiers])
-        all_cases.append([v['cases'] for v in turn_verifiers])
     
     # Create unified output format (all keys are plural)
     return {
         'instruction_ids': all_instruction_ids,
         'instructions': all_instructions,
+        'instruction_categories': all_instruction_categories,
         'queries': query['queries'],
         'queries_responses': query['responses'],
         'query_metadata': query['metadata'],
         'eval_funcs': all_eval_funcs,
-        'cases': all_cases,
         'prompts': prompts,
         'source': source
     }
@@ -472,7 +573,8 @@ def concat_queries(
     messages_format: bool = False,
     turns: int = 1,
     messages_key: str = 'messages',
-    no_followup: bool = False
+    no_followup: bool = False,
+    balance_categories: bool = False
 ) -> int:
     """Concatenate queries with verification functions."""
     # Load verifiers
@@ -485,8 +587,14 @@ def concat_queries(
     
     if queries_dataset is not None:
         queries, skip_tracker = load_queries_from_dataset_or_file(
-            queries_dataset, query_column_name, response_column_name, 
-            query_max_len, turns, messages_format, messages_key, no_followup
+            queries_dataset=queries_dataset, 
+            query_column_name=query_column_name, 
+            response_column_name=response_column_name,
+            query_max_len=query_max_len, 
+            turns=turns, 
+            messages_format=messages_format, 
+            messages_key=messages_key,
+            no_followup=no_followup
         )
     else:
         print("No queries dataset provided")
@@ -499,8 +607,12 @@ def concat_queries(
     if len(queries) < 10:
         print("Warning: Very few queries available")
     
-    # Track usage count for uniform distribution
-    instruction_usage_count = {i: 0 for i in range(len(verifiers_list))}
+    # Initialize instruction selector
+    instruction_selector = InstructionSelector(
+        verifiers_list=verifiers_list, 
+        balance_categories=balance_categories
+    )
+    
     # Track instruction combinations for summary
     instruction_combination_count = {}
     
@@ -515,6 +627,8 @@ def concat_queries(
     else:
         # Use the specified number of output lines
         num_iterations = num_output_lines
+
+    language = get_language_name(LANGUAGE, LANGUAGE)  # Map language code to full name
     
     with open(output_file, 'w') as f:
         for _ in range(num_iterations):
@@ -532,22 +646,25 @@ def concat_queries(
             
             if turns == 1:
                 # Single turn logic (backward compatibility)
-                selected_verifiers = select_instructions(
-                    verifiers_list, instructions_per_query, instruction_usage_count
-                )
+                selected_verifiers = instruction_selector.select_instructions(instructions_per_query)
                 
                 # Track instruction combination for summary
                 instruction_key = tuple(sorted([v['instruction_id'] for v in selected_verifiers]))
                 instruction_combination_count[instruction_key] = instruction_combination_count.get(instruction_key, 0) + 1
                 
                 # Create output entry
-                output = create_output_entry(query, selected_verifiers, 
-                                           source=queries_dataset,
-                                           turns=turns, no_followup=no_followup)
+                output = create_output_entry(
+                    query=query, 
+                    selected_verifiers=selected_verifiers,
+                    source=queries_dataset,
+                    turns=turns, 
+                    no_followup=no_followup,
+                    language=language
+                )
             else:
                 # Multi-turn logic
-                selected_verifiers_multi_turn = select_instructions_multi_turn(
-                    verifiers_list, instructions_per_query, instruction_usage_count, turns
+                selected_verifiers_multi_turn = instruction_selector.select_instructions_multi_turn(
+                    instructions_per_query, turns
                 )
                 
                 # Track instruction combination for summary (flatten all turns)
@@ -558,11 +675,15 @@ def concat_queries(
                 instruction_combination_count[instruction_key] = instruction_combination_count.get(instruction_key, 0) + 1
                 
                 # Create output entry
-                output = create_output_entry(query, None, 
-                                           source=queries_dataset,
-                                           turns=turns,
-                                           selected_verifiers_multi_turn=selected_verifiers_multi_turn,
-                                           no_followup=no_followup)
+                output = create_output_entry(
+                    query=query, 
+                    selected_verifiers=None,
+                    source=queries_dataset,
+                    turns=turns,
+                    selected_verifiers_multi_turn=selected_verifiers_multi_turn,
+                    no_followup=no_followup,
+                    language=language
+                )
             
             f.write(json.dumps(output) + '\n')
             count += 1
@@ -574,7 +695,14 @@ def concat_queries(
     else:
         print(f"Used {len(queries)} unique queries (reused {max(0, count - len(queries))} times)")
     print(f"Number of turns per conversation: {turns}")
-    print(f"Instruction usage distribution: {dict(instruction_usage_count)}")
+    
+    # Print usage statistics
+    usage_stats = instruction_selector.get_usage_stats()
+    print(f"Instruction usage distribution: {usage_stats['instruction_usage']}")
+    
+    if balance_categories:
+        print(f"Category usage distribution: {usage_stats['category_usage']}")
+        print(f"Instructions per category: {usage_stats['categories']}")
     
     return count
 
@@ -605,6 +733,8 @@ def main():
                         help='Number of conversation turns to build multi-turn prompts (default: 1)')
     parser.add_argument('--no-followup', action='store_true',
                         help='For multi-turn conversations, use rephrase prompts for turns after the first (no queries needed)')
+    parser.add_argument('--balance_categories', action='store_true',
+                        help='Balance instruction selection across categories for uniform distribution within and across categories')
     
     args = parser.parse_args()
 
@@ -621,7 +751,8 @@ def main():
         args.messages_format,
         args.turns,
         args.messages_key,
-        args.no_followup
+        args.no_followup,
+        args.balance_categories
     )
 
 if __name__ == "__main__":

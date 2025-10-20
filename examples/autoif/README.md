@@ -21,12 +21,12 @@ sh pipeline.sh [ --seed_file data/seed_instructions.txt ] [ --queries_dataset da
 
 The pipeline utilizes checkpointing mechanism (stored in `{out_dir}/state_tracker.log`) that tracks completion of each step, enabling safe restarts if any step fails or needs to be rerun.
 
-You can also explicitly skip any step by setting the SKIP_{STEP} environment variables. 
+You can also explicitly execute specific steps by setting the EXECUTE_{STEP} environment variables. If no steps are configured to be executed, the full pipeline will run by default.
 
-For example, if you want to perform only the second phase of the pipeline (after verifiers have been generated), you can skip the first two steps with
+For example, if you want to perform only the second phase of the pipeline (after verifiers have been generated), you can execute only the last three steps with
 
 ```bash
-SKIP_AUGMENTATION=true SKIP_VERIFIERS=true sh pipeline.sh [ model/path ] \
+EXECUTE_CONCAT=true EXECUTE_RESPONSES=true EXECUTE_SFT=true sh pipeline.sh [ model/path ] \
 [ --queries_dataset data/queries.jsonl ] \
 [ --out_dir data/out1 ]
 ```
@@ -34,7 +34,7 @@ SKIP_AUGMENTATION=true SKIP_VERIFIERS=true sh pipeline.sh [ model/path ] \
 Alternatively, if you want to stop the pipeline after generating verifiers and before concatenating the queries from a dataset (a reason might be that you might not yet have the queries data or you might only be interested in the verifiers phase) then run
 
 ```bash
-SKIP_CONCAT=true SKIP_RESPONSES=true SKIP_SFT=true sh pipeline.sh [ model/path ] \
+EXECUTE_AUGMENTATION=true EXECUTE_VERIFIERS=true sh pipeline.sh [ model/path ] \
 [ --seed_file data/seed_instructions.txt ] \
 [ --out_dir data/out1 ]
 ```
@@ -52,18 +52,20 @@ MODEL=meta-llama/Llama-3.3-70B-Instruct
 OUT_DIR=data/ifeval # path to all data files. cmdline arg --out_dir will overwrite this
 HF_HOME=/scratch/project_462000353/hf_cache
 
-# step skipping conf
-SKIP_AUGMENTATION=false
-SKIP_VERIFIERS=false
-SKIP_CONCAT=false
-SKIP_RESPONSES=false
-SKIP_SFT=false
+# step execution conf
+EXECUTE_AUGMENTATION= # Set to 'true' to execute instruction augmentation step
+EXECUTE_VERIFIERS=   # Set to 'true' to execute verifier generation step  
+EXECUTE_CONCAT=      # Set to 'true' to execute query concatenation step
+EXECUTE_RESPONSES=   # Set to 'true' to execute response generation step
+EXECUTE_SFT=         # Set to 'true' to execute SFT dataset building step
+# Note: If no EXECUTE_* variables are set, all steps will be executed by default
 
 # instruction augmentation conf
 SEED_FILE=data/seed_instructions_ifeval.txt # cmdline arg --seed_file will overwrite this
 AUGMENT_INPUT_FILE=${OUT_DIR}/aug_input.jsonl
 AUGMENT_OUTPUT_FILE=${OUT_DIR}/aug_output.jsonl
-NUM_OF_AUGMENTED_INSTRUCTIONS=100
+NUM_OF_AUGMENTED_INSTRUCTIONS_PER_CATEGORY=50
+MAX_AUGMENTED_INSTRUCTIONS=200
 AUGMENTED_INSTRUCTIONS_FILE=${OUT_DIR}/augmented_instructions.csv
 
 # verifiers generation conf
@@ -72,7 +74,7 @@ VERIFIERS_OUTPUT_FILE=${OUT_DIR}/verifiers_output.jsonl
 VERIFIERS_ALL_FILE=${OUT_DIR}/verifiers_all.jsonl
 VERIFIERS_FILTERED_FILE=${OUT_DIR}/verifiers_filtered.jsonl
 # cross-validation params
-FUNCTION_TIMEOUT=5
+FUNCTION_TIMEOUT=10
 MIN_FUNCTIONS=1
 MIN_TEST_CASES=1
 ACCURACY_THRESHOLD=0.8
@@ -87,12 +89,13 @@ QUERY_MAX_LEN=200
 NUM_OUTPUT_LINES=300000
 MESSAGES_FORMAT=true
 MESSAGES_KEY=messages
-TURNS=2
+TURNS=1
 NO_FOLLOWUP=true
+BALANCE_CATEGORIES=true # if true, try to balance the number of queries per instruction category
 
 # response generation conf
 SCORED_RESPONSES_FILE=${OUT_DIR}/scored_responses.jsonl
-SCORE_THRESHOLD=4 # Here used for intermediate judgements in multi-turn generations. Also used in next step building sft data
+SCORE_THRESHOLD=4 # Here used for intermediate judgements in multi-turn generations (scale from 1-5). Also used in next step building sft data
 
 # build sft conf
 SFT_DATASET_DIR=${OUT_DIR}/sft_dataset
@@ -113,11 +116,12 @@ OUT_DIR=data/ifeval-lmsys-2turn-2constraint \
 QUERIES_DATASET=/scratch/project_462000353/posttraining_data/lmsys-chat-1m/unredacted_filtered_dedup_eng.jsonl \
 sh pipeline.sh /scratch/project_462000353/zosaelai2/models/Llama-3.3-70B-Instruct
 
-# if you already have the verifiers pre-generated, copy it to the out_dir and skip the first two steps (augmentation and verifiers generation)
+# if you already have the verifiers pre-generated, copy it to the out_dir and execute only the last three steps
 cp path/to/pregenerated/verifiers.jsonl data/ifeval-lmsys-2turn-2constraint/verifiers_filtered.jsonl
 
-SKIP_AUGMENTATION=true \
-SKIP_VERIFIERS=true \
+EXECUTE_CONCAT=true \
+EXECUTE_RESPONSES=true \
+EXECUTE_SFT=true \
 VERIFIERS_FILTERED_FILE=data/ifeval-lmsys-2turn-2constraint/verifiers_filtered.jsonl \ # optional, pipeline will discover automatically
 TURNS=2 \
 INSTRUCTIONS_PER_QUERY=2 \

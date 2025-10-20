@@ -26,8 +26,9 @@ from .constants import (
     REASON_MISSING_TEST_CASE_FIELDS
 )
 from .logging_utils import CrossValidationLogger
+from dispatcher.taskmanager.task.base import TaskFailed
 
-FUNCTION_TIMEOUT = int(os.getenv('FUNCTION_TIMEOUT', 5))  # seconds
+FUNCTION_TIMEOUT = int(os.getenv('FUNCTION_TIMEOUT', 10))  # seconds
 
 class TimeoutError(Exception):
     """Custom timeout exception for function execution."""
@@ -63,24 +64,28 @@ class FunctionExecutor:
         
         return True, None
 
-    def execute_with_response(self, func_str: str, response: str, log_errors: bool = True) -> Optional[int]:
+    def execute_with_response(self, func_str: str, response: str, **kwargs) -> int:
         """
         Execute an evaluation function with a response string.
-        
+
         Args:
             func_str: Function code as string
             response: Response text to evaluate
-            log_errors: Whether to log errors
-            
+            **kwargs: Additional keyword arguments to pass to the evaluation function
+
         Returns:
-            Integer result or None if execution failed
+            Integer result
+
+        Raises:
+            TaskFailed: If execution fails for any reason
         """
         # Check function safety first
         is_safe, reason = self.is_safe_function(func_str)
         if not is_safe:
-            if log_errors:
-                print(f"Unsafe function detected: {reason}")
-            return None
+            raise TaskFailed(
+                message=f"Unsafe function detected: {reason}",
+                error_type=REASON_HARMFUL_CODE_DETECTED
+            )
         
         try:
             # Create isolated namespace and execute function
@@ -90,28 +95,37 @@ class FunctionExecutor:
             # Get evaluate function
             evaluate_func = namespace.get('evaluate')
             if evaluate_func is None:
-                if log_errors:
-                    print("No 'evaluate' function found in the provided code")
-                return None
+                raise TaskFailed(
+                    message="No 'evaluate' function found in the provided code",
+                    error_type=REASON_MISSING_EVALUATE_FUNCTION
+                )
             
             # Set up timeout
             signal.signal(signal.SIGALRM, timeout_handler)
             signal.alarm(FUNCTION_TIMEOUT)
             
             try:
-                result = evaluate_func(response)
-                return int(result) if result is not None else None
+                # Pass response as first argument and any additional kwargs
+                result = evaluate_func(response, **kwargs)
+                if result is None:
+                    raise TaskFailed(
+                        message="Evaluation function returned None",
+                        error_type=REASON_FUNCTION_EXECUTION_ERROR
+                    )
+                return int(result)
             finally:
                 signal.alarm(0)  # Disable the alarm
                 
         except TimeoutError:
-            if log_errors:
-                print(f"Function timed out after {FUNCTION_TIMEOUT}s")
-            return None
+            raise TaskFailed(
+                message=f"Function timed out after {FUNCTION_TIMEOUT}s",
+                error_type=REASON_FUNCTION_TIMEOUT
+            )
         except Exception as e:
-            if log_errors:
-                print(f"Execution error: {str(e)}")
-            return None
+            raise TaskFailed(
+                message=f"Execution error: {str(e)}",
+                error_type=REASON_FUNCTION_EXECUTION_ERROR
+            )
     
     def test_function(self, func_str: str, test_case: Dict[str, Any], 
                      func_idx: int = -1, case_idx: int = -1, instruction_id: str = "unknown",
@@ -177,7 +191,14 @@ class FunctionExecutor:
             
             try:
                 # Run the test case
-                result = evaluate_func(test_case['input'])
+                # Handle new format with kwargs (dict input) vs old format (single input)
+                if isinstance(test_case['input'], dict):
+                    # New format: pass all key-value pairs as keyword arguments
+                    result = evaluate_func(**test_case['input'])
+                else:
+                    # Old format: pass input as single positional argument
+                    result = evaluate_func(test_case['input'])
+                
                 # Normalize expected output
                 expected = (test_case['output'] if isinstance(test_case['output'], bool) 
                           else test_case['output'].lower() == 'true')
