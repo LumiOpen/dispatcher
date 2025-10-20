@@ -32,7 +32,7 @@ class KeywordHandler:
     # Structure: {key_name: (default_value, expected_type)}
     KWARGS_KEYS = {
         'keywords': ([], list),
-        'N': (None, int)
+        'N': (1, int)
     }
 
     def __init__(self,
@@ -208,7 +208,6 @@ class KeywordHandler:
 
         # Always include the new instruction
         stored_data['new_instruction'] = keyword_data.get('instruction', original_instruction)
-
         self.keyword_generation_data[instruction_idx] = stored_data
 
     def _get_kwargs_key_names(self) -> List[str]:

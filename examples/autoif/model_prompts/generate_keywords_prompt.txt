@@ -1,9 +1,9 @@
 Below is a user query and an instruction which specifies what keywords should or should not be included in the response to the query. Your task is to generate a new instruction based on the original one, but filling in the keyword placeholder(s) with keywords or key phrases that are relevant to the query. Optionally, if present, you should also replace the placeholder {{N}} with a numerical value that fits the context of the instruction.
 
 The input is enclosed in the <query></query> and <instruction></instruction> tags. Your output should be in JSON format, containing three values:
-- instruction: this should be the rephrased instruction with the filled in values
+- instruction: this should be the rephrased instruction with the filled in values. Make sure the generated instruction is syntactically correct, so for example if the template instruction includes "{{N}}-th sentence" and you generate N=2, the generated instruction should include "second sentence".
 - keywords: a keyword or a list of keywords or key phrases that got filled in the instruction
-- N: optionally, the numerical value in the instruction, if the instruction contains a placeholder {{N}}
+- N: optionally, the numerical value in the instruction, if the instruction contains a placeholder {{N}}. If the instruction does not contain a placeholder {{N}}, you should omit this field from the output. 
 
 Example input #1:
 <query>Can the window size of a Microsoft form be adjusted to fit a mobile screen?</query>

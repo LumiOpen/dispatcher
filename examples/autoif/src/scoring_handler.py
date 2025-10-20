@@ -163,7 +163,6 @@ class ScoringHandler:
             if match:
                 try:
                     score = int(match.group(1))
-                    print(score)
                     return score
                 except (ValueError, IndexError):
                     continue
