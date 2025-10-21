@@ -8,8 +8,6 @@ from datasets import load_dataset
 from src.utils.query_skip_tracker import QuerySkipTracker
 from src.utils.lang_id import get_language_name
 
-LANGUAGE = os.getenv('LANGUAGE', 'eng')  # Language code for building final prompts
-
 class InstructionSelector:
     """Class to handle instruction selection logic with uniform distribution."""
     
@@ -292,20 +290,20 @@ def extract_query_from_messages(item: Dict, turns: int = 1, messages_key: str = 
             "assistant_responses": assistant_responses[:turns]
         }, ""
 
-def parse_query_from_item(item: Dict, messages_format: bool, query_column_name: str, 
-                         response_column_name: str, query_max_len: int, turns: int = 1, 
-                         messages_key: str = 'messages', no_followup: bool = False) -> Optional[Dict]:
+def parse_query_from_item(item: Dict, messages_format: bool, query_column_name: str,
+                         response_column_name: str, query_max_len: int, turns: int = 1,
+                         messages_key: str = 'messages', no_followup: bool = False, language: str = 'eng') -> Optional[Dict]:
     """Parse a single query item from either standard or messages format.
-    
+
     Returns:
         Dict with 'queries', 'responses', and 'metadata' keys, or None if invalid
     """
 
-    # Filter by language if LANGUAGE is set and 'lang' or 'language' key exists in item
-    if 'lang' in item and item['lang'] != LANGUAGE:
-        return None, f"language_mismatch_{item['lang']}_expected_{LANGUAGE}"
-    if 'language' in item and item['language'] != LANGUAGE:
-        return None, f"language_mismatch_{item['language']}_expected_{LANGUAGE}"
+    # Filter by language if language is set and 'lang' or 'language' key exists in item
+    if 'lang' in item and item['lang'] != language:
+        return None, f"language_mismatch_{item['lang']}_expected_{language}"
+    if 'language' in item and item['language'] != language:
+        return None, f"language_mismatch_{item['language']}_expected_{language}"
 
     query = {}
     
@@ -377,32 +375,33 @@ def parse_query_from_item(item: Dict, messages_format: bool, query_column_name: 
 
 def load_queries_from_file(queries_file: str, messages_format: bool, query_column_name: str,
                           response_column_name: str, query_max_len: int, turns: int = 1,
-                          messages_key: str = 'messages', no_followup: bool = False) -> Tuple[List[Dict], int]:
+                          messages_key: str = 'messages', no_followup: bool = False, language: str = 'eng') -> Tuple[List[Dict], int]:
     """Load queries from a JSONL file.
-    
+
     Returns:
         Tuple of (queries_list, skipped_count)
     """
     queries = []
     skip_tracker = QuerySkipTracker()
-    
+
     with open(queries_file, 'r') as f:
         for line in f:
             line = line.strip()
             if not line:  # Skip empty lines
                 continue
-            
+
             try:
                 item = json.loads(line)
                 query, reason = parse_query_from_item(
-                    item=item, 
-                    messages_format=messages_format, 
+                    item=item,
+                    messages_format=messages_format,
                     query_column_name=query_column_name,
-                    response_column_name=response_column_name, 
-                    query_max_len=query_max_len, 
-                    turns=turns, 
-                    messages_key=messages_key, 
-                    no_followup=no_followup
+                    response_column_name=response_column_name,
+                    query_max_len=query_max_len,
+                    turns=turns,
+                    messages_key=messages_key,
+                    no_followup=no_followup,
+                    language=language
                 )
                 if query:
                     queries.append(query)
@@ -416,15 +415,15 @@ def load_queries_from_file(queries_file: str, messages_format: bool, query_colum
     return queries, skip_tracker
 
 def load_queries_from_dataset_or_file(queries_dataset: str, query_column_name: str,
-                                      response_column_name: str, query_max_len: int, turns: int = 1, 
+                                      response_column_name: str, query_max_len: int, turns: int = 1,
                                       messages_format: bool = False, messages_key: str = 'messages',
-                                      no_followup: bool = False) -> Tuple[List[Dict], int]:
+                                      no_followup: bool = False, language: str = 'eng') -> Tuple[List[Dict], int]:
     """Load queries from either a local file or a HuggingFace dataset.
-    
+
     Determines the loading strategy based on whether the path exists locally.
     If the path exists as a local file, loads as JSONL file.
     Otherwise, attempts to load as a HuggingFace dataset.
-    
+
     Returns:
         Tuple of (queries_list, skipped_count)
     """
@@ -432,50 +431,53 @@ def load_queries_from_dataset_or_file(queries_dataset: str, query_column_name: s
     if os.path.exists(queries_dataset):
         print(f"Loading queries from local file: {queries_dataset}")
         return load_queries_from_file(
-            queries_file=queries_dataset, 
-            messages_format=messages_format, 
+            queries_file=queries_dataset,
+            messages_format=messages_format,
             query_column_name=query_column_name,
-            response_column_name=response_column_name, 
-            query_max_len=query_max_len, 
-            turns=turns, 
-            messages_key=messages_key, 
-            no_followup=no_followup
+            response_column_name=response_column_name,
+            query_max_len=query_max_len,
+            turns=turns,
+            messages_key=messages_key,
+            no_followup=no_followup,
+            language=language
         )
     else:
         print(f"Loading queries from HuggingFace dataset: {queries_dataset}")
         return load_queries_from_dataset(
-            queries_dataset=queries_dataset, 
+            queries_dataset=queries_dataset,
             messages_format=messages_format,
-            query_column_name=query_column_name, 
+            query_column_name=query_column_name,
             response_column_name=response_column_name,
-            query_max_len=query_max_len, 
-            turns=turns, 
+            query_max_len=query_max_len,
+            turns=turns,
             messages_key=messages_key,
-            no_followup=no_followup
+            no_followup=no_followup,
+            language=language
         )
 
 def load_queries_from_dataset(queries_dataset: str, messages_format: bool, query_column_name: str,
                              response_column_name: str, query_max_len: int, turns: int = 1,
-                             messages_key: str = 'messages', no_followup: bool = False) -> Tuple[List[Dict], int]:
+                             messages_key: str = 'messages', no_followup: bool = False, language: str = 'eng') -> Tuple[List[Dict], int]:
     """Load queries from a HuggingFace dataset.
-    
+
     Returns:
         Tuple of (queries_list, skipped_count)
     """
     queries = []
     skip_tracker = QuerySkipTracker()
-    
+
     dataset = load_dataset(queries_dataset)
     for item in dataset['train']:
         query, reason = parse_query_from_item(
-            item=item, 
-            messages_format=messages_format, 
+            item=item,
+            messages_format=messages_format,
             query_column_name=query_column_name,
-            response_column_name=response_column_name, 
-            query_max_len=query_max_len, 
-            turns=turns, 
-            messages_key=messages_key, 
-            no_followup=no_followup
+            response_column_name=response_column_name,
+            query_max_len=query_max_len,
+            turns=turns,
+            messages_key=messages_key,
+            no_followup=no_followup,
+            language=language
         )
         if query:
             queries.append(query)
@@ -562,12 +564,13 @@ def create_output_entry(query: Dict, selected_verifiers: List[Dict] = None, sour
     }
 
 def concat_queries(
-    verifiers_path: str, 
+    verifiers_path: str,
     queries_dataset: str,
     query_max_len: int,
     query_column_name: str,
     response_column_name: str,
     output_file: str,
+    language: str = 'eng',
     num_output_lines: int = None,
     instructions_per_query: int = 1,
     messages_format: bool = False,
@@ -581,20 +584,21 @@ def concat_queries(
     verifiers_list = load_verifiers(verifiers_path)
     if not verifiers_list:
         return 0
-    
+
     # Load queries from file or dataset
     queries = []
-    
+
     if queries_dataset is not None:
         queries, skip_tracker = load_queries_from_dataset_or_file(
-            queries_dataset=queries_dataset, 
-            query_column_name=query_column_name, 
+            queries_dataset=queries_dataset,
+            query_column_name=query_column_name,
             response_column_name=response_column_name,
-            query_max_len=query_max_len, 
-            turns=turns, 
-            messages_format=messages_format, 
+            query_max_len=query_max_len,
+            turns=turns,
+            messages_format=messages_format,
             messages_key=messages_key,
-            no_followup=no_followup
+            no_followup=no_followup,
+            language=language
         )
     else:
         print("No queries dataset provided")
@@ -602,24 +606,24 @@ def concat_queries(
 
     skip_tracker.print_summary()
     print(f"Total passed: {len(queries)}")
-    
+
     # Ensure we have some queries
     if len(queries) < 10:
         print("Warning: Very few queries available")
-    
+
     # Initialize instruction selector
     instruction_selector = InstructionSelector(
-        verifiers_list=verifiers_list, 
+        verifiers_list=verifiers_list,
         balance_categories=balance_categories
     )
-    
+
     # Track instruction combinations for summary
     instruction_combination_count = {}
-    
+
     # Generate concatenated entries
     count = 0
     query_index = 0
-    
+
     # Determine the number of iterations
     if num_output_lines is None:
         # Process all queries once without repetition
@@ -628,7 +632,7 @@ def concat_queries(
         # Use the specified number of output lines
         num_iterations = num_output_lines
 
-    language = get_language_name(LANGUAGE, LANGUAGE)  # Map language code to full name
+    language_full_name = get_language_name(language, language)  # Map language code to full name
     
     with open(output_file, 'w') as f:
         for _ in range(num_iterations):
@@ -654,12 +658,12 @@ def concat_queries(
                 
                 # Create output entry
                 output = create_output_entry(
-                    query=query, 
+                    query=query,
                     selected_verifiers=selected_verifiers,
                     source=queries_dataset,
-                    turns=turns, 
+                    turns=turns,
                     no_followup=no_followup,
-                    language=language
+                    language=language_full_name
                 )
             else:
                 # Multi-turn logic
@@ -676,13 +680,13 @@ def concat_queries(
                 
                 # Create output entry
                 output = create_output_entry(
-                    query=query, 
+                    query=query,
                     selected_verifiers=None,
                     source=queries_dataset,
                     turns=turns,
                     selected_verifiers_multi_turn=selected_verifiers_multi_turn,
                     no_followup=no_followup,
-                    language=language
+                    language=language_full_name
                 )
             
             f.write(json.dumps(output) + '\n')
@@ -708,51 +712,54 @@ def concat_queries(
 
 def main():
     parser = argparse.ArgumentParser(description='Cross-validate verifiers and concatenate with queries')
-    
-    parser.add_argument('--verifiers_file', type=str, required=True,
+
+    parser.add_argument('--verifiers-file', type=str, required=True,
                         help='Input file with filtered verifiers')
-    parser.add_argument('--output_file', type=str, required=True,
+    parser.add_argument('--output-file', type=str, required=True,
                         help='Output file for concatenated queries and verifiers')
-    parser.add_argument('--queries_dataset', type=str, required=True,
+    parser.add_argument('--queries-dataset', type=str, required=True,
                         help='Dataset with queries for concatenation. Can be a HuggingFace dataset path or a path to local jsonl file')
-    parser.add_argument('--query_max_len', type=int, default=200,
+    parser.add_argument('--language', type=str, default='eng',
+                        help='Language code (default: eng)')
+    parser.add_argument('--query-max-len', type=int, default=200,
                         help='Maximum query length in characters')
-    parser.add_argument('--query_column_name', type=str, default='instruction',
-                        help='Column name of the desired response from the query dataset') 
-    parser.add_argument('--response_column_name', type=str, default='response',
-                        help='Column name of the desired response from the query dataset')                  
-    parser.add_argument('--num_output_lines', type=int, default=None,
+    parser.add_argument('--query-column-name', type=str, default='instruction',
+                        help='Column name of the desired response from the query dataset')
+    parser.add_argument('--response-column-name', type=str, default='response',
+                        help='Column name of the desired response from the query dataset')
+    parser.add_argument('--num-output-lines', type=int, default=None,
                         help='Number of output lines to generate (will reuse queries if needed). If not provided, processes all queries once without repetition.')
-    parser.add_argument('--instructions_per_query', type=int, default=1,
+    parser.add_argument('--instructions-per-query', type=int, default=1,
                         help='Number of instructions to combine with each query (formatted as bullet points)')
-    parser.add_argument('--messages_format', action='store_true',
+    parser.add_argument('--messages-format', action='store_true',
                         help='Parse queries from chat messages format (extracts first user message)')
-    parser.add_argument('--messages_key', type=str, default='messages',
+    parser.add_argument('--messages-key', type=str, default='messages',
                         help='Key name for the messages list when using messages_format (default: messages)')
     parser.add_argument('--turns', type=int, default=1,
                         help='Number of conversation turns to build multi-turn prompts (default: 1)')
     parser.add_argument('--no-followup', action='store_true',
                         help='For multi-turn conversations, use rephrase prompts for turns after the first (no queries needed)')
-    parser.add_argument('--balance_categories', action='store_true',
+    parser.add_argument('--balance-categories', action='store_true',
                         help='Balance instruction selection across categories for uniform distribution within and across categories')
-    
+
     args = parser.parse_args()
 
     # Create query+instruction dataset
     concat_queries(
-        args.verifiers_file,
-        args.queries_dataset,
-        args.query_max_len,
-        args.query_column_name,
-        args.response_column_name,
-        args.output_file,
-        args.num_output_lines,
-        args.instructions_per_query,
-        args.messages_format,
-        args.turns,
-        args.messages_key,
-        args.no_followup,
-        args.balance_categories
+        verifiers_path=args.verifiers_file,
+        queries_dataset=args.queries_dataset,
+        query_max_len=args.query_max_len,
+        query_column_name=args.query_column_name,
+        response_column_name=args.response_column_name,
+        output_file=args.output_file,
+        language=args.language,
+        num_output_lines=args.num_output_lines,
+        instructions_per_query=args.instructions_per_query,
+        messages_format=args.messages_format,
+        turns=args.turns,
+        messages_key=args.messages_key,
+        no_followup=args.no_followup,
+        balance_categories=args.balance_categories
     )
 
 if __name__ == "__main__":

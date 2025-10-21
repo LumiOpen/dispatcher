@@ -1,33 +1,40 @@
 import argparse
 import json
-import csv
 from jinja2 import Environment, FileSystemLoader
 import os
 
 def create_verifier_input(instructions_file: str, output_file: str) -> None:
-    """Create input for verification function generation."""
+    """Create input for verification function generation from JSONL file."""
     instructions = []
     try:
         with open(instructions_file, 'r', encoding='utf-8') as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                instruction = row['instruction'].strip()
-                instruction_id = row['id']
-                category = row.get('category', '').strip() if 'category' in row else ''
-                if instruction:
+            for line_num, line in enumerate(f, 1):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    data = json.loads(line)
+                    instruction = data.get('instruction', '').strip()
+                    instruction_id = data.get('id', '')
+                    category = data.get('category', '').strip()
+
+                    if not instruction:
+                        print(f"Warning: Line {line_num} has no instruction, skipping")
+                        continue
+
                     instructions.append({
-                        'id': instruction_id, 
+                        'id': instruction_id,
                         'instruction': instruction,
                         'category': category
                     })
+                except json.JSONDecodeError as e:
+                    print(f"Warning: Line {line_num} is not valid JSON, skipping: {e}")
+                    continue
     except FileNotFoundError:
         print(f"Error: Instructions file {instructions_file} not found")
         exit(1)
-    except KeyError as e:
-        print(f"Error: Required column {e} not found in CSV file")
-        exit(1)
     except Exception as e:
-        print(f"Error reading CSV file: {e}")
+        print(f"Error reading JSONL file: {e}")
         exit(1)
     
     # Set up Jinja2 environment
@@ -62,14 +69,14 @@ def create_verifier_input(instructions_file: str, output_file: str) -> None:
 
 def main():
     parser = argparse.ArgumentParser(description='Create input for verification function generation')
-    
+
     parser.add_argument('--instructions_file', type=str, required=True,
-                        help='File with filtered instructions')
+                        help='JSONL file with filtered instructions (output from augmentation post-processing)')
     parser.add_argument('--output_file', type=str, required=True,
-                        help='Output file with prompts for verification function generation')
-    
+                        help='Output JSONL file with prompts for verification function generation')
+
     args = parser.parse_args()
-    
+
     create_verifier_input(args.instructions_file, args.output_file)
 
 if __name__ == "__main__":

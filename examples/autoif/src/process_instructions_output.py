@@ -1,8 +1,7 @@
 import argparse
 import json
 import re
-import csv
-from utils.lang_id import detect_language  
+from utils.lang_id import detect_language
 
 
 def process_output(input_file: str, output_file: str, language: str = 'en', max_instructions: int = 100, seed_file: str = None) -> None:
@@ -12,18 +11,18 @@ def process_output(input_file: str, output_file: str, language: str = 'en', max_
 
     seen_instructions = set()
     instruction_count = 0
-    
+
     # Load keyword instructions from seed file if provided
     keyword_instructions = []
     if seed_file:
         try:
             with open(seed_file, 'r') as f:
                 seed_data = json.load(f)
-            
+
             # Extract keyword instructions from the new JSON format
             if "keyword_instructions" in seed_data:
                 keyword_instructions = [
-                    {'instruction': instruction, 'category': 'keyword'} 
+                    {'instruction': instruction, 'category': 'keyword'}
                     for instruction in seed_data["keyword_instructions"]
                 ]
                 print(f"Loaded {len(keyword_instructions)} keyword instructions from {seed_file}")
@@ -33,7 +32,7 @@ def process_output(input_file: str, output_file: str, language: str = 'en', max_
             print(f"Warning: Seed file {seed_file} not found, continuing without keyword instructions")
         except json.JSONDecodeError:
             print(f"Warning: Invalid JSON in seed file {seed_file}, continuing without keyword instructions")
-    
+
     # Process instructions from model output
     try:
         with open(input_file, 'r') as f:
@@ -44,28 +43,30 @@ def process_output(input_file: str, output_file: str, language: str = 'en', max_
     except json.JSONDecodeError:
         print(f"Error: Input file {input_file} contains invalid JSON")
         exit(1)
-    
-    # Open CSV file for writing
-    with open(output_file, 'w', newline='', encoding='utf-8') as csvfile:
-        writer = csv.writer(csvfile)
-        # Write header with new keyword and category columns
-        writer.writerow(['id', 'instruction', 'category'])
-        
-        # First, add keyword instructions to the CSV
+
+    # Open JSONL file for writing
+    with open(output_file, 'w', encoding='utf-8') as outfile:
+
+        # First, add keyword instructions to the output
         for keyword_data in keyword_instructions:
             if instruction_count >= int(max_instructions):
                 break
-            
+
             keyword_instruction = keyword_data['instruction']
             keyword_category = keyword_data['category']
-            
+
             # Skip duplicates
             if keyword_instruction in seen_instructions:
                 print(f"Skipping duplicate keyword instruction: <instruction>{keyword_instruction}</instruction>")
                 continue
-                
+
             seen_instructions.add(keyword_instruction)
-            writer.writerow([instruction_count, keyword_instruction, keyword_category])
+            entry = {
+                'instruction_id': str(instruction_count),
+                'instruction': keyword_instruction,
+                'instruction_category': keyword_category
+            }
+            outfile.write(json.dumps(entry) + '\n')
             instruction_count += 1
             print(f"Added keyword instruction {instruction_count}: {keyword_instruction}")
         
@@ -121,8 +122,13 @@ def process_output(input_file: str, output_file: str, language: str = 'en', max_
                             print(f"OK. Response language is {lang_code1} ({lang_code2}). Expected {language}.")
                             # Add to set to track duplicates
                             seen_instructions.add(instruction)
-                            # Write to CSV with keyword=False and category
-                            writer.writerow([instruction_count, instruction, category])
+                            # Write to JSONL with category
+                            entry = {
+                                'instruction_id': str(instruction_count),
+                                'instruction': instruction,
+                                'instruction_category': category if category else ''
+                            }
+                            outfile.write(json.dumps(entry) + '\n')
                             cat_instr_count += 1
                             instruction_count += 1
                     except Exception as e:
@@ -132,21 +138,28 @@ def process_output(input_file: str, output_file: str, language: str = 'en', max_
 
 def main():
     parser = argparse.ArgumentParser(description='Process and filter generated instructions')
-    
-    parser.add_argument('--input_file', type=str, required=True,
+
+    parser.add_argument('--input-file', type=str, required=True,
                         help='Input file with model-generated instructions (JSONL)')
-    parser.add_argument('--output_file', type=str, required=True,
-                        help='Output file for filtered instructions (CSV)')
+    parser.add_argument('--output-file', type=str, required=True,
+                        help='Output file for filtered instructions (JSONL)')
     parser.add_argument('--language', type=str, default='fi',
                         help='Language code for filtering (e.g., "fi" for Finnish)')
-    parser.add_argument('--max_instructions', type=str, default=100,
+    parser.add_argument('--max-instructions', type=str, default=100,
                         help='Maximum number of instructions to output, default is 100.')
-    parser.add_argument('--seed_file', type=str, default=None,
+    parser.add_argument('--seed-file', type=str, default=None,
                         help='Optional seed file (categorised_instructions.json) containing keyword instructions to include in output')
-    
+
     args = parser.parse_args()
-    
-    process_output(args.input_file, args.output_file, args.language, args.max_instructions, args.seed_file)
+
+    # Convert hyphenated args to underscores for function call
+    process_output(
+        input_file=args.input_file,
+        output_file=args.output_file,
+        language=args.language,
+        max_instructions=args.max_instructions,
+        seed_file=args.seed_file
+    )
 
 if __name__ == "__main__":
     main()
