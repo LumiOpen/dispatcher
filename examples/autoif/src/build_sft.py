@@ -19,12 +19,12 @@ def count_valid_entries(input_file, score_threshold):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("input_file")
-    parser.add_argument("--output_dir", required=True, help="Directory to save the output files.")
-    parser.add_argument("--score_threshold", type=int, default=4, help="Minimum score threshold for filtering messages.")
-    parser.add_argument("--max_train_outrows", type=int, default=30000, help="Maximum number of rows in the train.jsonl file.")
+    parser.add_argument("--input-file", required=True, help="Input JSONL file with scored responses")
+    parser.add_argument("--output-dir", required=True, help="Directory to save the output files.")
+    parser.add_argument("--score-threshold", type=int, default=4, help="Minimum score threshold for filtering messages.")
+    parser.add_argument("--max-train-outrows", type=int, default=30000, help="Maximum number of rows in the train.jsonl file.")
     parser.add_argument("--test", action="store_true", help="If set, remaining entries after max_train_outrows will be written to test.jsonl.")
-    parser.add_argument("--max_test_outrows", type=int, default=3000, help="Maximum number of rows in the test.jsonl file.")
+    parser.add_argument("--max-test-outrows", type=int, default=3000, help="Maximum number of rows in the test.jsonl file.")
     args = parser.parse_args()
     
     # Create output directory if it doesn't exist

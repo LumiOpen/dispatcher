@@ -448,20 +448,20 @@ def cross_validate_verifiers(verifiers_file: str, output_all_file: str, output_f
 def main():
     """Main entry point for the cross-validation script."""
     parser = argparse.ArgumentParser(description='Cross-validate verifiers and concatenate with queries')
-    
-    parser.add_argument('--verifiers_file', type=str, required=True,
+
+    parser.add_argument('--verifiers-file', type=str, required=True,
                         help='Input file with verification functions')
-    parser.add_argument('--output_all_file', type=str, required=True,
+    parser.add_argument('--output-all-file', type=str, required=True,
                         help='Output file for all verifiers with filter status')
-    parser.add_argument('--output_filtered_file', type=str, required=True,
+    parser.add_argument('--output-filtered-file', type=str, required=True,
                         help='Output file for filtered verifiers')
-    
+
     args = parser.parse_args()
-    
+
     # Run cross-validation
     cross_validate_verifiers(
-        args.verifiers_file, 
-        args.output_all_file, 
+        args.verifiers_file,
+        args.output_all_file,
         args.output_filtered_file,
     )
 

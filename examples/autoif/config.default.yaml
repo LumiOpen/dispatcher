@@ -1,0 +1,205 @@
+# AutoIF Pipeline Configuration
+#
+# This is the default configuration template for the AutoIF pipeline.
+# To start a new experiment:
+#   1. Create experiment directory: mkdir -p <OUT_DIR>
+#   2. Copy this file: cp config.default.yaml <OUT_DIR>/config.yaml
+#   3. Edit <OUT_DIR>/config.yaml with your experiment parameters
+#   4. Run: ./pipeline_new.sh --out-dir <OUT_DIR>
+
+# ==============================================================================
+# Experiment Metadata
+# ==============================================================================
+experiment:
+  name: "ifeval_baseline"
+  description: "Baseline IFEval instruction following dataset generation"
+
+# ==============================================================================
+# Model Configuration
+# ==============================================================================
+model:
+  name: "meta-llama/Llama-3.3-70B-Instruct"
+  max_model_len: 16384
+  tensor_parallel: 4  # Number of GPUs per task worker
+
+# ==============================================================================
+# Data Configuration
+# ==============================================================================
+data:
+  # Input files (paths relative to pipeline root or absolute)
+  seed_file: "data/seed_instructions.txt"
+  queries_dataset: null  # REQUIRED: Path to queries dataset (HF path or local JSONL)
+
+  # Language
+  language: "en"
+
+# ==============================================================================
+# File Naming Convention
+# ==============================================================================
+# All paths are relative to OUT_DIR
+files:
+  # Augmentation step
+  augmentation_input: "aug_input.jsonl"
+  augmentation_output: "aug_output.jsonl"
+  augmented_instructions: "augmented_instructions.jsonl"
+
+  # Verifiers step
+  verifiers_input: "verifiers_input.jsonl"
+  verifiers_output: "verifiers_output.jsonl"
+  verifiers_all: "verifiers_all.jsonl"
+  verifiers_filtered: "verifiers_filtered.jsonl"
+
+  # Concatenation step
+  verifiers_queries: "verifiers_queries.jsonl"
+
+  # Responses step
+  scored_responses: "scored_responses.jsonl"
+
+  # SFT step
+  sft_dataset_dir: "sft_dataset"
+
+# ==============================================================================
+# Pipeline Execution Sequence
+# ==============================================================================
+# Define the order of execution. To add/remove/reorder steps, modify this list.
+# Each entry must correspond to a step defined in the 'steps' section below.
+pipeline_sequence:
+  - augmentation
+  - verifiers
+  - concatenation
+  - responses
+  - sft
+
+# ==============================================================================
+# Pipeline Steps Configuration
+# ==============================================================================
+# Define all available steps. Steps not in pipeline_sequence won't run.
+# Developer responsibility: Ensure input_file and output_file compatibility
+# between consecutive steps in the pipeline_sequence.
+steps:
+  # --------------------------------------------------------------------------
+  # Augmentation: Generate augmented instructions from seed instructions
+  # --------------------------------------------------------------------------
+  augmentation:
+    enabled: true
+
+    substeps:
+      augmentation_job:
+        enabled: true
+        # Optional: Override model for this substep only
+        # model: "meta-llama/Llama-3.1-8B-Instruct"
+      augmentation_postprocessing:
+        enabled: true
+
+    params:
+      num_instructions_per_category: 50  # Instructions to generate per category
+      max_augmented_instructions: 200    # Maximum total instructions after filtering
+
+    # Optional SLURM overrides (uncomment to override defaults)
+    slurm_overrides:
+      # augmentation_job:
+      #   time: "01:00:00"
+      #   nodes: 2
+      # augmentation_postprocessing:
+      #   time: "00:30:00"
+
+  # --------------------------------------------------------------------------
+  # Verifiers: Generate and validate verification functions
+  # --------------------------------------------------------------------------
+  verifiers:
+    enabled: true
+
+    substeps:
+      verifiers_preprocessing:
+        enabled: true
+      verifiers_job:
+        enabled: true
+      verifiers_postprocessing:
+        enabled: true
+
+    params:
+      function_timeout: 10        # Timeout for verifier function execution (seconds)
+      min_functions: 1            # Minimum valid functions required per instruction
+      min_test_cases: 1           # Minimum test cases required per function
+      function_pass_rate: 0.8     # Minimum pass rate for functions (0.0-1.0)
+
+    slurm_overrides: {}
+
+  # --------------------------------------------------------------------------
+  # Concatenation: Create queries by concatenating instructions with dataset
+  # --------------------------------------------------------------------------
+  concatenation:
+    enabled: true
+
+    params:
+      num_output_lines: 300000        # Number of query samples to generate
+      instructions_per_query: 1       # Instructions per query (1-3 supported)
+      query_max_len: 200              # Maximum query length in characters
+      query_column_name: "instruction"  # Column name for query in dataset
+      response_column_name: "response"  # Column name for response in dataset
+      messages_format: true           # Parse queries from chat messages format
+      messages_key: "messages"        # Key for messages list when using messages_format
+      turns: 1                        # Number of conversation turns for multi-turn prompts
+      no_followup: true               # Use rephrase prompts for turns after first (no queries)
+      balance_categories: true        # Balance instruction selection across categories
+
+    slurm_overrides: {}
+
+  # --------------------------------------------------------------------------
+  # Responses: Generate and score responses to queries
+  # --------------------------------------------------------------------------
+  responses:
+    enabled: true
+
+    params:
+      function_timeout: 10  # Timeout for verification during scoring
+
+    slurm_overrides:
+      # High resource requirements for large-scale generation
+      nodes: 4
+      time: "18:00:00"
+
+  # --------------------------------------------------------------------------
+  # SFT: Build final supervised fine-tuning dataset
+  # --------------------------------------------------------------------------
+  sft:
+    enabled: true
+
+    params:
+      score_threshold: 4  # Minimum score to include in dataset (1-5)
+
+    slurm_overrides: {}
+
+# ==============================================================================
+# SLURM Configuration
+# ==============================================================================
+slurm:
+  # Account and partitions
+  account: "project_462000963"
+  gpu_partition: "dev-g"      # Partition for GPU jobs
+  cpu_partition: "small"      # Partition for CPU jobs
+
+  # Worker configuration for GPU tasks (concurrent backend requests)
+  workers:
+    augmentation: 8
+    verifiers: 8
+    responses: 32
+
+  # Timeout configuration (seconds)
+  timeouts:
+    startup: 1800    # vLLM startup timeout
+    request: 1800    # Individual request timeout
+    work: 3600       # Dispatcher work item timeout
+
+# ==============================================================================
+# Advanced Configuration
+# ==============================================================================
+advanced:
+  # Virtual environment path (relative to pipeline root)
+  venv_dir: ".venv"
+
+  # HuggingFace cache directory
+  hf_home: "/scratch/project_462000353/hf_cache"
+
+  # Batch size for dispatcher tasks
+  batch_size: 1
