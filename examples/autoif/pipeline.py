@@ -14,8 +14,6 @@ import shutil
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-from src.orchestrator.step_config import get_substep_config
-
 
 # =============================================================================
 # CONFIG LOADING
@@ -43,92 +41,113 @@ def load_config(out_dir: Path) -> dict:
         config = yaml.safe_load(f)
 
     # Validate required fields
-    if not config.get('pipeline_sequence'):
-        print("ERROR: pipeline_sequence not defined in config")
-        sys.exit(1)
-
-    if not config.get('data', {}).get('queries_dataset'):
-        print("ERROR: data.queries_dataset required in config")
+    if not config.get('pipeline'):
+        print("ERROR: pipeline not defined in config")
         sys.exit(1)
 
     return config
 
 
 # =============================================================================
-# PARAMETER BUILDING (AUTO-DISCOVERY)
+# PARAMETER BUILDING (GENERIC CASCADE RESOLUTION)
 # =============================================================================
+
+# Reserved keys that should not be passed as env vars
+RESERVED_KEYS = {
+    'experiment', 'pipeline', 'steps', 'substeps'
+}
+
+
+def resolve_config_value(key: str, global_cfg: dict, step_cfg: dict, substep_cfg: dict):
+    """
+    Generic cascade resolution: substep > step > global.
+
+    Returns None if key not found at any level.
+    """
+    if substep_cfg and key in substep_cfg:
+        return substep_cfg[key]
+    if step_cfg and key in step_cfg:
+        return step_cfg[key]
+    if global_cfg and key in global_cfg:
+        return global_cfg[key]
+    return None
+
 
 def build_env_vars(config: dict, step: str, substep: str, out_dir: Path) -> dict:
     """
-    Build environment variables for substep - auto-discovery approach.
+    Build environment variables for substep using generic cascade resolution.
 
-    Pass all relevant config as env vars, let job scripts use what they need.
+    Any config at global level can be overridden at step or substep level using the same keyword.
+    Cascade: substep config > step config > global config
     """
     env = {}
 
-    # 1. Model (with substep override support)
-    env['model'] = config['model']['name']
-    substep_cfg = config['steps'][step]['substeps'].get(substep, {})
-    if isinstance(substep_cfg, dict) and 'model' in substep_cfg:
-        env['model'] = substep_cfg['model']
+    # Extract config levels
+    global_cfg = config
+    step_cfg = config['steps'][step]
+    substep_cfg = step_cfg.get('substeps', {}).get(substep, {})
 
-    # 2. Common parameters
-    env['language'] = config['data']['language']
+    # Handle 'pass' keyword in YAML (becomes None in Python)
+    if substep_cfg is None:
+        substep_cfg = {}
+
+    # 1. Collect ALL keys from all levels (excluding reserved keys and substeps)
+    all_keys = set()
+    all_keys.update(k for k in global_cfg.keys() if k not in RESERVED_KEYS)
+    all_keys.update(k for k in step_cfg.keys() if k not in RESERVED_KEYS)
+    all_keys.update(k for k in substep_cfg.keys() if k not in RESERVED_KEYS)
+
+    # 2. Generic cascade resolution for all keys
+    for key in all_keys:
+        value = resolve_config_value(key, global_cfg, step_cfg, substep_cfg)
+        if value is not None:
+            env[key] = str(value)
+
+    # 3. Output directory
     env['out_dir'] = str(out_dir)
 
-    # 3. All step parameters (auto-pass)
-    step_params = config['steps'][step].get('params', {})
-    for key, value in step_params.items():
-        env[key] = str(value)
+    # 4. Resolve file paths to absolute paths (relative to out_dir)
+    for key, value in list(env.items()):
+        # If value looks like a relative file path, resolve to out_dir
+        if isinstance(value, str) and value and not value.startswith('/'):
+            # Check if it's a file path (ends with common extensions or is a directory name)
+            if any(value.endswith(ext) for ext in ['.jsonl', '.txt', '.json', '.csv']) or \
+               'dataset' in key.lower() or 'dir' in key.lower():
+                # Keep HF dataset paths and absolute paths as-is
+                if not ('/' in value and len(value) > 50):  # Heuristic: long paths with / are likely HF paths
+                    env[key] = str(out_dir / value)
 
-    # 4. All file paths (auto-resolve to out_dir)
-    for file_key, file_name in config.get('files', {}).items():
-        env[file_key] = str(out_dir / file_name)
-
-    # 5. Data source paths
-    env['seed_file'] = config['data']['seed_file']
-    env['queries_dataset'] = config['data']['queries_dataset']
-
-    # 6. SLURM parameters
-    env.update(get_slurm_params(config, step, substep))
-
-    # 7. Advanced settings
-    advanced = config.get('advanced', {})
-    env['VENV_DIR'] = advanced.get('venv_dir', '.venv')
-    env['HF_HOME'] = advanced.get('hf_home', '/scratch/project_462000353/hf_cache')
+    # 5. SLURM parameters (from substep config only)
+    env.update(get_slurm_params(step, substep_cfg))
 
     return env
 
 
-def get_slurm_params(config: dict, step: str, substep: str) -> dict:
-    """Get SLURM parameters from defaults + config overrides"""
-    substep_def = get_substep_config(step, substep)
+def get_slurm_params(step: str, substep_cfg: dict) -> dict:
+    """
+    Extract SLURM parameters from substep config.
 
-    slurm = {
-        'partition': config['slurm']['gpu_partition'] if substep_def.requires_gpu
-                     else config['slurm']['cpu_partition'],
-        'time': substep_def.default_time,
-        'nodes': str(substep_def.default_nodes),
-        'ntasks_per_node': str(substep_def.default_ntasks_per_node),
-        'account': config['slurm']['account'],
-    }
+    All SLURM configs are defined at substep level in config.yaml.
+    Uses step-specific prefixes for GPU job parameters (e.g., AUGMENTATION_WORKERS).
+    """
+    slurm = {}
 
-    # Apply config overrides
-    step_overrides = config['steps'][step].get('slurm_overrides', {})
-    substep_overrides = step_overrides.get(substep, {})
-    for key, value in substep_overrides.items():
-        slurm[key] = str(value)
+    # Standard SLURM parameters
+    slurm_keys = ['partition', 'account', 'time', 'nodes', 'ntasks_per_node']
+    for key in slurm_keys:
+        if key in substep_cfg:
+            slurm[key] = str(substep_cfg[key])
 
-    # Add GPU-specific parameters for GPU jobs
-    if substep_def.requires_gpu:
-        workers = config.get('slurm', {}).get('workers', {})
-        if step in workers:
-            slurm[f'{step.upper()}_WORKERS'] = str(workers[step])
+    # GPU job parameters with step-specific prefixes
+    step_prefix = step.upper()[:3]  # AUG, VER, RES, etc.
 
-        timeouts = config.get('slurm', {}).get('timeouts', {})
-        slurm['STARTUP_TIMEOUT'] = str(timeouts.get('startup', 1800))
-        slurm['REQUEST_TIMEOUT'] = str(timeouts.get('request', 1800))
-        slurm['WORK_TIMEOUT'] = str(timeouts.get('work', 3600))
+    if 'workers' in substep_cfg:
+        slurm[f'{step_prefix}_WORKERS'] = str(substep_cfg['workers'])
+
+    for timeout_key in ['startup_timeout', 'request_timeout', 'work_timeout']:
+        if timeout_key in substep_cfg:
+            env_key = f'{step_prefix}_{timeout_key.upper()}'
+            slurm[env_key] = str(substep_cfg[timeout_key])
 
     return slurm
 
@@ -163,6 +182,27 @@ def submit_job(job_script: str, env_vars: dict, dependency: Optional[str] = None
     return None
 
 
+def get_pipeline_sequence(config: dict) -> List[Tuple[str, bool]]:
+    """
+    Parse pipeline config into list of (step_name, enabled) tuples.
+
+    Pipeline format: list of dicts with step_name: enabled
+    Example: [{augmentation: true}, {verifiers: false}]
+    """
+    pipeline = config.get('pipeline', [])
+    sequence = []
+
+    for item in pipeline:
+        if isinstance(item, dict):
+            for step_name, enabled in item.items():
+                sequence.append((step_name, enabled))
+        elif isinstance(item, str):
+            # If just a string, assume enabled
+            sequence.append((item, True))
+
+    return sequence
+
+
 def submit_pipeline(config: dict, out_dir: Path) -> Dict[str, str]:
     """Submit all enabled substeps with dependencies"""
     print("\nSubmitting pipeline...\n")
@@ -170,30 +210,29 @@ def submit_pipeline(config: dict, out_dir: Path) -> Dict[str, str]:
     job_ids = {}
     prev_job_id = None
 
-    for step in config['pipeline_sequence']:
-        if not config['steps'][step].get('enabled', True):
+    pipeline_sequence = get_pipeline_sequence(config)
+
+    for step, enabled in pipeline_sequence:
+        if not enabled:
             continue
 
-        substeps_cfg = config['steps'][step].get('substeps', {})
-        for substep_name, substep_cfg in substeps_cfg.items():
-            # Check if substep is enabled
-            if isinstance(substep_cfg, dict) and not substep_cfg.get('enabled', True):
-                continue
-
-            substep_def = get_substep_config(step, substep_name)
+        substeps_cfg = config['steps'][step].get('substeps') or {}
+        for substep_name in substeps_cfg.keys():
+            # Job script path convention: jobs/{substep_name}.sh
+            job_script = f"jobs/{substep_name}.sh"
             env_vars = build_env_vars(config, step, substep_name, out_dir)
 
             dependency = f"afterany:{prev_job_id}" if prev_job_id else None
-            job_id = submit_job(substep_def.job_script, env_vars, dependency)
+            job_id = submit_job(job_script, env_vars, dependency)
 
             if job_id:
                 full_name = f"{step}/{substep_name}"
                 job_ids[full_name] = job_id
                 prev_job_id = job_id
                 dep_str = f" (depends on {prev_job_id[:-len(job_id)]}...)" if dependency else ""
-                print(f"✓ {full_name:45} → {job_id}{dep_str}")
+                print(f" {full_name:45} → {job_id}{dep_str}")
             else:
-                print(f"✗ Failed to submit {step}/{substep_name}")
+                print(f" Failed to submit {step}/{substep_name}")
                 # Cancel already submitted jobs
                 cancel_jobs(list(job_ids.values()))
                 sys.exit(1)
@@ -298,14 +337,14 @@ def cancel_jobs(job_ids: List[str]):
 def get_all_substeps_ordered(config: dict) -> List[Tuple[str, str]]:
     """Get all enabled substeps in pipeline order as (step, substep) tuples"""
     result = []
-    for step in config['pipeline_sequence']:
-        if not config['steps'][step].get('enabled', True):
+    pipeline_sequence = get_pipeline_sequence(config)
+
+    for step, enabled in pipeline_sequence:
+        if not enabled:
             continue
 
-        substeps_cfg = config['steps'][step].get('substeps', {})
-        for substep_name, substep_cfg in substeps_cfg.items():
-            if isinstance(substep_cfg, dict) and not substep_cfg.get('enabled', True):
-                continue
+        substeps_cfg = config['steps'][step].get('substeps') or {}
+        for substep_name in substeps_cfg.keys():
             result.append((step, substep_name))
 
     return result
@@ -313,7 +352,7 @@ def get_all_substeps_ordered(config: dict) -> List[Tuple[str, str]]:
 
 def handle_force(config: dict, out_dir: Path):
     """Cancel all existing jobs and resubmit entire pipeline"""
-    print("\n🗑️  Force mode: Cancelling existing jobs and resubmitting...\n")
+    print("\n  Force mode: Cancelling existing jobs and resubmitting...\n")
 
     old_jobs = load_job_ids(out_dir)
     if old_jobs:
@@ -342,7 +381,7 @@ def handle_resubmit_failed(config: dict, out_dir: Path):
             print("All jobs completed successfully")
         sys.exit(0)
 
-    print(f"\n🔄 Resubmitting {len(failed)} failed job(s) and downstream dependencies...\n")
+    print(f"\n Resubmitting {len(failed)} failed job(s) and downstream dependencies...\n")
 
     # Find first failed substep in pipeline order
     all_substeps = get_all_substeps_ordered(config)
@@ -367,20 +406,20 @@ def handle_resubmit_failed(config: dict, out_dir: Path):
     new_jobs = {}
 
     for step, substep in all_substeps[first_failed_idx:]:
-        substep_def = get_substep_config(step, substep)
+        job_script = f"jobs/{substep}.sh"
         env_vars = build_env_vars(config, step, substep, out_dir)
 
         dependency = f"afterany:{prev_job_id}" if prev_job_id else None
-        job_id = submit_job(substep_def.job_script, env_vars, dependency)
+        job_id = submit_job(job_script, env_vars, dependency)
 
         if job_id:
             full_name = f"{step}/{substep}"
             new_jobs[full_name] = job_id
             old_jobs[full_name] = job_id  # Update history
             prev_job_id = job_id
-            print(f"✓ {full_name:45} → {job_id}")
+            print(f" {full_name:45} → {job_id}")
         else:
-            print(f"✗ Failed to submit {step}/{substep}")
+            print(f" Failed to submit {step}/{substep}")
             cancel_jobs(list(new_jobs.values()))
             sys.exit(1)
 
@@ -401,7 +440,7 @@ def handle_continue(config: dict, out_dir: Path):
         print("\nNo failed jobs to skip")
         sys.exit(0)
 
-    print(f"\n⏭️  Skipping {len(failed)} failed job(s), submitting downstream...\n")
+    print(f"\n  Skipping {len(failed)} failed job(s), submitting downstream...\n")
 
     # Find first failed substep
     all_substeps = get_all_substeps_ordered(config)
@@ -420,23 +459,23 @@ def handle_continue(config: dict, out_dir: Path):
     new_jobs = {}
 
     for step, substep in all_substeps[first_failed_idx + 1:]:
-        substep_def = get_substep_config(step, substep)
+        job_script = f"jobs/{substep}.sh"
         env_vars = build_env_vars(config, step, substep, out_dir)
 
-        job_id = submit_job(substep_def.job_script, env_vars, dependency=None)
+        job_id = submit_job(job_script, env_vars, dependency=None)
 
         if job_id:
             full_name = f"{step}/{substep}"
             new_jobs[full_name] = job_id
             old_jobs[full_name] = job_id
-            print(f"✓ {full_name:45} → {job_id}")
+            print(f" {full_name:45} → {job_id}")
         else:
-            print(f"✗ Failed to submit {step}/{substep}")
+            print(f" Failed to submit {step}/{substep}")
             cancel_jobs(list(new_jobs.values()))
             sys.exit(1)
 
     save_job_ids(out_dir, old_jobs)
-    print(f"\n⚠️  Skipped failed: {', '.join(failed)}")
+    print(f"\n    Skipped failed: {', '.join(failed)}")
     print("   Ensure output files exist for downstream jobs\n")
 
 
@@ -483,20 +522,18 @@ def main():
             all_done, failed, running = check_pipeline_status(old_jobs)
 
             if failed:
-                print(f"❌ {len(failed)} job(s) failed. Use --resubmit-failed or --continue")
+                print(f" {len(failed)} job(s) failed. Use --resubmit-failed or --continue")
                 sys.exit(1)
             elif running:
-                print(f"⏳ {len(running)} job(s) still running")
+                print(f" {len(running)} job(s) still running")
                 sys.exit(0)
             elif all_done:
-                print("✅ All jobs completed. Use --force to rerun")
+                print(" All jobs completed. Use --force to rerun")
                 sys.exit(0)
 
         # Fresh submission
         job_ids = submit_pipeline(config, args.out_dir)
         save_job_ids(args.out_dir, job_ids)
-
-    print("\n✅ Done\n")
 
 
 if __name__ == "__main__":
