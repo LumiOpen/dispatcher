@@ -54,52 +54,48 @@ def load_config(out_dir: Path) -> dict:
 
 # Reserved keys that should not be passed as env vars
 RESERVED_KEYS = {
-    'experiment', 'pipeline', 'steps', 'substeps'
+    'experiment', 'pipeline', 'jobs'
 }
 
 
-def resolve_config_value(key: str, global_cfg: dict, step_cfg: dict, substep_cfg: dict):
+def resolve_config_value(key: str, global_cfg: dict, job_cfg: dict):
     """
-    Generic cascade resolution: substep > step > global.
+    Generic cascade resolution: job > global.
 
     Returns None if key not found at any level.
     """
-    if substep_cfg and key in substep_cfg:
-        return substep_cfg[key]
-    if step_cfg and key in step_cfg:
-        return step_cfg[key]
+    if job_cfg and key in job_cfg:
+        return job_cfg[key]
     if global_cfg and key in global_cfg:
         return global_cfg[key]
     return None
 
 
-def build_env_vars(config: dict, step: str, substep: str, out_dir: Path) -> dict:
+def build_env_vars(config: dict, job: str, out_dir: Path) -> dict:
     """
-    Build environment variables for substep using generic cascade resolution.
+    Build environment variables for job using generic cascade resolution.
 
-    Any config at global level can be overridden at step or substep level using the same keyword.
-    Cascade: substep config > step config > global config
+    Any config at global level can be overridden at job level using the same keyword.
+    Cascade: job config > global config
     """
     env = {}
 
     # Extract config levels
     global_cfg = config
-    step_cfg = config['steps'][step]
-    substep_cfg = step_cfg.get('substeps', {}).get(substep, {})
+    job_cfg = config.get('jobs', {}).get(job, {})
 
     # Handle 'pass' keyword in YAML (becomes None in Python)
-    if substep_cfg is None:
-        substep_cfg = {}
+    if job_cfg is None:
+        job_cfg = {}
 
-    # 1. Collect ALL keys from all levels (excluding reserved keys and substeps)
+    # 1. Collect ALL keys from all levels (excluding reserved keys)
     all_keys = set()
     all_keys.update(k for k in global_cfg.keys() if k not in RESERVED_KEYS)
-    all_keys.update(k for k in step_cfg.keys() if k not in RESERVED_KEYS)
-    all_keys.update(k for k in substep_cfg.keys() if k not in RESERVED_KEYS)
+    all_keys.update(k for k in job_cfg.keys())
 
     # 2. Generic cascade resolution for all keys
     for key in all_keys:
-        value = resolve_config_value(key, global_cfg, step_cfg, substep_cfg)
+        value = resolve_config_value(key, global_cfg, job_cfg)
         if value is not None:
             env[key] = str(value)
 
@@ -117,39 +113,7 @@ def build_env_vars(config: dict, step: str, substep: str, out_dir: Path) -> dict
                 if not ('/' in value and len(value) > 50):  # Heuristic: long paths with / are likely HF paths
                     env[key] = str(out_dir / value)
 
-    # 5. SLURM parameters (from substep config only)
-    env.update(get_slurm_params(step, substep_cfg))
-
     return env
-
-
-def get_slurm_params(step: str, substep_cfg: dict) -> dict:
-    """
-    Extract SLURM parameters from substep config.
-
-    All SLURM configs are defined at substep level in config.yaml.
-    Uses step-specific prefixes for GPU job parameters (e.g., AUGMENTATION_WORKERS).
-    """
-    slurm = {}
-
-    # Standard SLURM parameters
-    slurm_keys = ['partition', 'account', 'time', 'nodes', 'ntasks_per_node']
-    for key in slurm_keys:
-        if key in substep_cfg:
-            slurm[key] = str(substep_cfg[key])
-
-    # GPU job parameters with step-specific prefixes
-    step_prefix = step.upper()[:3]  # AUG, VER, RES, etc.
-
-    if 'workers' in substep_cfg:
-        slurm[f'{step_prefix}_WORKERS'] = str(substep_cfg['workers'])
-
-    for timeout_key in ['startup_timeout', 'request_timeout', 'work_timeout']:
-        if timeout_key in substep_cfg:
-            env_key = f'{step_prefix}_{timeout_key.upper()}'
-            slurm[env_key] = str(substep_cfg[timeout_key])
-
-    return slurm
 
 
 # =============================================================================
@@ -163,13 +127,15 @@ def submit_job(job_script: str, env_vars: dict, dependency: Optional[str] = None
     if dependency:
         cmd += ['--dependency', dependency]
 
-    # Export all environment variables
-    export_str = ','.join([f'{k}={v}' for k, v in env_vars.items()])
+    export_vars = {}
+    for k, v in env_vars.items():
+        export_vars[k] = v
+
+    export_str = ','.join([f'{k}={v}' for k, v in export_vars.items()])
     cmd += ['--export', f'ALL,{export_str}']
 
     cmd.append(job_script)
-
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
 
     if result.returncode == 0:
         # Parse "Submitted batch job 12345"
@@ -184,18 +150,18 @@ def submit_job(job_script: str, env_vars: dict, dependency: Optional[str] = None
 
 def get_pipeline_sequence(config: dict) -> List[Tuple[str, bool]]:
     """
-    Parse pipeline config into list of (step_name, enabled) tuples.
+    Parse pipeline config into list of (job_name, enabled) tuples.
 
-    Pipeline format: list of dicts with step_name: enabled
-    Example: [{augmentation: true}, {verifiers: false}]
+    Pipeline format: list of dicts with job_name: enabled
+    Example: [{augmentation_generation: true}, {verifiers_generation: false}]
     """
     pipeline = config.get('pipeline', [])
     sequence = []
 
     for item in pipeline:
         if isinstance(item, dict):
-            for step_name, enabled in item.items():
-                sequence.append((step_name, enabled))
+            for job_name, enabled in item.items():
+                sequence.append((job_name, enabled))
         elif isinstance(item, str):
             # If just a string, assume enabled
             sequence.append((item, True))
@@ -204,7 +170,7 @@ def get_pipeline_sequence(config: dict) -> List[Tuple[str, bool]]:
 
 
 def submit_pipeline(config: dict, out_dir: Path) -> Dict[str, str]:
-    """Submit all enabled substeps with dependencies"""
+    """Submit all enabled jobs with dependencies"""
     print("\nSubmitting pipeline...\n")
 
     job_ids = {}
@@ -212,30 +178,27 @@ def submit_pipeline(config: dict, out_dir: Path) -> Dict[str, str]:
 
     pipeline_sequence = get_pipeline_sequence(config)
 
-    for step, enabled in pipeline_sequence:
+    for job_name, enabled in pipeline_sequence:
         if not enabled:
             continue
 
-        substeps_cfg = config['steps'][step].get('substeps') or {}
-        for substep_name in substeps_cfg.keys():
-            # Job script path convention: jobs/{substep_name}.sh
-            job_script = f"jobs/{substep_name}.sh"
-            env_vars = build_env_vars(config, step, substep_name, out_dir)
+        # Job script path convention: jobs/{job_name}.sh
+        job_script = f"jobs/{job_name}.sh"
+        env_vars = build_env_vars(config, job_name, out_dir)
 
-            dependency = f"afterany:{prev_job_id}" if prev_job_id else None
-            job_id = submit_job(job_script, env_vars, dependency)
+        dependency = f"afterany:{prev_job_id}" if prev_job_id else None
+        job_id = submit_job(job_script, env_vars, dependency)
 
-            if job_id:
-                full_name = f"{step}/{substep_name}"
-                job_ids[full_name] = job_id
-                prev_job_id = job_id
-                dep_str = f" (depends on {prev_job_id[:-len(job_id)]}...)" if dependency else ""
-                print(f" {full_name:45} → {job_id}{dep_str}")
-            else:
-                print(f" Failed to submit {step}/{substep_name}")
-                # Cancel already submitted jobs
-                cancel_jobs(list(job_ids.values()))
-                sys.exit(1)
+        if job_id:
+            job_ids[job_name] = job_id
+            prev_job_id = job_id
+            dep_str = f" (depends on {prev_job_id})" if dependency else ""
+            print(f" {job_name:45} → {job_id}{dep_str}")
+        else:
+            print(f" Failed to submit {job_name}")
+            # Cancel already submitted jobs
+            cancel_jobs(list(job_ids.values()))
+            sys.exit(1)
 
     return job_ids
 
@@ -248,7 +211,7 @@ def get_job_status(job_id: str) -> str:
     """Get SLURM job status using sacct"""
     result = subprocess.run(
         ['sacct', '-j', job_id, '--format=State', '--noheader', '--parsable2'],
-        capture_output=True, text=True
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True
     )
 
     if result.returncode == 0 and result.stdout.strip():
@@ -263,20 +226,20 @@ def check_pipeline_status(job_ids: Dict[str, str]) -> Tuple[bool, List[str], Lis
     Check pipeline status.
 
     Returns:
-        (all_done, failed_substeps, running_substeps)
+        (all_done, failed_jobs, running_jobs)
     """
     failed = []
     running = []
     all_done = True
 
-    for substep, job_id in job_ids.items():
+    for job, job_id in job_ids.items():
         status = get_job_status(job_id)
 
-        if status in ['FAILED', 'CANCELLED', 'TIMEOUT', 'NODE_FAIL', 'OUT_OF_MEMORY']:
-            failed.append(substep)
+        if status in ['FAILED', 'CANCELLED', 'TIMEOUT', 'NODE_FAIL', 'OUT_OF_MEMORY'] or 'CANCELLED' in status:
+            failed.append(job)
             all_done = False
         elif status in ['PENDING', 'RUNNING']:
-            running.append(substep)
+            running.append(job)
             all_done = False
 
     return all_done, failed, running
@@ -286,20 +249,9 @@ def print_status(job_ids: Dict[str, str]):
     """Print pipeline status"""
     print("\nPipeline Status:\n" + "=" * 70)
 
-    for substep, job_id in job_ids.items():
+    for job, job_id in job_ids.items():
         status = get_job_status(job_id)
-
-        symbols = {
-            'COMPLETED': '✓',
-            'FAILED': '✗',
-            'CANCELLED': '⊗',
-            'TIMEOUT': '⏱',
-            'PENDING': '⏸',
-            'RUNNING': '⏳',
-        }
-        symbol = symbols.get(status, '?')
-
-        print(f"{symbol} {substep:40} {job_id:10} {status}")
+        print(f"{job:40} {job_id:10} {status}")
 
     print("=" * 70 + "\n")
 
@@ -331,21 +283,17 @@ def load_job_ids(out_dir: Path) -> Dict[str, str]:
 def cancel_jobs(job_ids: List[str]):
     """Cancel SLURM jobs"""
     for job_id in job_ids:
-        subprocess.run(['scancel', job_id], capture_output=True)
+        subprocess.run(['scancel', job_id], stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
 
 
-def get_all_substeps_ordered(config: dict) -> List[Tuple[str, str]]:
-    """Get all enabled substeps in pipeline order as (step, substep) tuples"""
+def get_all_jobs_ordered(config: dict) -> List[str]:
+    """Get all enabled jobs in pipeline order as job names"""
     result = []
     pipeline_sequence = get_pipeline_sequence(config)
 
-    for step, enabled in pipeline_sequence:
-        if not enabled:
-            continue
-
-        substeps_cfg = config['steps'][step].get('substeps') or {}
-        for substep_name in substeps_cfg.keys():
-            result.append((step, substep_name))
+    for job_name, enabled in pipeline_sequence:
+        if enabled:
+            result.append(job_name)
 
     return result
 
@@ -357,8 +305,8 @@ def handle_force(config: dict, out_dir: Path):
     old_jobs = load_job_ids(out_dir)
     if old_jobs:
         cancel_jobs(list(old_jobs.values()))
-        print(f"Cancelled {len(old_jobs)} existing job(s)")
-
+        
+    print(f"Re-running all jobs. Do you need to delete dispatcher checkpoints for generator jobs?")
     job_ids = submit_pipeline(config, out_dir)
     save_job_ids(out_dir, job_ids)
 
@@ -383,14 +331,13 @@ def handle_resubmit_failed(config: dict, out_dir: Path):
 
     print(f"\n Resubmitting {len(failed)} failed job(s) and downstream dependencies...\n")
 
-    # Find first failed substep in pipeline order
-    all_substeps = get_all_substeps_ordered(config)
-    substep_names = [f"{s}/{ss}" for s, ss in all_substeps]
+    # Find first failed job in pipeline order
+    all_jobs = get_all_jobs_ordered(config)
 
-    first_failed_idx = min(substep_names.index(f) for f in failed)
+    first_failed_idx = min(all_jobs.index(f) for f in failed)
 
     # Cancel downstream jobs
-    to_cancel = [old_jobs[name] for name in substep_names[first_failed_idx:] if name in old_jobs]
+    to_cancel = [old_jobs[name] for name in all_jobs[first_failed_idx:] if name in running]
     if to_cancel:
         cancel_jobs(to_cancel)
         print(f"Cancelled {len(to_cancel)} downstream job(s)")
@@ -398,28 +345,27 @@ def handle_resubmit_failed(config: dict, out_dir: Path):
     # Get dependency from previous job
     prev_job_id = None
     if first_failed_idx > 0:
-        prev_name = substep_names[first_failed_idx - 1]
+        prev_name = all_jobs[first_failed_idx - 1]
         prev_job_id = old_jobs.get(prev_name)
 
-    # Resubmit from failed substep onwards
+    # Resubmit from failed job onwards
     print("\nResubmitting:\n")
     new_jobs = {}
 
-    for step, substep in all_substeps[first_failed_idx:]:
-        job_script = f"jobs/{substep}.sh"
-        env_vars = build_env_vars(config, step, substep, out_dir)
+    for job_name in all_jobs[first_failed_idx:]:
+        job_script = f"jobs/{job_name}.sh"
+        env_vars = build_env_vars(config, job_name, out_dir)
 
         dependency = f"afterany:{prev_job_id}" if prev_job_id else None
         job_id = submit_job(job_script, env_vars, dependency)
 
         if job_id:
-            full_name = f"{step}/{substep}"
-            new_jobs[full_name] = job_id
-            old_jobs[full_name] = job_id  # Update history
+            new_jobs[job_name] = job_id
+            old_jobs[job_name] = job_id  # Update history
             prev_job_id = job_id
-            print(f" {full_name:45} → {job_id}")
+            print(f" {job_name:45} → {job_id}")
         else:
-            print(f" Failed to submit {step}/{substep}")
+            print(f" Failed to submit {job_name}")
             cancel_jobs(list(new_jobs.values()))
             sys.exit(1)
 
@@ -442,14 +388,13 @@ def handle_continue(config: dict, out_dir: Path):
 
     print(f"\n  Skipping {len(failed)} failed job(s), submitting downstream...\n")
 
-    # Find first failed substep
-    all_substeps = get_all_substeps_ordered(config)
-    substep_names = [f"{s}/{ss}" for s, ss in all_substeps]
+    # Find first failed job
+    all_jobs = get_all_jobs_ordered(config)
 
-    first_failed_idx = min(substep_names.index(f) for f in failed)
+    first_failed_idx = min(all_jobs.index(f) for f in failed)
 
     # Cancel downstream jobs
-    to_cancel = [old_jobs[name] for name in substep_names[first_failed_idx + 1:] if name in old_jobs]
+    to_cancel = [old_jobs[name] for name in all_jobs[first_failed_idx + 1:] if name in running]
     if to_cancel:
         cancel_jobs(to_cancel)
         print(f"Cancelled {len(to_cancel)} downstream job(s)")
@@ -458,19 +403,18 @@ def handle_continue(config: dict, out_dir: Path):
     print("\nSubmitting downstream jobs:\n")
     new_jobs = {}
 
-    for step, substep in all_substeps[first_failed_idx + 1:]:
-        job_script = f"jobs/{substep}.sh"
-        env_vars = build_env_vars(config, step, substep, out_dir)
+    for job_name in all_jobs[first_failed_idx + 1:]:
+        job_script = f"jobs/{job_name}.sh"
+        env_vars = build_env_vars(config, job_name, out_dir)
 
         job_id = submit_job(job_script, env_vars, dependency=None)
 
         if job_id:
-            full_name = f"{step}/{substep}"
-            new_jobs[full_name] = job_id
-            old_jobs[full_name] = job_id
-            print(f" {full_name:45} → {job_id}")
+            new_jobs[job_name] = job_id
+            old_jobs[job_name] = job_id
+            print(f" {job_name:45} → {job_id}")
         else:
-            print(f" Failed to submit {step}/{substep}")
+            print(f" Failed to submit {job_name}")
             cancel_jobs(list(new_jobs.values()))
             sys.exit(1)
 

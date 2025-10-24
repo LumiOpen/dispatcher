@@ -3,9 +3,7 @@ import json
 from src.utils.lang_id import get_language_name
 import os
 
-LANGUAGE = os.environ.get("LANGUAGE", "en")
-
-def create_input_file(seed_file: str, output_file: str, num_instructions_per_category: int = 100) -> None:
+def create_input_file(seed_file: str, output_file: str, num_instructions_per_category: int = 100, language: str = "en") -> None:
     """Create input file with a prompt for instruction augmentation."""
     try:
         with open(seed_file, 'r') as f:
@@ -48,7 +46,7 @@ def create_input_file(seed_file: str, output_file: str, num_instructions_per_cat
                                 additional_context = context_value
                         
                         prompt = prompt.format(
-                            language=get_language_name(LANGUAGE, LANGUAGE),
+                            language=get_language_name(language, language),
                             seed_instructions=seed_instructions, 
                             num_instructions=num_instructions_per_category, 
                             category=category,
@@ -76,7 +74,7 @@ def create_input_file(seed_file: str, output_file: str, num_instructions_per_cat
     with open(output_file, 'w') as f:
         prompt = open("model_prompts/create_instructions_prompt.txt").read().strip()
         prompt = prompt.format(
-            language=get_language_name.get(LANGUAGE, LANGUAGE),
+            language=get_language_name.get(language, language),
             seed_instructions=regular_content, 
             num_instructions=num_instructions_per_category)
         print(f"\nPROMPT:\n{prompt}\n")
@@ -88,16 +86,18 @@ def create_input_file(seed_file: str, output_file: str, num_instructions_per_cat
 def main():
     parser = argparse.ArgumentParser(description='Create input file for instruction generation')
     
-    parser.add_argument('--seed_file', type=str, required=True,
+    parser.add_argument('--seed-file', type=str, required=True,
                         help='File with seed instructions (plain text or JSON with categorized instructions)')
-    parser.add_argument('--output_file', type=str, required=True,
+    parser.add_argument('--output-file', type=str, required=True,
                         help='Output JSONL file with prompts for inference (one line per category if JSON input)')
-    parser.add_argument('--num_instructions_per_category', type=int, default=4,
+    parser.add_argument('--num-instructions-per-category', type=int, default=4,
                         help='Number of instructions to generate per category')
+    parser.add_argument('--language', type=str, default="en",
+                        help='For constructing the prompt')
     
     args = parser.parse_args()
 
-    create_input_file(args.seed_file, args.output_file, args.num_instructions_per_category)
+    create_input_file(args.seed_file, args.output_file, args.num_instructions_per_category, args.language)
 
 if __name__ == "__main__":
     main()

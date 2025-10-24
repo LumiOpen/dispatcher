@@ -1,20 +1,14 @@
 #!/bin/bash
-#SBATCH --job-name=autoif_concat
-#SBATCH --output=logs/%j_concatenation.out
-#SBATCH --error=logs/%j_concatenation.err
-
-# SLURM parameters passed via environment variables:
-# - partition, time, nodes, ntasks_per_node, account
-# Script parameters:
-# - verifiers_file, queries_dataset, output_file, num_output_lines, instructions_per_query, language
-
-#SBATCH --partition=${partition:-small}
-#SBATCH --time=${time:-01:00:00}
-#SBATCH --nodes=${nodes:-1}
-#SBATCH --ntasks-per-node=${ntasks_per_node:-1}
+#SBATCH --job-name=concat
+#SBATCH --output=logs/%j.out
+#SBATCH --error=logs/%j.err
+#SBATCH --partition=small
+#SBATCH --time=00:30:00
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=1
 #SBATCH --mem=32G
 #SBATCH --cpus-per-task=8
-#SBATCH --account=${account}
+#SBATCH --account=project_462000963
 
 set -euo pipefail
 
@@ -25,12 +19,39 @@ echo "Job ID: $SLURM_JOB_ID"
 echo "Started: $(date)"
 echo ""
 
-# Environment setup
+# Task configuration
+VERIFIERS_FILE="${verifiers_filtered:-data/verifiers_filtered.jsonl}"
+QUERIES_DATASET="${queries_dataset}"  # Required, no default
+OUTPUT_FILE="${verifiers_queries:-data/verifiers_queries.jsonl}"
+LANGUAGE="${language:-en}"
+NUM_OUTPUT_LINES="${num_output_lines:-300000}"
+INSTRUCTIONS_PER_QUERY="${instructions_per_query:-1}"
+QUERY_MAX_LEN="${query_max_len:-200}"
+QUERY_COLUMN_NAME="${query_column_name:-instruction}"
+RESPONSE_COLUMN_NAME="${response_column_name:-response}"
+MESSAGES_FORMAT="${messages_format:-true}"
+MESSAGES_KEY="${messages_key:-messages}"
+TURNS="${turns:-1}"
+NO_FOLLOWUP="${no_followup:-true}"
+BALANCE_CATEGORIES="${balance_categories:-true}"
+
+# Clean environment
+unset VIRTUAL_ENV
+unset PYTHONHOME
+unset PYTHONPATH
+unset PYTHONSTARTUP
+unset PYTHONNOUSERSITE
+unset PYTHONEXECUTABLE
+
+# Set up environment
+mkdir -p logs pythonuserbase
+export PYTHONUSERBASE="$(pwd)/pythonuserbase"
+
 module use /appl/local/csc/modulefiles
 module load pytorch/2.5
 
 # Activate virtual environment
-VENV_DIR="${VENV_DIR:-.venv}"
+VENV_DIR="${venv_dir:-.venv}"
 if [ -d "$VENV_DIR" ]; then
     source "$VENV_DIR/bin/activate"
 else
@@ -38,55 +59,60 @@ else
     exit 1
 fi
 
-# Check input file exists (verifiers_filtered.jsonl)
-echo "Checking for input file: $verifiers_file"
-if [ ! -f "$verifiers_file" ]; then
-    echo "ERROR: Input file not found: $verifiers_file"
+export HF_HOME="${hf_home:-/scratch/project_462000353/hf_cache}"
+export SSL_CERT_FILE=$(python -m certifi)
+
+# Check input file exists
+if [ ! -f "$VERIFIERS_FILE" ]; then
+    echo "ERROR: Input file not found: $VERIFIERS_FILE"
     echo "Please ensure the verification step completed successfully."
     exit 1
 fi
 
-if [ ! -s "$verifiers_file" ]; then
-    echo "ERROR: Input file is empty: $verifiers_file"
+if [ ! -s "$VERIFIERS_FILE" ]; then
+    echo "ERROR: Input file is empty: $VERIFIERS_FILE"
     exit 1
 fi
-echo "Input file found and valid."
-echo ""
 
-# Run query concatenation
-echo "Running query concatenation..."
-echo "  Verifiers file: $verifiers_file"
-echo "  Queries dataset: $queries_dataset"
-echo "  Output file: $output_file"
-echo "  Num output lines: $num_output_lines"
-echo "  Instructions per query: $instructions_per_query"
-echo "  Language: $language"
+# Check queries dataset is set
+if [ -z "$QUERIES_DATASET" ]; then
+    echo "ERROR: queries_dataset not set in config"
+    exit 1
+fi
+
+echo "Query concatenation configuration:"
+echo "  Verifiers file: $VERIFIERS_FILE"
+echo "  Queries dataset: $QUERIES_DATASET"
+echo "  Output file: $OUTPUT_FILE"
+echo "  Num output lines: $NUM_OUTPUT_LINES"
+echo "  Instructions per query: $INSTRUCTIONS_PER_QUERY"
+echo "  Language: $LANGUAGE"
 echo ""
 
 # Build command with all parameters
 CMD="python src/concat_queries.py \
-    --verifiers-file \"$verifiers_file\" \
-    --queries-dataset \"$queries_dataset\" \
-    --output-file \"$output_file\" \
-    --language \"$language\" \
-    --num-output-lines \"$num_output_lines\" \
-    --instructions-per-query \"$instructions_per_query\" \
-    --query-max-len \"${query_max_len:-200}\" \
-    --query-column-name \"${query_column_name:-instruction}\" \
-    --response-column-name \"${response_column_name:-response}\" \
-    --messages-key \"${messages_key:-messages}\" \
-    --turns \"${turns:-1}\""
+    --verifiers-file \"$VERIFIERS_FILE\" \
+    --queries-dataset \"$QUERIES_DATASET\" \
+    --output-file \"$OUTPUT_FILE\" \
+    --language \"$LANGUAGE\" \
+    --num-output-lines \"$NUM_OUTPUT_LINES\" \
+    --instructions-per-query \"$INSTRUCTIONS_PER_QUERY\" \
+    --query-max-len \"$QUERY_MAX_LEN\" \
+    --query-column-name \"$QUERY_COLUMN_NAME\" \
+    --response-column-name \"$RESPONSE_COLUMN_NAME\" \
+    --messages-key \"$MESSAGES_KEY\" \
+    --turns \"$TURNS\""
 
 # Add boolean flags if set to true
-if [ "${messages_format:-false}" = "true" ]; then
+if [ "$MESSAGES_FORMAT" = "true" ]; then
     CMD="$CMD --messages-format"
 fi
 
-if [ "${no_followup:-false}" = "true" ]; then
+if [ "$NO_FOLLOWUP" = "true" ]; then
     CMD="$CMD --no-followup"
 fi
 
-if [ "${balance_categories:-false}" = "true" ]; then
+if [ "$BALANCE_CATEGORIES" = "true" ]; then
     CMD="$CMD --balance-categories"
 fi
 
@@ -100,5 +126,5 @@ fi
 
 echo ""
 echo "Query concatenation completed successfully!"
-echo "Output: $output_file"
+echo "Output: $OUTPUT_FILE"
 echo "Finished: $(date)"
