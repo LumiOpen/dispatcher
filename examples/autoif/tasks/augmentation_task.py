@@ -22,11 +22,9 @@ class AugmentInstructionsTask(GeneratorTask):
 
     # Generation parameters for instruction augmentation
     GEN_PARAMS: Dict[str, Any] = {
-        "temperature": 0.75,
-        "top_p": 0.9,
-        "min_p": 0.0,
+        "temperature": 0.7,
+        "top_p": 0.95,
         "max_tokens": 8192,
-        "stop": ["\n\n"],
     }
 
     def task_generator(self) -> Generator[Union[Request, list[Request]], Any, Dict[str, Any]]:
@@ -39,12 +37,6 @@ class AugmentInstructionsTask(GeneratorTask):
             'category': str (optional)
         }
 
-        This task:
-        1. Generates instructions using LLM
-        2. Returns original data + responses for dispatcher to write as JSONL
-
-        Post-processing (language filtering, deduplication) is handled
-        separately by process_instructions_output.py.
         """
         # Get the prompt and category from input
         prompt = self.data.get('prompt', '')

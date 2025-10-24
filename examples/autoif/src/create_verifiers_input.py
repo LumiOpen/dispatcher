@@ -15,7 +15,7 @@ def create_verifier_input(instructions_file: str, output_file: str) -> None:
                 try:
                     data = json.loads(line)
                     instruction = data.get('instruction', '').strip()
-                    instruction_id = data.get('id', '')
+                    instruction_id = data.get('instruction_id', '')
                     category = data.get('category', '').strip()
 
                     if not instruction:
@@ -23,7 +23,7 @@ def create_verifier_input(instructions_file: str, output_file: str) -> None:
                         continue
 
                     instructions.append({
-                        'id': instruction_id,
+                        'instruction_id': instruction_id,
                         'instruction': instruction,
                         'category': category
                     })
@@ -55,7 +55,7 @@ def create_verifier_input(instructions_file: str, output_file: str) -> None:
             prompt = template.render(instruction=item['instruction'], has_keywords=has_keywords)
             
             data = {
-                'instruction_id': item['id'],
+                'instruction_id': item['instruction_id'],
                 'instruction': item['instruction'],
                 'instruction_category': item['category'],
                 'prompt': prompt

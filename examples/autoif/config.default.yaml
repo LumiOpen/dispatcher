@@ -9,30 +9,31 @@
 #
 # CONFIGURATION SYSTEM:
 #   - General configs: Arguments passed to Python scripts/jobs (model, language, etc.)
-#   - Step configs: Step-specific parameters and file paths under each step
-#   - SLURM configs: Defined per substep (partition, time, nodes, account, etc.)
-#   - Cascade: substep > step > global for any parameter
+#   - Job configs: Job-specific parameters and file paths under each job
+#   - Cascade: job > global for any parameter
 
 # ==============================================================================
 # Experiment Metadata
 # ==============================================================================
 experiment:
-  name: "ifeval_baseline"
+  name: "exp1"
   description: "Baseline IFEval instruction following dataset generation"
 
 # ==============================================================================
-# Pipeline Sequence (defines execution order and enabled steps)
+# Pipeline Sequence (defines execution order and enabled jobs)
 # ==============================================================================
-# Set to false to disable a step, or remove it from the list to skip entirely
+# Set to false to disable a job, or remove it from the list to skip entirely
 pipeline:
-  - augmentation: true
-  - verifiers: true
-  - concatenation: true
-  - responses: true
-  - sft: true
+  - augmentation_generation: true
+  - augmentation_postprocessing: true
+  - verifiers_generation: true
+  - cross_validation_job: true
+  - concatenation_job: true
+  - responses_generation: true
+  - final_dataset_job: true
 
 # ==============================================================================
-# General Configuration (can be overridden at step/substep level)
+# General Configuration (can be overridden at job level)
 # ==============================================================================
 # Model parameters
 model: "meta-llama/Llama-3.3-70B-Instruct"
@@ -46,150 +47,84 @@ score_threshold: 4
 workers: 8
 
 # Environment
-venv_dir: ".venv"
+venv_dir: "/scratch/project_462000353/adamhrin/dispatcher/examples/autoif/.venv"
 hf_home: "/scratch/project_462000353/hf_cache"
 batch_size: 1
 
 # ==============================================================================
-# Pipeline Steps Configuration
+# Jobs Configuration
 # ==============================================================================
-# Each step defines:
-#   - Step-specific parameters and file paths
-#   - Substeps with SLURM configurations
+# Each job defines job-specific parameters and file paths
 #
-# Override any general config at step or substep level using the same keyword.
-steps:
+# Override any general config at job level using the same keyword.
+jobs:
   # --------------------------------------------------------------------------
   # Augmentation: Generate augmented instructions from seed instructions
   # --------------------------------------------------------------------------
-  augmentation:
-    # Step parameters
-    seed_file: "data/seed_instructions.txt"
+  augmentation_generation:
+    # Augmentation parameters
+    seed_file: "/scratch/project_462000353/adamhrin/dispatcher/examples/autoif/data/categorised_instructions.json"
     num_instructions_per_category: 50
-    max_augmented_instructions: 200
-
-    # Step file paths (relative to OUT_DIR)
     augmentation_input: "aug_input.jsonl"
     augmentation_output: "aug_output.jsonl"
+
+  augmentation_postprocessing:
+    augmentation_output: "aug_output.jsonl"
     augmented_instructions: "augmented_instructions.jsonl"
-
-    substeps:
-      augmentation_job:
-        # SLURM config
-        partition: "dev-g"
-        account: "project_462000963"
-        time: "00:30:00"
-        nodes: 1
-        ntasks_per_node: 2
-        startup_timeout: 1800
-        request_timeout: 1800
-        work_timeout: 3600
-
-      augmentation_postprocessing:
-        partition: "small"
-        account: "project_462000963"
-        time: "00:15:00"
-        nodes: 1
-        ntasks_per_node: 1
+    max_augmented_instructions: 200
 
   # --------------------------------------------------------------------------
   # Verifiers: Generate and validate verification functions
   # --------------------------------------------------------------------------
-  verifiers:
-    # Step parameters
+  verifiers_generation:
+    # Verifiers parameters
+    augmented_instructions: "augmented_instructions.jsonl"
+    verifiers_input: "verifiers_input.jsonl"
+    verifiers_output: "verifiers_output.jsonl"
     min_functions: 1
     min_test_cases: 1
-    function_pass_rate: 0.8
+    startup_timeout: 1800
+    request_timeout: 1800
+    work_timeout: 3600
+    num_verifier_generations: 10
 
-    # Step file paths
-    verifiers_input: "verifiers_input.jsonl"
+  verifiers_postprocessing:
     verifiers_output: "verifiers_output.jsonl"
     verifiers_all: "verifiers_all.jsonl"
     verifiers_filtered: "verifiers_filtered.jsonl"
-
-    substeps:
-      verifiers_preprocessing:
-        partition: "small"
-        account: "project_462000963"
-        time: "00:10:00"
-        nodes: 1
-        ntasks_per_node: 1
-
-      verifiers_job:
-        partition: "dev-g"
-        account: "project_462000963"
-        time: "02:00:00"
-        nodes: 1
-        ntasks_per_node: 2
-        startup_timeout: 1800
-        request_timeout: 1800
-        work_timeout: 3600
-
-      verifiers_postprocessing:
-        partition: "small"
-        account: "project_462000963"
-        time: "01:00:00"
-        nodes: 1
-        ntasks_per_node: 1
+    function_pass_rate: 0.8
 
   # --------------------------------------------------------------------------
   # Concatenation: Create queries by concatenating instructions with dataset
   # --------------------------------------------------------------------------
-  concatenation:
-    # Step parameters
+  concatenation_job:
+    # Concatenation parameters
+    verifiers_filtered: "verifiers_filtered.jsonl"
+    verifiers_queries: "verifiers_queries.jsonl"
     queries_dataset: null  # REQUIRED: Path to queries dataset (HF path or local JSONL)
     num_output_lines: 300000
     instructions_per_query: 1
     query_max_len: 200
-    query_column_name: "instruction"
-    response_column_name: "response"
     messages_format: true
     messages_key: "messages"
     turns: 1
     no_followup: true
     balance_categories: true
 
-    # Step file paths
-    verifiers_queries: "verifiers_queries.jsonl"
-
-    substeps:
-      concatenation_job:
-        partition: "small"
-        account: "project_462000963"
-        time: "01:00:00"
-        nodes: 1
-        ntasks_per_node: 1
-
   # --------------------------------------------------------------------------
   # Responses: Generate and score responses to queries
   # --------------------------------------------------------------------------
-  responses:
-    # Step file paths
+  responses_generation:
+    verifiers_queries: "verifiers_queries.jsonl"
     scored_responses: "scored_responses.jsonl"
-
-    substeps:
-      responses_job:
-        partition: "standard-g"
-        account: "project_462000963"
-        time: "18:00:00"
-        nodes: 4
-        ntasks_per_node: 2
-        workers: 32
-        startup_timeout: 1800
-        request_timeout: 1800
-        work_timeout: 3600
+    startup_timeout: 1800
+    request_timeout: 1800
+    work_timeout: 3600
+    workers: 32
 
   # --------------------------------------------------------------------------
   # SFT: Build final supervised fine-tuning dataset
   # --------------------------------------------------------------------------
-  sft:
-    # Step file paths
+  final_dataset_job:
+    scored_responses: "scored_responses.jsonl"
     sft_dataset_dir: "sft_dataset"
-
-    substeps:
-      sft_job:
-        partition: "small"
-        account: "project_462000963"
-        time: "00:30:00"
-        nodes: 1
-        ntasks_per_node: 1

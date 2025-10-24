@@ -1,5 +1,6 @@
 """Verifiers task - Generate verification functions"""
 from typing import Any, Dict, Generator, Union, List
+import os
 
 from dispatcher.taskmanager.backend.request import Request, Response
 from dispatcher.taskmanager.task.base import GeneratorTask
@@ -23,14 +24,12 @@ class GenerateVerifiersTask(GeneratorTask):
     # Generation parameters for verifier generation
     GEN_PARAMS: Dict[str, Any] = {
         "temperature": 0.7,
-        "top_p": 1.0,
-        "min_p": 0.05,
+        "top_p": 0.95,
         "max_tokens": 8192,
-        "stop": ["\n\n"],
     }
 
     # Number of verifier variations to generate
-    NUM_GENERATIONS = 10
+    NUM_GENERATIONS = int(os.getenv("NUM_GENERATIONS", 3))
 
     def task_generator(self) -> Generator[Union[Request, List[Request]], Any, Dict[str, Any]]:
         """
