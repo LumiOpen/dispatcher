@@ -33,6 +33,14 @@ pipeline:
   - final_dataset_job: true
 
 # ==============================================================================
+# vLLM Server Configuration (Optional - for Local File Mode)
+# ==============================================================================
+# If you want to send the pipeline's requests to a vllm server running on an interactive node
+# vllm_server:
+#   host: "127.0.0.1"
+#   port: 8000
+
+# ==============================================================================
 # General Configuration (can be overridden at job level)
 # ==============================================================================
 # Model parameters

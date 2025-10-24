@@ -8,6 +8,7 @@ All configuration passed as environment variables to job scripts (auto-discovery
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import shutil
@@ -54,7 +55,7 @@ def load_config(out_dir: Path) -> dict:
 
 # Reserved keys that should not be passed as env vars
 RESERVED_KEYS = {
-    'experiment', 'pipeline', 'jobs'
+    'experiment', 'pipeline', 'jobs', 'vllm_server'
 }
 
 
@@ -102,7 +103,13 @@ def build_env_vars(config: dict, job: str, out_dir: Path) -> dict:
     # 3. Output directory
     env['out_dir'] = str(out_dir)
 
-    # 4. Resolve file paths to absolute paths (relative to out_dir)
+    # 4. Handle vllm_server configuration
+    vllm_server = config.get('vllm_server')
+    if vllm_server:
+        env['vllm_host'] = str(vllm_server.get('host', '127.0.0.1'))
+        env['vllm_port'] = str(vllm_server.get('port', 8000))
+
+    # 5. Resolve file paths to absolute paths (relative to out_dir)
     for key, value in list(env.items()):
         # If value looks like a relative file path, resolve to out_dir
         if isinstance(value, str) and value and not value.startswith('/'):
@@ -148,6 +155,27 @@ def submit_job(job_script: str, env_vars: dict, dependency: Optional[str] = None
     return None
 
 
+def run_job_directly(job_script: str, env_vars: dict) -> bool:
+    """Run job script directly (for local vLLM mode), return success status"""
+    # Prepare environment
+    env = dict(os.environ)
+    env.update(env_vars)
+
+    # Run the job script
+    result = subprocess.run(
+        ['bash', job_script],
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        universal_newlines=True
+    )
+
+    # Print output in real-time fashion
+    print(result.stdout)
+
+    return result.returncode == 0
+
+
 def get_pipeline_sequence(config: dict) -> List[Tuple[str, bool]]:
     """
     Parse pipeline config into list of (job_name, enabled) tuples.
@@ -171,7 +199,57 @@ def get_pipeline_sequence(config: dict) -> List[Tuple[str, bool]]:
 
 def submit_pipeline(config: dict, out_dir: Path) -> Dict[str, str]:
     """Submit all enabled jobs with dependencies"""
-    print("\nSubmitting pipeline...\n")
+    # Detect if using vllm_server (local mode)
+    use_vllm_server = config.get('vllm_server') is not None
+
+    if use_vllm_server:
+        return run_pipeline_local(config, out_dir)
+    else:
+        return submit_pipeline_slurm(config, out_dir)
+
+
+def run_pipeline_local(config: dict, out_dir: Path) -> Dict[str, str]:
+    """Run pipeline locally using external vLLM server"""
+    vllm_server = config.get('vllm_server', {})
+    host = vllm_server.get('host', '127.0.0.1')
+    port = vllm_server.get('port', 8000)
+
+    print(f"\nRunning pipeline in local mode...")
+    print(f"vLLM Server: {host}:{port}\n")
+
+    pipeline_sequence = get_pipeline_sequence(config)
+
+    for job_name, enabled in pipeline_sequence:
+        if not enabled:
+            continue
+
+        env_vars = build_env_vars(config, job_name, out_dir)
+
+        # GPU jobs (ending with "_generation") use _local version
+        if job_name.endswith('_generation'):
+            job_script = f"jobs/{job_name}_local.sh"
+            if not Path(job_script).exists():
+                print(f" ERROR: Local job script not found: {job_script}")
+                sys.exit(1)
+        else:
+            job_script = f"jobs/{job_name}.sh"
+
+        print(f" Running {job_name}...")
+        success = run_job_directly(job_script, env_vars)
+
+        if not success:
+            print(f" ERROR: Job {job_name} failed")
+            sys.exit(1)
+
+        print(f" {job_name} completed successfully\n")
+
+    # Return empty dict since we're not tracking SLURM job IDs
+    return {}
+
+
+def submit_pipeline_slurm(config: dict, out_dir: Path) -> Dict[str, str]:
+    """Submit all enabled jobs to SLURM with dependencies"""
+    print("\nSubmitting pipeline to SLURM...\n")
 
     job_ids = {}
     prev_job_id = None
