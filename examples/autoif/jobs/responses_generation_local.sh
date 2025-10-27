@@ -50,6 +50,33 @@ echo "  Function timeout: $FUNCTION_TIMEOUT"
 echo "  Workers: $WORKERS"
 echo ""
 
+# Clean environment
+unset VIRTUAL_ENV
+unset PYTHONHOME
+unset PYTHONPATH
+unset PYTHONSTARTUP
+unset PYTHONNOUSERSITE
+unset PYTHONEXECUTABLE
+
+# Set up environment
+mkdir -p logs pythonuserbase
+export PYTHONUSERBASE="$(pwd)/pythonuserbase"
+
+module use /appl/local/csc/modulefiles
+module load pytorch/2.5
+
+# Activate virtual environment for task dependencies
+VENV_DIR="${VENV_DIR:-.venv}"
+if [ -d "$VENV_DIR" ]; then
+    source "$VENV_DIR/bin/activate"
+else
+    echo "ERROR: Virtual environment not found at $VENV_DIR"
+    exit 1
+fi
+
+export HF_HOME="${HF_HOME:-/scratch/project_462000353/hf_cache}"
+export SSL_CERT_FILE=$(python -m certifi)
+
 # Export environment variables for the task
 export LANGUAGE="$LANGUAGE"
 export FUNCTION_TIMEOUT="$FUNCTION_TIMEOUT"
@@ -69,7 +96,7 @@ python -m dispatcher.server \
 sleep 10
 
 # Run task worker (connects to existing vLLM server)
-PYTHONPATH=. python -m dispatcher.taskmanager.cli \
+python -m dispatcher.taskmanager.cli \
     --dispatcher ${DISPATCHER_SERVER}:${DISPATCHER_PORT} \
     --task "$TASK" \
     --model "$MODEL" \

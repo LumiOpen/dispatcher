@@ -41,6 +41,34 @@ fi
 echo "Augmented instructions file found."
 echo ""
 
+
+# Clean environment
+unset VIRTUAL_ENV
+unset PYTHONHOME
+unset PYTHONPATH
+unset PYTHONSTARTUP
+unset PYTHONNOUSERSITE
+unset PYTHONEXECUTABLE
+
+# Set up environment
+mkdir -p logs pythonuserbase
+export PYTHONUSERBASE="$(pwd)/pythonuserbase"
+
+module use /appl/local/csc/modulefiles
+module load pytorch/2.5
+
+# Activate virtual environment for task dependencies
+VENV_DIR="${VENV_DIR:-.venv}"
+if [ -d "$VENV_DIR" ]; then
+    source "$VENV_DIR/bin/activate"
+else
+    echo "ERROR: Virtual environment not found at $VENV_DIR"
+    exit 1
+fi
+
+export HF_HOME="${HF_HOME:-/scratch/project_462000353/hf_cache}"
+export SSL_CERT_FILE=$(python -m certifi)
+
 # Pre-processing: Create verifiers input
 echo "Pre-processing: Creating verifiers input..."
 python src/create_verifiers_input.py \
@@ -72,7 +100,7 @@ export MIN_FUNCTIONS="$MIN_FUNCTIONS"
 export MIN_TEST_CASES="$MIN_TEST_CASES"
 
 # Run task in local file mode (connects to existing vLLM server)
-PYTHONPATH=. python -m dispatcher.taskmanager.cli \
+python -m dispatcher.taskmanager.cli \
     --task "$TASK" \
     --input "$VERIFIERS_INPUT" \
     --output "$VERIFIERS_OUTPUT" \

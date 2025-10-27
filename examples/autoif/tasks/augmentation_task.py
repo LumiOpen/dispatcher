@@ -22,8 +22,8 @@ class AugmentInstructionsTask(GeneratorTask):
 
     # Generation parameters for instruction augmentation
     GEN_PARAMS: Dict[str, Any] = {
-        "temperature": 0.7,
-        "top_p": 0.95,
+        "temperature": 0.75,
+        "top_p": 0.9,
         "max_tokens": 8192,
     }
 
