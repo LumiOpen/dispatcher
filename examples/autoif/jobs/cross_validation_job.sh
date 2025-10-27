@@ -15,7 +15,6 @@ set -euo pipefail
 echo "======================================="
 echo "AutoIF Verifiers Post-processing"
 echo "======================================="
-echo "Job ID: $SLURM_JOB_ID"
 echo "Started: $(date)"
 echo ""
 

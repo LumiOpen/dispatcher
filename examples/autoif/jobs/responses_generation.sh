@@ -18,7 +18,6 @@ set -euo pipefail
 echo "======================================="
 echo "AutoIF Response Generation Job"
 echo "======================================="
-echo "Job ID: $SLURM_JOB_ID"
 echo "Started: $(date)"
 echo ""
 

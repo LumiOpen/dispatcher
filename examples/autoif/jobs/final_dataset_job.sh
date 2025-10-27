@@ -15,7 +15,6 @@ set -euo pipefail
 echo "================================"
 echo "AutoIF Final SFT Dataset Job"
 echo "================================"
-echo "Job ID: $SLURM_JOB_ID"
 echo "Started: $(date)"
 echo ""
 
