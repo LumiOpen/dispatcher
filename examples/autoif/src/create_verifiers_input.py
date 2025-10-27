@@ -70,9 +70,9 @@ def create_verifier_input(instructions_file: str, output_file: str) -> None:
 def main():
     parser = argparse.ArgumentParser(description='Create input for verification function generation')
 
-    parser.add_argument('--instructions_file', type=str, required=True,
+    parser.add_argument('--instructions-file', type=str, required=True,
                         help='JSONL file with filtered instructions (output from augmentation post-processing)')
-    parser.add_argument('--output_file', type=str, required=True,
+    parser.add_argument('--output-file', type=str, required=True,
                         help='Output JSONL file with prompts for verification function generation')
 
     args = parser.parse_args()

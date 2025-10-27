@@ -197,32 +197,52 @@ def get_pipeline_sequence(config: dict) -> List[Tuple[str, bool]]:
     return sequence
 
 
-def submit_pipeline(config: dict, out_dir: Path) -> Dict[str, str]:
-    """Submit all enabled jobs with dependencies"""
-    # Detect if using vllm_server (local mode)
+def execute_jobs(
+    config: dict,
+    out_dir: Path,
+    job_names: List[str],
+    prev_job_id: Optional[str] = None,
+    show_header: bool = True
+) -> Dict[str, str]:
+    """
+    Execute a sequence of jobs using the appropriate execution mode.
+
+    Automatically detects execution mode from config (local vs SLURM).
+
+    Args:
+        config: Pipeline configuration
+        out_dir: Output directory
+        job_names: List of job names to execute in order
+        prev_job_id: Optional SLURM job ID to depend on (SLURM mode only)
+        show_header: Whether to print execution mode header
+
+    Returns:
+        Dict mapping job names to job IDs (empty dict for local mode)
+    """
+    # Detect execution mode
     use_vllm_server = config.get('vllm_server') is not None
 
     if use_vllm_server:
-        return run_pipeline_local(config, out_dir)
+        return _execute_jobs_local(config, out_dir, job_names, show_header)
     else:
-        return submit_pipeline_slurm(config, out_dir)
+        return _execute_jobs_slurm(config, out_dir, job_names, prev_job_id, show_header)
 
 
-def run_pipeline_local(config: dict, out_dir: Path) -> Dict[str, str]:
-    """Run pipeline locally using external vLLM server"""
-    vllm_server = config.get('vllm_server', {})
-    host = vllm_server.get('host', '127.0.0.1')
-    port = vllm_server.get('port', 8000)
+def _execute_jobs_local(
+    config: dict,
+    out_dir: Path,
+    job_names: List[str],
+    show_header: bool = True
+) -> Dict[str, str]:
+    """Execute jobs locally using external vLLM server"""
+    if show_header:
+        vllm_server = config.get('vllm_server', {})
+        host = vllm_server.get('host', '127.0.0.1')
+        port = vllm_server.get('port', 8000)
+        print(f"\nRunning jobs in local mode...")
+        print(f"vLLM Server: {host}:{port}\n")
 
-    print(f"\nRunning pipeline in local mode...")
-    print(f"vLLM Server: {host}:{port}\n")
-
-    pipeline_sequence = get_pipeline_sequence(config)
-
-    for job_name, enabled in pipeline_sequence:
-        if not enabled:
-            continue
-
+    for job_name in job_names:
         env_vars = build_env_vars(config, job_name, out_dir)
 
         # GPU jobs (ending with "_generation") use _local version
@@ -247,19 +267,20 @@ def run_pipeline_local(config: dict, out_dir: Path) -> Dict[str, str]:
     return {}
 
 
-def submit_pipeline_slurm(config: dict, out_dir: Path) -> Dict[str, str]:
-    """Submit all enabled jobs to SLURM with dependencies"""
-    print("\nSubmitting pipeline to SLURM...\n")
+def _execute_jobs_slurm(
+    config: dict,
+    out_dir: Path,
+    job_names: List[str],
+    prev_job_id: Optional[str] = None,
+    show_header: bool = True
+) -> Dict[str, str]:
+    """Execute jobs on SLURM with dependencies"""
+    if show_header:
+        print("\nSubmitting jobs to SLURM...\n")
 
     job_ids = {}
-    prev_job_id = None
 
-    pipeline_sequence = get_pipeline_sequence(config)
-
-    for job_name, enabled in pipeline_sequence:
-        if not enabled:
-            continue
-
+    for job_name in job_names:
         # Job script path convention: jobs/{job_name}.sh
         job_script = f"jobs/{job_name}.sh"
         env_vars = build_env_vars(config, job_name, out_dir)
@@ -270,7 +291,7 @@ def submit_pipeline_slurm(config: dict, out_dir: Path) -> Dict[str, str]:
         if job_id:
             job_ids[job_name] = job_id
             prev_job_id = job_id
-            dep_str = f" (depends on {prev_job_id})" if dependency else ""
+            dep_str = f" (depends on {dependency.split(':')[1]})" if dependency else ""
             print(f" {job_name:45} → {job_id}{dep_str}")
         else:
             print(f" Failed to submit {job_name}")
@@ -279,6 +300,14 @@ def submit_pipeline_slurm(config: dict, out_dir: Path) -> Dict[str, str]:
             sys.exit(1)
 
     return job_ids
+
+
+def submit_pipeline(config: dict, out_dir: Path) -> Dict[str, str]:
+    """Submit all enabled jobs with dependencies"""
+    pipeline_sequence = get_pipeline_sequence(config)
+    job_names = [name for name, enabled in pipeline_sequence if enabled]
+
+    return execute_jobs(config, out_dir, job_names, show_header=True)
 
 
 # =============================================================================
@@ -377,8 +406,8 @@ def get_all_jobs_ordered(config: dict) -> List[str]:
 
 
 def handle_force(config: dict, out_dir: Path):
-    """Cancel all existing jobs and resubmit entire pipeline"""
-    print("\n  Force mode: Cancelling existing jobs and resubmitting...\n")
+    """Cancel all existing jobs and rerun entire pipeline"""
+    print("\n  Force mode: Cancelling existing jobs and rerunning...\n")
 
     old_jobs = load_job_ids(out_dir)
     if old_jobs:
@@ -389,8 +418,8 @@ def handle_force(config: dict, out_dir: Path):
     save_job_ids(out_dir, job_ids)
 
 
-def handle_resubmit_failed(config: dict, out_dir: Path):
-    """Resubmit from first failed job onwards"""
+def handle_rerun_failed(config: dict, out_dir: Path):
+    """Rerun from first failed job onwards"""
     old_jobs = load_job_ids(out_dir)
 
     if not old_jobs:
@@ -400,18 +429,15 @@ def handle_resubmit_failed(config: dict, out_dir: Path):
     all_done, failed, running = check_pipeline_status(old_jobs)
 
     if not failed:
-        print("\nNo failed jobs to resubmit")
+        print("\nNo failed jobs to rerun")
         if running:
             print(f"{len(running)} job(s) still running")
         elif all_done:
             print("All jobs completed successfully")
         sys.exit(0)
 
-    print(f"\n Resubmitting {len(failed)} failed job(s) and downstream dependencies...\n")
-
     # Find first failed job in pipeline order
     all_jobs = get_all_jobs_ordered(config)
-
     first_failed_idx = min(all_jobs.index(f) for f in failed)
 
     # Cancel downstream jobs
@@ -426,32 +452,34 @@ def handle_resubmit_failed(config: dict, out_dir: Path):
         prev_name = all_jobs[first_failed_idx - 1]
         prev_job_id = old_jobs.get(prev_name)
 
-    # Resubmit from failed job onwards
-    print("\nResubmitting:\n")
-    new_jobs = {}
+    # Rerun from failed job onwards using unified execution
+    print("\nRerunning:\n")
+    jobs_to_rerun = all_jobs[first_failed_idx:]
 
-    for job_name in all_jobs[first_failed_idx:]:
-        job_script = f"jobs/{job_name}.sh"
-        env_vars = build_env_vars(config, job_name, out_dir)
+    new_jobs = execute_jobs(
+        config,
+        out_dir,
+        jobs_to_rerun,
+        prev_job_id=prev_job_id,
+        show_header=False
+    )
 
-        dependency = f"afterany:{prev_job_id}" if prev_job_id else None
-        job_id = submit_job(job_script, env_vars, dependency)
-
-        if job_id:
-            new_jobs[job_name] = job_id
-            old_jobs[job_name] = job_id  # Update history
-            prev_job_id = job_id
-            print(f" {job_name:45} → {job_id}")
-        else:
-            print(f" Failed to submit {job_name}")
-            cancel_jobs(list(new_jobs.values()))
-            sys.exit(1)
-
+    # Update job history
+    old_jobs.update(new_jobs)
     save_job_ids(out_dir, old_jobs)
 
 
 def handle_continue(config: dict, out_dir: Path):
     """Skip failed jobs, submit downstream without dependency"""
+    # Check if using local mode
+    use_vllm_server = config.get('vllm_server') is not None
+
+    if use_vllm_server:
+        print("\nLocal mode doesn't support continue (no job tracking).")
+        print("Use --rerun-failed to rerun the entire pipeline.\n")
+        sys.exit(1)
+
+    # SLURM mode: continue from next job after failure
     old_jobs = load_job_ids(out_dir)
 
     if not old_jobs:
@@ -464,11 +492,10 @@ def handle_continue(config: dict, out_dir: Path):
         print("\nNo failed jobs to skip")
         sys.exit(0)
 
-    print(f"\n  Skipping {len(failed)} failed job(s), submitting downstream...\n")
+    print(f"\nSkipping {len(failed)} failed job(s), submitting downstream...\n")
 
     # Find first failed job
     all_jobs = get_all_jobs_ordered(config)
-
     first_failed_idx = min(all_jobs.index(f) for f in failed)
 
     # Cancel downstream jobs
@@ -479,26 +506,26 @@ def handle_continue(config: dict, out_dir: Path):
 
     # Submit downstream WITHOUT dependency (assumes data exists)
     print("\nSubmitting downstream jobs:\n")
-    new_jobs = {}
+    jobs_to_submit = all_jobs[first_failed_idx + 1:]
 
-    for job_name in all_jobs[first_failed_idx + 1:]:
-        job_script = f"jobs/{job_name}.sh"
-        env_vars = build_env_vars(config, job_name, out_dir)
+    if not jobs_to_submit:
+        print("No downstream jobs to submit")
+        sys.exit(0)
 
-        job_id = submit_job(job_script, env_vars, dependency=None)
+    new_jobs = execute_jobs(
+        config,
+        out_dir,
+        jobs_to_submit,
+        prev_job_id=None,  # No dependency - assumes data exists
+        show_header=False
+    )
 
-        if job_id:
-            new_jobs[job_name] = job_id
-            old_jobs[job_name] = job_id
-            print(f" {job_name:45} → {job_id}")
-        else:
-            print(f" Failed to submit {job_name}")
-            cancel_jobs(list(new_jobs.values()))
-            sys.exit(1)
-
+    # Update job history
+    old_jobs.update(new_jobs)
     save_job_ids(out_dir, old_jobs)
-    print(f"\n    Skipped failed: {', '.join(failed)}")
-    print("   Ensure output files exist for downstream jobs\n")
+
+    print(f"\n  Skipped failed: {', '.join(failed)}")
+    print("  Ensure output files exist for downstream jobs\n")
 
 
 # =============================================================================
@@ -514,9 +541,9 @@ def main():
     parser.add_argument('--out-dir', type=Path, required=True,
                        help='Output directory (must contain config.yaml)')
     parser.add_argument('--force', action='store_true',
-                       help='Cancel all jobs and resubmit entire pipeline')
-    parser.add_argument('--resubmit-failed', action='store_true',
-                       help='Resubmit failed jobs and all downstream dependencies')
+                       help='Cancel all jobs and rerun entire pipeline')
+    parser.add_argument('--rerun-failed', action='store_true',
+                       help='Re-run failed jobs and all downstream dependencies. If batch jobs: resubmit from first failed job onwards.')
     parser.add_argument('--continue', dest='continue_mode', action='store_true',
                        help='Skip failed jobs, submit downstream (assumes data exists)')
 
@@ -532,8 +559,8 @@ def main():
     # Handle different modes
     if args.force:
         handle_force(config, args.out_dir)
-    elif args.resubmit_failed:
-        handle_resubmit_failed(config, args.out_dir)
+    elif args.rerun_failed:
+        handle_rerun_failed(config, args.out_dir)
     elif args.continue_mode:
         handle_continue(config, args.out_dir)
     else:
@@ -544,7 +571,7 @@ def main():
             all_done, failed, running = check_pipeline_status(old_jobs)
 
             if failed:
-                print(f" {len(failed)} job(s) failed. Use --resubmit-failed or --continue")
+                print(f" {len(failed)} job(s) failed. Use --rerun-failed or --continue")
                 sys.exit(1)
             elif running:
                 print(f" {len(running)} job(s) still running")

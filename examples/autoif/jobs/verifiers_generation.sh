@@ -80,8 +80,8 @@ echo ""
 # Pre-processing: Create verifiers input file
 echo "Pre-processing: Creating verifiers input..."
 python src/create_verifiers_input.py \
-    --instructions_file "$AUGMENTED_INSTRUCTIONS_FILE" \
-    --output_file "$VERIFIERS_INPUT_FILE"
+    --instructions-file "$AUGMENTED_INSTRUCTIONS_FILE" \
+    --output-file "$VERIFIERS_INPUT_FILE"
 
 if [ $? -ne 0 ]; then
     echo "ERROR: Pre-processing failed"

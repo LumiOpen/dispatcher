@@ -18,7 +18,7 @@ TASK="tasks.verifiers_task.GenerateVerifiersTask"
 LANGUAGE="${language:-en}"
 MIN_FUNCTIONS="${min_functions:-1}"
 MIN_TEST_CASES="${min_test_cases:-1}"
-NUM_VERIFIER_GENERATIONS="${num_verifier_generations:-10}"
+NUM_GENERATIONS="${num_verifier_generations:-3}"
 
 # vLLM server connection
 VLLM_HOST="${vllm_host:-127.0.0.1}"
@@ -72,9 +72,8 @@ export SSL_CERT_FILE=$(python -m certifi)
 # Pre-processing: Create verifiers input
 echo "Pre-processing: Creating verifiers input..."
 python src/create_verifiers_input.py \
-    --augmented-instructions "$AUGMENTED_INSTRUCTIONS" \
-    --output-file "$VERIFIERS_INPUT" \
-    --num-verifier-generations "$NUM_VERIFIER_GENERATIONS"
+    --instructions-file "$AUGMENTED_INSTRUCTIONS" \
+    --output-file "$VERIFIERS_INPUT"
 
 if [ $? -ne 0 ]; then
     echo "ERROR: Pre-processing failed"
@@ -98,6 +97,7 @@ echo ""
 export LANGUAGE="$LANGUAGE"
 export MIN_FUNCTIONS="$MIN_FUNCTIONS"
 export MIN_TEST_CASES="$MIN_TEST_CASES"
+export NUM_GENERATIONS="$NUM_GENERATIONS"
 
 # Run task in local file mode (connects to existing vLLM server)
 python -m dispatcher.taskmanager.cli \

@@ -25,7 +25,7 @@ Your task is to augment the given list of seed instructions by generating new, d
   - "Provide a numbered list with at least 5 items." (clear structure)
   - "Include exactly 2 sections, each starting with a heading in uppercase letters." (clear section definition)
 
-3.  **No Open-ended Knowledge Questions:** Avoid instructions that require external or factual knowledge, depend on world understanding or .
+3.  **No Open-ended Knowledge Questions:** Avoid instructions that require external or factual knowledge or depend on world understanding.
 
 - Bad examples to avoid:
   - "Use only words that are also a type of food." (requires knowledge)
@@ -35,6 +35,7 @@ Your task is to augment the given list of seed instructions by generating new, d
   - "Mention one historical event per century." (requires external context)
 
 4.  **No Subjective Style:** Do not request stylistic, tonal, or emotional instructions. Focus on verifiable structure, not style or tone.
+- Bad examples to avoid:
   - "Write the response in the style of a Shakespearean play." (Style)
   - "Respond with a metaphor in every sentence" (Style)
   - "Write the response in a humorous tone." (Tone)
@@ -47,9 +48,8 @@ Your task is to augment the given list of seed instructions by generating new, d
 
 7. **Atomicity:** Each instruction should focus on a single, clear requirement. Avoid combining multiple requirements into one instruction.
 - Bad examples to avoid:
-  - "Write a paragraph of 3 sentences, and each sentence must rhyme." (multiple checks)
-  - "Produce 2 paragraphs, each with 3 bullet points." (two levels of constraints)
-  - "Create a poem with 4 lines and make the last word ‘sunrise’." (structure + content)
+  - "Write a paragraph of 3 sentences, and each sentence must have at least 5 words." (multiple checks)
+  - "Create a list of 5 items, each starting with a different letter of the alphabet." (multiple checks)
 
 {additional_context}
 
