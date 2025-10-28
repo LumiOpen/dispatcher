@@ -75,7 +75,6 @@ else
 fi
 
 export HF_HOME="${HF_HOME:-/scratch/project_462000353/hf_cache}"
-export SSL_CERT_FILE=$(python -m certifi)
 
 # Export environment variables for the task
 export LANGUAGE="$LANGUAGE"

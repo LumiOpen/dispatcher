@@ -63,7 +63,6 @@ else
 fi
 
 export HF_HOME="${HF_HOME:-/scratch/project_462000353/hf_cache}"
-export SSL_CERT_FILE=$(python -m certifi)
 
 # Pre-processing: Create input file with prompts
 echo "Pre-processing: Creating augmentation input..."

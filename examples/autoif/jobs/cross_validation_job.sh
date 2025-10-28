@@ -53,7 +53,6 @@ else
 fi
 
 export HF_HOME="${hf_home:-/scratch/project_462000353/hf_cache}"
-export SSL_CERT_FILE=$(python -m certifi)
 
 # Check input file exists
 if [ ! -f "$INPUT_FILE" ]; then
