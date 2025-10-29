@@ -58,34 +58,6 @@ def paired_t_test(scores1, scores2):
     
     return t_stat, p_value, len(common_items)
 
-def bootstrap_test(scores1, scores2, n_bootstrap=10000):
-    """Bootstrap resampling test for difference in means."""
-    common_items = set(scores1.keys()) & set(scores2.keys())
-    
-    values1 = np.array([scores1[item_id] for item_id in sorted(common_items)])
-    values2 = np.array([scores2[item_id] for item_id in sorted(common_items)])
-    
-    observed_diff = np.mean(values1) - np.mean(values2)
-    
-    # Bootstrap resampling
-    bootstrap_diffs = []
-    for _ in range(n_bootstrap):
-        # Resample with replacement
-        indices = np.random.choice(len(values1), len(values1), replace=True)
-        boot_diff = np.mean(values1[indices]) - np.mean(values2[indices])
-        bootstrap_diffs.append(boot_diff)
-    
-    bootstrap_diffs = np.array(bootstrap_diffs)
-    
-    # Calculate 95% confidence interval
-    ci_lower = np.percentile(bootstrap_diffs, 2.5)
-    ci_upper = np.percentile(bootstrap_diffs, 97.5)
-    
-    # P-value (two-tailed): proportion of bootstrap samples with |diff| >= |observed_diff|
-    p_value = np.mean(np.abs(bootstrap_diffs) >= np.abs(observed_diff))
-    
-    return observed_diff, p_value, (ci_lower, ci_upper)
-
 def main():
     if len(sys.argv) != 4:
         print("Usage: python evaluate_prompts_significance.py <answers1_path> <answers2_path> <gold_path>")
@@ -101,7 +73,6 @@ def main():
     
     print("Evaluating Translation Set 1...")
     scores1, answers1 = evaluate_translation_set(answer_path1, gold_data)
-    # import pdb; pdb.set_trace()
     accuracy1 = np.mean(list(scores1.values()))
 
     print("Evaluating Translation Set 2...")
@@ -123,33 +94,6 @@ def main():
     print(f"  p-value: {p_value_t:.4f}")
     print(f"  n_items: {n_items}")
     print(f"  Significant at α=0.05: {'Yes' if p_value_t < 0.05 else 'No'}")
-    
-    # # Bootstrap test
-    # obs_diff, p_value_boot, (ci_lower, ci_upper) = bootstrap_test(scores1, scores2)
-    # print(f"\nBootstrap test:")
-    # print(f"  Observed difference: {obs_diff:.4f}")
-    # print(f"  p-value: {p_value_boot:.4f}")
-    # print(f"  95% CI: ({ci_lower:.4f}, {ci_upper:.4f})")
-    # print(f"  Significant at α=0.05: {'Yes' if p_value_boot < 0.05 else 'No'}")
-    
-    # # Effect size (Cohen's d)
-    # common_items = set(scores1.keys()) & set(scores2.keys())
-    # values1 = [scores1[item_id] for item_id in sorted(common_items)]
-    # values2 = [scores2[item_id] for item_id in sorted(common_items)]
-    
-    # pooled_std = np.sqrt((np.var(values1, ddof=1) + np.var(values2, ddof=1)) / 2)
-    # cohens_d = (np.mean(values1) - np.mean(values2)) / pooled_std if pooled_std > 0 else 0
-    
-    # print(f"\nEffect size (Cohen's d): {cohens_d:.4f}")
-    # if abs(cohens_d) < 0.2:
-    #     effect_size = "negligible"
-    # elif abs(cohens_d) < 0.5:
-    #     effect_size = "small"
-    # elif abs(cohens_d) < 0.8:
-    #     effect_size = "medium"
-    # else:
-    #     effect_size = "large"
-    # print(f"Effect size interpretation: {effect_size}")
 
 if __name__ == "__main__":
     main()
