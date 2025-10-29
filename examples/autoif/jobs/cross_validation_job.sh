@@ -27,6 +27,7 @@ FUNCTION_TIMEOUT="${function_timeout:-10}"
 MIN_FUNCTIONS="${min_functions:-1}"
 MIN_TEST_CASES="${min_test_cases:-1}"
 FUNCTION_PASS_RATE="${function_pass_rate:-0.8}"
+LOGFILE="${logfile:-logs/crossval.log}"
 
 # Clean environment
 unset VIRTUAL_ENV
@@ -84,7 +85,8 @@ echo "Cross-validating verification functions..."
 python src/verifiers_cross_validation.py \
     --verifiers-file "$INPUT_FILE" \
     --output-all-file "$OUTPUT_ALL_FILE" \
-    --output-filtered-file "$OUTPUT_FILTERED_FILE"
+    --output-filtered-file "$OUTPUT_FILTERED_FILE" \
+    --logfile "$LOGFILE"
 
 if [ $? -ne 0 ]; then
     echo "ERROR: Cross-validation failed"

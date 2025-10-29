@@ -114,7 +114,7 @@ def build_env_vars(config: dict, job: str, out_dir: Path) -> dict:
         # If value looks like a relative file path, resolve to out_dir
         if isinstance(value, str) and value and not value.startswith('/'):
             # Check if it's a file path (ends with common extensions or is a directory name)
-            if any(value.endswith(ext) for ext in ['.jsonl', '.txt', '.json', '.csv']) or \
+            if any(value.endswith(ext) for ext in ['.jsonl', '.txt', '.json', '.csv', '.log']) or \
                'dataset' in key.lower() or 'dir' in key.lower():
                 # Keep HF dataset paths and absolute paths as-is
                 if not ('/' in value and len(value) > 50):  # Heuristic: long paths with / are likely HF paths

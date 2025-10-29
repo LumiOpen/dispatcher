@@ -37,7 +37,6 @@ MIN_FUNCTIONS = int(os.getenv('MIN_FUNCTIONS', 1))  # Minimum number of parsable
 MIN_TEST_CASES = int(os.getenv('MIN_TEST_CASES', 1))  # Minimum number of parsable test cases required
 FUNCTION_PASS_RATE = float(os.getenv('FUNCTION_PASS_RATE', 0.8))  # Proportion of generated test cases a function must pass
 LANGUAGE = os.getenv('LANGUAGE', 'eng')  # Language code for filtering test cases
-OUT_DIR = os.getenv('OUT_DIR', 'exp1') # sub-directory for the output files in data/
 
 class CrossValidationResult:
     """Container for cross-validation results of a single instruction."""
@@ -394,7 +393,7 @@ def write_results(all_results: List[CrossValidationResult], filtered_results: Li
             f.write(json.dumps(result.to_filtered_dict()) + '\n')
 
 
-def cross_validate_verifiers(verifiers_file: str, output_all_file: str, output_filtered_file: str):
+def cross_validate_verifiers(verifiers_file: str, output_all_file: str, output_filtered_file: str, logfile: str):
     """
     Main cross-validation function.
     
@@ -406,7 +405,6 @@ def cross_validate_verifiers(verifiers_file: str, output_all_file: str, output_f
     5. Log comprehensive summary
     """
     # Set up logging
-    logfile = f"{OUT_DIR}/{os.path.basename(output_all_file)}.log"
     os.makedirs(os.path.dirname(logfile), exist_ok=True)
     logger = CrossValidationLogger(logfile)
     
@@ -455,6 +453,8 @@ def main():
                         help='Output file for all verifiers with filter status')
     parser.add_argument('--output-filtered-file', type=str, required=True,
                         help='Output file for filtered verifiers')
+    parser.add_argument('--logfile', type=str, required=True,
+                        help='Log file for the cross-validation process')
 
     args = parser.parse_args()
 
@@ -463,6 +463,7 @@ def main():
         args.verifiers_file,
         args.output_all_file,
         args.output_filtered_file,
+        args.logfile
     )
 
 if __name__ == "__main__":

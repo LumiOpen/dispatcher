@@ -101,6 +101,7 @@ jobs:
     verifiers_all: "verifiers_all.jsonl"
     verifiers_filtered: "verifiers_filtered.jsonl"
     function_pass_rate: 0.8
+    logfile: "crossval.log"
 
   # --------------------------------------------------------------------------
   # Concatenation: Create queries by concatenating instructions with dataset
