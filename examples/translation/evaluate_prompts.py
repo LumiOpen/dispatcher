@@ -28,9 +28,12 @@ with open(gold_path, "r") as f:
 print(f"Loaded {len(answers)} answers from {answer_path}")
 correct = 0
 total = 0
+pass_at_4 = 0
 # TODO: What metric should we actually use here?
+
 for ans in answers:
     # There can be multiple answers in the "answers" field
+    passed = False
     for answer in ans.get("generated_answers", []):
         # Extract the final answer from the reasoning format
         try:
@@ -44,9 +47,14 @@ for ans in answers:
         pred = parse(final_answer)
         if verify(gold, pred):
             correct += 1
+            passed = True
         else:
             print(f"Incorrect answer:\nPROMPT:\n{ans['generated_translation']}\nGOLD ANSWER:\n{gold_data[ans['id']]}\nPREDICTED ANSWER:\n{final_answer}\n")
         total += 1
+    if passed:
+        pass_at_4 += 1
     # import pdb; pdb.set_trace()
 total = 400 # Count failed answers as incorrect # FIXME: Remove this hack
 print(f"Accuracy: {correct / total * 100:.2f}% ({correct}/{total})")
+
+print(f"Pass@4: {pass_at_4 / len(answers) * 100:.2f}% ({pass_at_4}/{len(answers)})")
