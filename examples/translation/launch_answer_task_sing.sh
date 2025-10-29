@@ -1,14 +1,14 @@
 #!/bin/bash
 #SBATCH --job-name=translating
 #SBATCH --nodes=1
-#SBATCH --partition=dev-g
-#SBATCH --time=1:00:00
+#SBATCH --partition=standard-g
+#SBATCH --time=3:00:00
 #SBATCH --ntasks-per-node=1
 #SBATCH --mem=480G
 #SBATCH --cpus-per-task=7
 #SBATCH --exclusive=user
 #SBATCH --hint=nomultithread
-#SBATCH --gpus-per-node=mi250:8
+#SBATCH --gpus-per-node=mi250:4
 #SBATCH --account=project_462000963
 #SBATCH --output=logs/%j.out
 #SBATCH --error=logs/%j.err
@@ -17,14 +17,14 @@
 ###
 # configure the following.
 export LANGUAGE="${1:-fi}"
-export MODEL=${2:-"Qwen/Qwen2.5-72B-Instruct"}
-#export MODEL=${2:-"Qwen/Qwen2.5-7B-Instruct"}
+#export MODEL=${2:-"Qwen/Qwen2.5-72B-Instruct"}
+export MODEL=${2:-"Qwen/Qwen3-30B-A3B-Thinking-2507"}
 MODEL_NAME=$(basename "$MODEL")
-INPUT_FILE=/scratch/project_462000353/posttraining_data/DeepScaleR-Preview-Dataset/default-train-sample-100.jsonl
+INPUT_FILE=/scratch/project_462000353/khakala/lib/dispatcher/examples/translation/translation_evals/default-train-sample-100_translations_DeepSeek-V3_fi.jsonl
 
 FILE_NAME=$(basename "$INPUT_FILE" .jsonl)
-OUTPUT_FILE=${FILE_NAME}_translations_${MODEL_NAME}_${LANGUAGE}.jsonl
-TASK=translation_task.TranslationTask
+OUTPUT_FILE=${FILE_NAME}_answers_${MODEL_NAME}_${LANGUAGE}.jsonl
+TASK=answering_task.AnsweringTask
 
 echo "Using model: $MODEL"
 echo "Model base name: $MODEL_NAME"
@@ -52,8 +52,8 @@ WORK_TIMEOUT=1800   # time for dispatcher to give up on a work item and reissue 
 # --ntasks-per-node should be int(8 / GPUS_PER_TASK)
 #
 
-GPUS_PER_TASK=8     # enough for the model and large batch size
-MAX_MODEL_LEN=8192 # for efficiency, only as much as you think you need for efficiency
+GPUS_PER_TASK=4     # enough for the model and large batch size
+MAX_MODEL_LEN=16384 # for efficiency, only as much as you think you need for efficiency
 
 # end configuration
 ###################
@@ -69,10 +69,20 @@ unset PYTHONEXECUTABLE
 # set up environment
 mkdir -p logs pythonuserbase
 export PYTHONUSERBASE="./pythonuserbase" #"$(pwd)/pythonuserbase"
-module use /appl/local/csc/modulefiles
-module load pytorch/2.5
+#module use /appl/local/csc/modulefiles
+#module load pytorch/2.5
 export HF_HOME="/scratch/project_462000353/hf_cache"
-export SSL_CERT_FILE=$(python -m certifi)
+export SSL_CERT_FILE="/opt/miniconda3/envs/pytorch/lib/python3.12/site-packages/certifi/cacert.pem" # $(python -m certifi)
+
+export IMG="/scratch/project_462000353/containers/vllm_v10.1.1.sif"
+
+if command -v /opt/rocm/llvm/bin/clang++ >/dev/null 2>&1; then
+  export CC=/opt/rocm/llvm/bin/clang
+  export CXX=/opt/rocm/llvm/bin/clang++
+else
+  export CC=/opt/rocm/bin/hipcc
+  export CXX=/opt/rocm/bin/hipcc
+fi
 
 #cd /scratch/project_462000353/zosaelai2/LumiOpen/translation/dispatcher
 #pip install -e .
@@ -83,16 +93,26 @@ export SSL_CERT_FILE=$(python -m certifi)
 # tasks.
 export DISPATCHER_SERVER=$(hostname)
 export DISPATCHER_PORT=9999
-python -m dispatcher.server \
-    --infile $INPUT_FILE \
-    --outfile $OUTPUT_FILE \
-    --work-timeout $WORK_TIMEOUT \
-    --host 0.0.0.0 \
-    --port ${DISPATCHER_PORT} &
+singularity exec --rocm \
+    -B "/scratch/project_462000353,/flash/project_462000353,/scratch/project_462000394/containers/for-turkunlp-team,/pfs/lustrep3/scratch/project_462000394/containers/for-turkunlp-team" \
+    --bind /usr/share/libdrm:/usr/share/libdrm \
+    --bind "$PWD":/workspace \
+    "$IMG" \
+    python -m dispatcher.server \
+        --infile $INPUT_FILE \
+        --outfile $OUTPUT_FILE \
+        --work-timeout $WORK_TIMEOUT \
+        --host 0.0.0.0 \
+        --port ${DISPATCHER_PORT} &
 
 sleep 10
 
 srun -l \
+    singularity exec --rocm \
+        -B "/scratch/project_462000353,/flash/project_462000353,/scratch/project_462000394/containers/for-turkunlp-team,/pfs/lustrep3/scratch/project_462000394/containers/for-turkunlp-team" \
+        --bind /usr/share/libdrm:/usr/share/libdrm \
+        --bind "$PWD":/workspace \
+        "$IMG" \
     bash -c '
     # Compute the starting GPU index for this task.
     # SLURM_LOCALID is the index of the task on this node.
@@ -113,12 +133,12 @@ srun -l \
 
     echo "Launching task $SLURM_LOCALID (global id: $SLURM_PROCID) with GPU $GPU_IDS on $(hostname)"
 
-    module use /appl/local/csc/modulefiles
-    module load pytorch/2.5
     export PYTHONUSERBASE=./pythonuserbase
     export HF_HOME="/scratch/project_462000353/hf_cache"
-
-    PYTHONPATH=. python -m dispatcher.taskmanager.cli \
+    unset TRANSFORMERS_CACHE
+    export PYTHONPATH="$HOME/.aiter/jit/install:${PYTHONPATH-}"
+    
+    python -m dispatcher.taskmanager.cli \
         --dispatcher ${DISPATCHER_SERVER}:${DISPATCHER_PORT} \
         --task '"$TASK"' \
         --batch-size 1 \
@@ -128,4 +148,3 @@ srun -l \
         --model '"$MODEL"' \
         # --silence-vllm-logs
 '
-

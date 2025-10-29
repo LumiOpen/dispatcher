@@ -1,4 +1,8 @@
-"""Task description: question + answer generation from documents. Prompts are taken from the EuroLLM technical report https://arxiv.org/abs/2506.04079"""
+"""
+Task description: Generates (reasoning) answers for existing prompts.
+This task is the second step in our prompt translation evaluation pipeline.
+We generate multiple answers for each prompt.
+"""
 from typing import Any, Dict, Generator, List, Union
 
 from dispatcher.taskmanager.backend.request import Request, Response
@@ -10,7 +14,7 @@ import os
 import re
 import logging
 
-__all__ = ["TranslationTask"]
+__all__ = ["TranslationAnsweringTask"]
 
 LANGUAGE=os.environ.get("LANGUAGE")
 
@@ -47,7 +51,7 @@ LANGUAGE_NAMES = {
     "no": ["Norwegian", "nob"],
 }
 
-TRANSLATION_PROMPT = """
+GENERAL_TRANSLATION_PROMPT = """
 You are a professional translator. Your task is to translate the following math problem faithfully and accurately into {language}. Translate the problem only, DO NOT answer the problem.
 
 Guidelines:
@@ -65,13 +69,13 @@ Problem to translate:
 """
 
 
-DEEPSEEK_R1_TRANSLATION_PROMPT = """
+DEEPSEEK_TRANSLATION_PROMPT = """
 You are a professional translator specializing in mathematics and scientific texts. Your task is to translate the following content faithfully and accurately into {language}.
 
 Guidelines:
 
 1. Preserve all LaTeX code, equations, symbols, and formatting exactly as written.
-2. Translate only the surrounding natural language, not the math expressions inside \( ... \), \[ ... \], or $$ ... $$.
+2. Translate only the surrounding natural language, not the math expressions inside ( ... ), [ ... ], or $$ ... $$.
 3. Maintain the precise meaning, tone, and logical structure of the original text.
 4. Use the standard mathematical terminology of the target language.
 5. Do not simplify, interpret, or solve the math; your goal is linguistic translation only.
@@ -83,38 +87,54 @@ Text to translate:
 {text}
 """
 
-class TranslationTask(GeneratorTask):
-    """Translation implementation."""
+OPEN_R1_REASONING_PROMPT = """
+You are a reasoning model to help users solve complex problems. Your role as an assistant involves thoroughly exploring questions through a systematic thinking process before providing the final precise and accurate solutions. This requires engaging in a comprehensive cycle of analysis, summarizing, exploration, reassessment, reflection, backtracing, and iteration to develop well-considered thinking process. 
+Please structure your response into two main sections: 
+- Thought and Solution using the specified format: <think> [Thought section] </think> [Solution section]. 
+- In the Thought section, detail your reasoning process in steps. Each step should include detailed considerations such as analysing questions, summarizing relevant findings, brainstorming new ideas, verifying the accuracy of the current steps, refining any errors, and revisiting previous steps. 
+- In the Solution section, based on various attempts, explorations, and reflections from the Thought section, systematically present the final solution that you deem correct. The Solution section should be logical, accurate, and concise and detail necessary steps needed to reach the conclusion. Do not use <solution></solution> tags or the word "Solution". Just append the answer after the Thought section.
+- Since the question is in {language}, you MUST respond entirely in {language} for both the Thought and Solution sections.
+
+Now, try to solve the following question through the above guidelines.
+{question}
+"""
+
+class AnsweringTask(GeneratorTask):
+    """Translation and reasoning trace generation."""
     
     TRANSLATION_GEN_PARAMS: Dict[str, Any] = {
         "temperature": 0.0,
         "top_p": 1.0,
-        "max_tokens": 7680,
+        "max_tokens": 8192,
     }
     
+    ANSWER_GEN_PARAMS: Dict[str, Any] = {
+        "temperature": 0.6,
+        "top_p": 0.95,
+        "max_tokens": 14336, # Leave 2K tokens for the prompt
+    #    'n': 16, # We generate multiple answers for each prompt. # FIXME: This doesn't seem to work
+    }
+
     logger = logging.getLogger(__name__)
 
     
     # --------------- generator ---------------
     def task_generator(self) -> Generator[Union[Request, List[Request]], Any, Dict[str, Any]]:
         # self.data is prepopulated with the data from the jsonl row being processed
-        text_to_translate = self.data.get("input")
-        #text_to_translate = messages_to_translate[0]['content']
+        # We return the original data along with the generated answer
         return_dict = self.data.copy()
-        # return_dict = {
-        #                 "text": messages_to_translate[0]['content'],
-        #                 "translation": "",
-        #             }
-    
+
         input_messages = [
             {
                 "role": "user", 
-                "content": DEEPSEEK_R1_TRANSLATION_PROMPT.format(language=LANGUAGE_NAMES.get(LANGUAGE, ["English"])[0], 
-                                                          text=text_to_translate)
+                "content": OPEN_R1_REASONING_PROMPT.format(language=LANGUAGE_NAMES.get(LANGUAGE)[0], 
+                                                          question=self.data["generated_translation"])
             }
         ]
-        resp: Response = yield Request({"messages": input_messages, **self.TRANSLATION_GEN_PARAMS})
-        resp_text = resp.get_text()
-        self.logger.info(f"\n\nPROBLEM:\n{text_to_translate} TRANSLATION:\n{resp_text}\n")
-        return_dict["generated_translation"] = resp_text.strip()
+        # We request multiple answers per prompt
+        answers = []
+        for _ in range(4):
+            answer_resp: Response = yield Request({"messages": input_messages, **self.ANSWER_GEN_PARAMS})
+            answers.append(answer_resp.get_text())
+        return_dict["generated_answers"] = answers
         return return_dict
