@@ -96,7 +96,7 @@ jobs:
     work_timeout: 3600
     num_verifier_generations: 10
 
-  verifiers_postprocessing:
+  cross_validation_job:
     verifiers_output: "verifiers_output.jsonl"
     verifiers_all: "verifiers_all.jsonl"
     verifiers_filtered: "verifiers_filtered.jsonl"
