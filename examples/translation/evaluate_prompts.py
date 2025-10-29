@@ -6,9 +6,10 @@ This acts as a proxy for the prompt quality if the answering model is fixed.
 We assume that the answers are in reasoning format with the final answer after the </think> tag.
 The final answer extraction and verification is done with math-verify.
 
-The input file should contain both the gold reference in an "answer" field
-and the generated answers in a "generated_answers" field.
-"""
+The generation file should contain the generated answers in a "generated_answers" field.
+The gold file should contain the reference answer in an "answer" field.
+
+Usage: python evaluate_prompts.py <answers_path> <gold_path>"""
 from math_verify import parse, verify
 
 # Get the answers from the generated data from the file provided by the user
@@ -47,5 +48,5 @@ for ans in answers:
             print(f"Incorrect answer:\nPROMPT:\n{ans['generated_translation']}\nGOLD ANSWER:\n{gold_data[ans['id']]}\nPREDICTED ANSWER:\n{final_answer}\n")
         total += 1
     # import pdb; pdb.set_trace()
-total = 400 # Count failed answers as incorrect
+total = 400 # Count failed answers as incorrect # FIXME: Remove this hack
 print(f"Accuracy: {correct / total * 100:.2f}% ({correct}/{total})")
