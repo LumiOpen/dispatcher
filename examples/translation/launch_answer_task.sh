@@ -118,7 +118,7 @@ srun -l \
     module load pytorch/2.5
     export PYTHONUSERBASE=./pythonuserbase
     export HF_HOME="/scratch/project_462000353/hf_cache"
-    echo $VLLM_PORT
+
     PYTHONPATH=. python -m dispatcher.taskmanager.cli \
         --dispatcher ${DISPATCHER_SERVER}:${DISPATCHER_PORT} \
         --task '"$TASK"' \
@@ -128,6 +128,7 @@ srun -l \
         --tensor-parallel '"$GPUS_PER_TASK"' \
         --port $VLLM_PORT \
         --model '"$MODEL"' \
+        --request-timeout '"$REQUEST_TIMEOUT"' \
         # --silence-vllm-logs
 '
 
