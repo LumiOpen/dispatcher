@@ -113,7 +113,7 @@ srun -l \
         --max-model-len '"$MAX_MODEL_LEN"' \
         --tensor-parallel '"$GPUS_PER_TASK"' \
         --model '"$MODEL"' \
-        --port '"$VLLM_PORT"' \
+        --port $VLLM_PORT \
         --silence-vllm-logs
 '
 
