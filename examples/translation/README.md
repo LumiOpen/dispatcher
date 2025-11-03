@@ -24,4 +24,9 @@ sbatch launch_answer_task.sh
 ```
 
 3. Take a reasoning model (fixed) to get the answer given the translated prompt and generated reasoning trace. This can be one of deepseekv3, r1 or qwen3 (MoE)
+
+```sh
+sbatch launch_answer_with_traces_task_sing.sh
+```
+
 4. The accuracy of the problem solving across the models in (2) is a proxy for how well the models in (2) translated the traces.
