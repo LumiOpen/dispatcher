@@ -11,6 +11,9 @@ Your response will only contain a single python code block with the function def
 
 Note that the input response string can be a multiline string - string containing newline characters. Consider this when writing your evaluation logic.
 
+**CRITICAL INSTRUCTION FOR TEST CASES:**
+**The three test cases must be designed to be complex and realistic, mirroring real-life scenarios. They must explicitly cover common edge cases or potential pitfalls of the instruction (e.g., punctuation, capitalization, varying formats, special characters, multiline strings, empty inputs, leading/trailing spaces, or near-miss scenarios). At least one case MUST be a complex True case, and at least one MUST be a complex False case. The 'output' for each case must be 100% correct and definitive, as these tests are the ultimate standard for cross-validation.**
+
 Example output:
 {% if has_keywords %}
 ```python

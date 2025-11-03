@@ -7,6 +7,7 @@ from dispatcher.taskmanager.task.base import GeneratorTask
 
 __all__ = ["GenerateVerifiersTask"]
 
+NUM_GENERATIONS = int(os.getenv("NUM_GENERATIONS", 3))
 
 class GenerateVerifiersTask(GeneratorTask):
     """
@@ -26,10 +27,8 @@ class GenerateVerifiersTask(GeneratorTask):
         "temperature": 0.7,
         "top_p": 0.95,
         "max_tokens": 8192,
+        "n": NUM_GENERATIONS,
     }
-
-    # Number of verifier variations to generate
-    NUM_GENERATIONS = int(os.getenv("NUM_GENERATIONS", 3))
 
     def task_generator(self) -> Generator[Union[Request, List[Request]], Any, Dict[str, Any]]:
         """
@@ -63,14 +62,11 @@ class GenerateVerifiersTask(GeneratorTask):
         messages = [{"role": "user", "content": prompt}]
 
         # Generate multiple variations of verifiers
-        responses = []
-        for i in range(self.NUM_GENERATIONS):
-            response: Response = yield Request({"messages": messages, **self.GEN_PARAMS})
-            response_text = response.get_text()
-            responses.append(response_text)
+
+        response: Response = yield Request({"messages": messages, **self.GEN_PARAMS})
+        responses = response.get_text(n=NUM_GENERATIONS)
 
         # Return result for dispatcher output (raw responses)
-        # Cross-validation will be done separately
         return {
             'original': self.data,
             'responses': responses

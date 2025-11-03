@@ -16,7 +16,7 @@ def create_verifier_input(instructions_file: str, output_file: str) -> None:
                     data = json.loads(line)
                     instruction = data.get('instruction', '').strip()
                     instruction_id = data.get('instruction_id', '')
-                    category = data.get('category', '').strip()
+                    instruction_category = data.get('instruction_category', '').strip()
 
                     if not instruction:
                         print(f"Warning: Line {line_num} has no instruction, skipping")
@@ -25,7 +25,7 @@ def create_verifier_input(instructions_file: str, output_file: str) -> None:
                     instructions.append({
                         'instruction_id': instruction_id,
                         'instruction': instruction,
-                        'category': category
+                        'instruction_category': instruction_category
                     })
                 except json.JSONDecodeError as e:
                     print(f"Warning: Line {line_num} is not valid JSON, skipping: {e}")
@@ -51,19 +51,19 @@ def create_verifier_input(instructions_file: str, output_file: str) -> None:
     with open(output_file, 'w') as f:
         for item in instructions:
             # Determine if we should use the keyword branch
-            has_keywords = item['category'].lower() == 'keyword'
+            has_keywords = item['instruction_category'].lower() == 'keyword'
             prompt = template.render(instruction=item['instruction'], has_keywords=has_keywords)
             
             data = {
                 'instruction_id': item['instruction_id'],
                 'instruction': item['instruction'],
-                'instruction_category': item['category'],
+                'instruction_category': item['instruction_category'],
                 'prompt': prompt
             }
             f.write(json.dumps(data) + '\n')
     
     print(f"Created verifier input with {len(instructions)} instructions at {output_file}")
-    keyword_count = sum(1 for item in instructions if item['category'].lower() == 'keyword')
+    keyword_count = sum(1 for item in instructions if item['instruction_category'].lower() == 'keyword')
     print(f"Instructions with keyword category: {keyword_count}")
     print(f"Instructions with other/no category: {len(instructions) - keyword_count}")
 

@@ -6,14 +6,14 @@
     ],
     "seed_instructions": [
         {
-            "category": "Sisältö",
-            "description": "Ohjeet, jotka liittyvät tekstissä käytettyyn sisältöön, kielioppiin ja kirjallisiin keinoihin.",
+            "category": "Content",
+            "description": "Instructions related to the content, grammar, and literary devices used within the text.",
             "subcategories": [
-                "Sanojen ominaisuudet",
-                "Lauseen rakenne",
-                "Välimerkit",
-                "Tunnisteet/Paikkamerkit",
-                "Kieliopilliset ominaisuudet"
+                "Word Properties",
+                "Sentence Structure",
+                "Punctuation",
+                "Identifiers/Placeholders",
+                "Grammatical Properties"
             ],
             "additional_prompt_context": "model_prompts/additional_for_content_category.txt",
             "instructions": [
@@ -48,14 +48,14 @@
             ]
         },
         {
-            "category": "Pituus",
-            "description": "Ohjeet, jotka liittyvät tulostetekstin rakenteeseen ja järjestelyyn.",
+            "category": "Length",
+            "description": "Instructions related to the structure and arrangement of the output text.",
             "subcategories": [
-                "Sanamäärä",
-                "Lausesanmäärä",
-                "Kappalemäärä",
-                "Toisto",
-                "Ainutlaatuisuus"
+                "Word Count",
+                "Sentence Count",
+                "Paragraph Count",
+                "Repetition",
+                "Uniqueness"
             ],
             "instructions": [
                 "Vastauksessasi kirjaimen {letter} on esiinnyttävä {N} kertaa.",
@@ -78,16 +78,16 @@
             ]
         },
         {
-            "category": "Muotoilu",
-            "description": "Ohjeet, jotka liittyvät vastauksen muotoiluun, mukaan lukien JSON, CSV, sisennys ja erikoismerkit.",
+            "category": "Format",
+            "description": "Instructions related to the formatting of the response, including JSON, CSV, indentation, and special characters.",
             "subcategories": [
                 "JSON",
                 "CSV",
-                "Sisennys",
-                "Erikoismerkit",
+                "Indentation",
+                "Special Characters",
                 "XML",
                 "Markdown",
-                "Taulukko"
+                "Table"
             ],
             "instructions": [
                 "Kääri koko vastauksesi lainausmerkkeihin.",
