@@ -253,7 +253,7 @@ def extract_query_from_messages(item: Dict, turns: int = 1, messages_key: str = 
         Tuple of (user_messages_list, assistant_responses_list) or None if not found
     """
     if messages_key not in item:
-        return None, "key_not_in_item"
+        return None, "messages_key_not_in_item"
     
     user_messages = []
     assistant_responses = []
@@ -332,7 +332,7 @@ def parse_query_from_item(item: Dict, messages_format: bool, query_column_name: 
     else:
         # Standard format
         if query_column_name not in item:
-            return None, "key_not_in_item"
+            return None, "query_key_not_in_item"
         if len(item[query_column_name]) >= query_max_len:
             return None, "length"
         

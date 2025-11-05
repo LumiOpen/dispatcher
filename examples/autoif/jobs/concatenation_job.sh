@@ -102,15 +102,15 @@ CMD="python src/concat_queries.py \
     --turns \"$TURNS\""
 
 # Add boolean flags if set to true
-if [ "$MESSAGES_FORMAT" = "true" ]; then
+if [[ "$MESSAGES_FORMAT" =~ ^[Tt]rue$ ]]; then
     CMD="$CMD --messages-format"
 fi
 
-if [ "$NO_FOLLOWUP" = "true" ]; then
+if [[ "$NO_FOLLOWUP" =~ ^[Tt]rue$ ]]; then
     CMD="$CMD --no-followup"
 fi
 
-if [ "$BALANCE_CATEGORIES" = "true" ]; then
+if [[ "$BALANCE_CATEGORIES" =~ ^[Tt]rue$ ]]; then
     CMD="$CMD --balance-categories"
 fi
 

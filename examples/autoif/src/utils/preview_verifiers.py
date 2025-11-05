@@ -158,7 +158,7 @@ def generate_python_file(verifier_data: Dict[str, Any], output_path: str, max_fu
                 f.write('    \n')
                 f.write('    for test_idx, case in enumerate(test_cases, 1):\n')
                 f.write('        try:\n')
-                f.write(f'            result = evaluate_{i}(case["input"])\n')
+                f.write(f'            result = evaluate_{i}(**case["input"])\n')
                 f.write('            if result == case["output"]:\n')
                 f.write('                passed += 1\n')
                 f.write('            else:\n')
