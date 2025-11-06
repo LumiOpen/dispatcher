@@ -24,6 +24,16 @@ class InstructionAnalyzer:
             'succeeded': 0
         })
         self.all_error_types = set()  # Track all encountered error types
+        # Track instruction counts per sample for error vs success analysis
+        self.error_samples_instruction_counts = []  # List of instruction counts for samples with errors
+        self.success_samples_instruction_counts = []  # List of instruction counts for successful samples
+    
+    def count_instructions_in_sample(self, instructions: List[List[str]]) -> int:
+        """Count the total number of instructions in a sample (sum of all elements in all sublists)."""
+        total_count = 0
+        for instruction_list in instructions:
+            total_count += len(instruction_list)
+        return total_count
     
     def extract_turn_from_error(self, error_type: str) -> int:
         """Extract turn number from error type string."""
@@ -74,6 +84,10 @@ class InstructionAnalyzer:
         instruction_ids = task_data.get('instruction_ids', [])
         instructions = task_data.get('instructions', [])
         instruction_categories = task_data.get('instruction_categories', [])
+        
+        # Count instructions in this error sample
+        instruction_count = self.count_instructions_in_sample(instructions)
+        self.error_samples_instruction_counts.append(instruction_count)
         
         # Track this error type
         self.all_error_types.add(error_type)
@@ -131,6 +145,10 @@ class InstructionAnalyzer:
         instruction_ids = record.get('instruction_ids', [])
         instructions = record.get('instructions', [])
         instruction_categories = record.get('instruction_categories', [])
+        
+        # Count instructions in this successful sample
+        instruction_count = self.count_instructions_in_sample(instructions)
+        self.success_samples_instruction_counts.append(instruction_count)
         
         # Process all turns - count each instruction occurrence across all sublists
         for turn_idx in range(len(instruction_ids)):
@@ -231,27 +249,130 @@ class InstructionAnalyzer:
             writer.writeheader()
             writer.writerows(results)
     
-    def print_summary(self) -> None:
-        """Print a summary of the analysis."""
+    def get_statistics(self) -> Dict[str, Any]:
+        """Get comprehensive statistics including instruction count analysis."""
         results = self.get_results()
-        
-        if not results:
-            print("No data found to analyze.", file=sys.stderr)
-            return
         
         total_instructions = len(results)
         total_errors = sum(r['total_errors'] for r in results)
         total_successes = sum(r['succeeded'] for r in results)
         
-        print(f"\n=== Analysis Summary ===", file=sys.stderr)
-        print(f"Total unique instructions: {total_instructions}", file=sys.stderr)
-        print(f"Total errors: {total_errors}", file=sys.stderr)
-        print(f"Total successes: {total_successes}", file=sys.stderr)
+        # Calculate instruction count statistics
+        error_stats = {}
+        if self.error_samples_instruction_counts:
+            avg_error_instructions = sum(self.error_samples_instruction_counts) / len(self.error_samples_instruction_counts)
+            error_stats = {
+                "sample_count": len(self.error_samples_instruction_counts),
+                "avg_instructions_per_sample": round(avg_error_instructions, 2),
+                "min_instructions_per_sample": min(self.error_samples_instruction_counts),
+                "max_instructions_per_sample": max(self.error_samples_instruction_counts),
+                "total_instructions": sum(self.error_samples_instruction_counts)
+            }
+        else:
+            error_stats = {
+                "sample_count": 0,
+                "avg_instructions_per_sample": 0,
+                "min_instructions_per_sample": 0,
+                "max_instructions_per_sample": 0,
+                "total_instructions": 0
+            }
         
+        success_stats = {}
+        if self.success_samples_instruction_counts:
+            avg_success_instructions = sum(self.success_samples_instruction_counts) / len(self.success_samples_instruction_counts)
+            success_stats = {
+                "sample_count": len(self.success_samples_instruction_counts),
+                "avg_instructions_per_sample": round(avg_success_instructions, 2),
+                "min_instructions_per_sample": min(self.success_samples_instruction_counts),
+                "max_instructions_per_sample": max(self.success_samples_instruction_counts),
+                "total_instructions": sum(self.success_samples_instruction_counts)
+            }
+        else:
+            success_stats = {
+                "sample_count": 0,
+                "avg_instructions_per_sample": 0,
+                "min_instructions_per_sample": 0,
+                "max_instructions_per_sample": 0,
+                "total_instructions": 0
+            }
+        
+        # Calculate overall error rate
+        overall_error_rate = None
         if total_errors + total_successes > 0:
-            print(f"Overall error rate: {total_errors/(total_errors+total_successes)*100:.1f}%", file=sys.stderr)
+            overall_error_rate = round((total_errors / (total_errors + total_successes)) * 100, 1)
+        
+        return {
+            "overall_statistics": {
+                "total_unique_instructions": total_instructions,
+                "total_errors": total_errors,
+                "total_successes": total_successes,
+                "overall_error_rate_percent": overall_error_rate
+            },
+            "instruction_count_analysis": {
+                "error_samples": error_stats,
+                "successful_samples": success_stats,
+                "comparison": {
+                    "avg_instructions_difference": round(
+                        error_stats["avg_instructions_per_sample"] - success_stats["avg_instructions_per_sample"], 2
+                    ) if error_stats["sample_count"] > 0 and success_stats["sample_count"] > 0 else None
+                }
+            },
+            "error_types_encountered": sorted(list(self.all_error_types))
+        }
+    
+    def write_statistics_json(self, output_file: str) -> None:
+        """Write comprehensive statistics to JSON format."""
+        statistics = self.get_statistics()
+        
+        with open(output_file, 'w', encoding='utf-8') as f:
+            json.dump(statistics, f, indent=2, ensure_ascii=False)
+    
+    def print_summary(self) -> None:
+        """Print a summary of the analysis."""
+        statistics = self.get_statistics()
+        
+        if not statistics["overall_statistics"]["total_unique_instructions"]:
+            print("No data found to analyze.", file=sys.stderr)
+            return
+        
+        overall = statistics["overall_statistics"]
+        instruction_analysis = statistics["instruction_count_analysis"]
+        
+        print(f"\n=== Analysis Summary ===", file=sys.stderr)
+        print(f"Total unique instructions: {overall['total_unique_instructions']}", file=sys.stderr)
+        print(f"Total errors: {overall['total_errors']}", file=sys.stderr)
+        print(f"Total successes: {overall['total_successes']}", file=sys.stderr)
+        
+        if overall["overall_error_rate_percent"] is not None:
+            print(f"Overall error rate: {overall['overall_error_rate_percent']}%", file=sys.stderr)
         else:
             print(f"Overall error rate: N/A (no data)", file=sys.stderr)
+        
+        # Print instruction count analysis
+        print(f"\n=== Instruction Count Analysis ===", file=sys.stderr)
+        error_stats = instruction_analysis["error_samples"]
+        success_stats = instruction_analysis["successful_samples"]
+        
+        if error_stats["sample_count"] > 0:
+            print(f"Error samples: {error_stats['sample_count']} samples, avg {error_stats['avg_instructions_per_sample']:.2f} instructions per sample", file=sys.stderr)
+        else:
+            print(f"Error samples: 0 samples", file=sys.stderr)
+        
+        if success_stats["sample_count"] > 0:
+            print(f"Successful samples: {success_stats['sample_count']} samples, avg {success_stats['avg_instructions_per_sample']:.2f} instructions per sample", file=sys.stderr)
+        else:
+            print(f"Successful samples: 0 samples", file=sys.stderr)
+        
+        # Print comparison if both types have data
+        comparison = instruction_analysis["comparison"]
+        if comparison["avg_instructions_difference"] is not None:
+            diff = comparison["avg_instructions_difference"]
+            if diff > 0:
+                print(f"Error samples have on average {diff:.2f} more instructions than successful samples", file=sys.stderr)
+            elif diff < 0:
+                print(f"Error samples have on average {abs(diff):.2f} fewer instructions than successful samples", file=sys.stderr)
+            else:
+                print(f"Error and successful samples have the same average number of instructions", file=sys.stderr)
         
         # # Show breakdown by error type
         # if self.all_error_types:
@@ -377,12 +498,13 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  %(prog)s input.jsonl                    # Creates instruction_analysis.csv and categories_analysis.csv
+  %(prog)s input.jsonl                    # Creates instruction_analysis.csv, categories_analysis.csv, and statistics.json
 
 The script dynamically creates columns for each error type encountered in the data.
-Two output files will be created in the same directory as the input file:
+Three output files will be created in the same directory as the input file:
 - instruction_analysis.csv: Analysis by individual instructions
 - categories_analysis.csv: Analysis by instruction categories
+- statistics.json: Comprehensive statistics including instruction count analysis
         """
     )
     
@@ -397,13 +519,16 @@ Two output files will be created in the same directory as the input file:
     input_dir = os.path.dirname(os.path.abspath(args.input_file))
     instruction_output_file = os.path.join(input_dir, 'instruction_analysis.csv')
     categories_output_file = os.path.join(input_dir, 'categories_analysis.csv')
+    statistics_output_file = os.path.join(input_dir, 'statistics.json')
     
     # Analyze instructions
     analyzer = InstructionAnalyzer()
     analyzer.process_file(args.input_file)
     analyzer.print_summary()
     analyzer.write_csv(instruction_output_file)
+    analyzer.write_statistics_json(statistics_output_file)
     print(f"Instruction analysis written to: {instruction_output_file}", file=sys.stderr)
+    print(f"Statistics written to: {statistics_output_file}", file=sys.stderr)
     
     # Analyze categories
     category_analyzer = CategoryAnalyzer(analyzer)
