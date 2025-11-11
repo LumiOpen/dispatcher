@@ -10,6 +10,7 @@ There are 3 steps to run these evaluations:
 1. Translate prompts with `launch_translate_task_sing.sh` with all candidate translation models.
 2. Generate answers for each translation model with `launch_answer_task_sing.sh`.
 3. Evaluate models with `evaluate_prompts.py` or check statistically significant differences with `significance.py`. Both of these require gold standard answers in addition to the generations as the input.
+    DeepScaler ground truth data: `/scratch/project_462000353/posttraining_data/DeepScaleR-Preview-Dataset/default-train-sample-100.jsonl`
 
 
 ## Finnish reasoning traces quality evaluation

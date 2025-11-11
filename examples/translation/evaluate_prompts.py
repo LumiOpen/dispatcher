@@ -34,22 +34,22 @@ pass_at_4 = 0
 for ans in answers:
     # There can be multiple answers in the "answers" field
     passed = False
-    for answer in ans.get("generated_answers", []):
-        # Extract the final answer from the reasoning format
-        try:
-            final_answer = answer.split("</think>")[-1].strip()
-        except:
-            print(f"Could not extract final answer from: {answer}")
-            continue # TODO: Count as incorrect?
-         # Qwen 3 produces [Solution section] heading with our current prompt, so we can also split on that
-        final_answer = final_answer.split("[Solution section]")[-1].strip()
+    for answer in ans.get("generated_solution_given_traces", []):
+        # # Extract the final answer from the reasoning format
+        # try:
+        #     final_answer = answer.split("</think>")[-1].strip()
+        # except:
+        #     print(f"Could not extract final answer from: {answer}")
+        #     continue # TODO: Count as incorrect?
+        #  # Qwen 3 produces [Solution section] heading with our current prompt, so we can also split on that
+        # final_answer = final_answer.split("[Solution section]")[-1].strip()
         gold = parse(gold_data[ans["id"]])
-        pred = parse(final_answer)
+        pred = parse(answer)
         if verify(gold, pred):
             correct += 1
             passed = True
         else:
-            print(f"Incorrect answer:\nPROMPT:\n{ans['generated_translation']}\nGOLD ANSWER:\n{gold_data[ans['id']]}\nPREDICTED ANSWER:\n{final_answer}\n")
+            print(f"Incorrect answer:\nPROMPT:\n{ans['generated_translation']}\nGOLD ANSWER:\n{gold_data[ans['id']]}\nPREDICTED ANSWER:\n{answer}\n")
         total += 1
     if passed:
         pass_at_4 += 1
