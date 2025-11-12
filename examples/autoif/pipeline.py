@@ -164,10 +164,7 @@ def run_job_directly(job_script: str, env_vars: dict) -> bool:
     # Run the job script
     result = subprocess.run(
         ['bash', job_script],
-        env=env,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        universal_newlines=True
+        env=env
     )
 
     # Print output in real-time fashion
