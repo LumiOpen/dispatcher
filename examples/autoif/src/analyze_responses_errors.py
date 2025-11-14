@@ -166,22 +166,30 @@ class InstructionAnalyzer:
                     self.instruction_data[inst_id]['instruction_categories'] = categories
                     self.instruction_data[inst_id]['succeeded'] += 1
     
-    def process_file(self, filepath: str) -> None:
-        """Process the entire JSONL file."""
+    def process_file(self, filepath: str, analyze_n: int = None) -> None:
+        """Process the entire JSONL file or up to analyze_n samples."""
         try:
             with open(filepath, 'r', encoding='utf-8') as f:
+                samples_processed = 0
                 for line_num, line in enumerate(f, 1):
                     line = line.strip()
                     if not line:
                         continue
+                    
+                    # Check if we've reached the limit
+                    if analyze_n is not None and samples_processed >= analyze_n:
+                        print(f"Reached limit of {analyze_n} samples, stopping processing.", file=sys.stderr)
+                        break
                     
                     try:
                         record = json.loads(line)
                         
                         if '__ERROR__' in record:
                             self.process_error_record(record)
+                            samples_processed += 1
                         elif 'instruction_ids' in record:
                             self.process_success_record(record)
+                            samples_processed += 1
                         
                     except json.JSONDecodeError as e:
                         print(f"Warning: Could not parse line {line_num}: {e}", file=sys.stderr)
@@ -250,56 +258,34 @@ class InstructionAnalyzer:
             writer.writerows(results)
     
     def get_statistics(self) -> Dict[str, Any]:
-        """Get comprehensive statistics including instruction count analysis."""
+        """Get statistics needed for the summary."""
         results = self.get_results()
         
         total_instructions = len(results)
         total_errors = sum(r['total_errors'] for r in results)
         total_successes = sum(r['succeeded'] for r in results)
         
-        # Calculate instruction count statistics
-        error_stats = {}
-        if self.error_samples_instruction_counts:
-            avg_error_instructions = sum(self.error_samples_instruction_counts) / len(self.error_samples_instruction_counts)
-            error_stats = {
-                "sample_count": len(self.error_samples_instruction_counts),
-                "avg_instructions_per_sample": round(avg_error_instructions, 2),
-                "min_instructions_per_sample": min(self.error_samples_instruction_counts),
-                "max_instructions_per_sample": max(self.error_samples_instruction_counts),
-                "total_instructions": sum(self.error_samples_instruction_counts)
-            }
-        else:
-            error_stats = {
-                "sample_count": 0,
-                "avg_instructions_per_sample": 0,
-                "min_instructions_per_sample": 0,
-                "max_instructions_per_sample": 0,
-                "total_instructions": 0
-            }
-        
-        success_stats = {}
-        if self.success_samples_instruction_counts:
-            avg_success_instructions = sum(self.success_samples_instruction_counts) / len(self.success_samples_instruction_counts)
-            success_stats = {
-                "sample_count": len(self.success_samples_instruction_counts),
-                "avg_instructions_per_sample": round(avg_success_instructions, 2),
-                "min_instructions_per_sample": min(self.success_samples_instruction_counts),
-                "max_instructions_per_sample": max(self.success_samples_instruction_counts),
-                "total_instructions": sum(self.success_samples_instruction_counts)
-            }
-        else:
-            success_stats = {
-                "sample_count": 0,
-                "avg_instructions_per_sample": 0,
-                "min_instructions_per_sample": 0,
-                "max_instructions_per_sample": 0,
-                "total_instructions": 0
-            }
-        
         # Calculate overall error rate
         overall_error_rate = None
         if total_errors + total_successes > 0:
             overall_error_rate = round((total_errors / (total_errors + total_successes)) * 100, 1)
+        
+        # Calculate instruction count statistics for error samples
+        error_sample_count = len(self.error_samples_instruction_counts)
+        avg_error_instructions = 0
+        if error_sample_count > 0:
+            avg_error_instructions = round(sum(self.error_samples_instruction_counts) / error_sample_count, 2)
+        
+        # Calculate instruction count statistics for successful samples
+        success_sample_count = len(self.success_samples_instruction_counts)
+        avg_success_instructions = 0
+        if success_sample_count > 0:
+            avg_success_instructions = round(sum(self.success_samples_instruction_counts) / success_sample_count, 2)
+        
+        # Calculate average instruction difference
+        avg_instructions_difference = None
+        if error_sample_count > 0 and success_sample_count > 0:
+            avg_instructions_difference = round(avg_error_instructions - avg_success_instructions, 2)
         
         return {
             "overall_statistics": {
@@ -309,70 +295,81 @@ class InstructionAnalyzer:
                 "overall_error_rate_percent": overall_error_rate
             },
             "instruction_count_analysis": {
-                "error_samples": error_stats,
-                "successful_samples": success_stats,
+                "error_samples": {
+                    "sample_count": error_sample_count,
+                    "avg_instructions_per_sample": avg_error_instructions
+                },
+                "successful_samples": {
+                    "sample_count": success_sample_count,
+                    "avg_instructions_per_sample": avg_success_instructions
+                },
                 "comparison": {
-                    "avg_instructions_difference": round(
-                        error_stats["avg_instructions_per_sample"] - success_stats["avg_instructions_per_sample"], 2
-                    ) if error_stats["sample_count"] > 0 and success_stats["sample_count"] > 0 else None
+                    "avg_instructions_difference": avg_instructions_difference
                 }
-            },
-            "error_types_encountered": sorted(list(self.all_error_types))
+            }
         }
     
-    def write_statistics_json(self, output_file: str) -> None:
-        """Write comprehensive statistics to JSON format."""
-        statistics = self.get_statistics()
-        
-        with open(output_file, 'w', encoding='utf-8') as f:
-            json.dump(statistics, f, indent=2, ensure_ascii=False)
-    
-    def print_summary(self) -> None:
-        """Print a summary of the analysis."""
+    def generate_summary_text(self) -> str:
+        """Generate summary text for both printing and file output."""
         statistics = self.get_statistics()
         
         if not statistics["overall_statistics"]["total_unique_instructions"]:
-            print("No data found to analyze.", file=sys.stderr)
-            return
+            return "No data found to analyze.\n"
         
         overall = statistics["overall_statistics"]
         instruction_analysis = statistics["instruction_count_analysis"]
         
-        print(f"\n=== Analysis Summary ===", file=sys.stderr)
-        print(f"Total unique instructions: {overall['total_unique_instructions']}", file=sys.stderr)
-        print(f"Total errors: {overall['total_errors']}", file=sys.stderr)
-        print(f"Total successes: {overall['total_successes']}", file=sys.stderr)
+        lines = []
+        lines.append("=== Analysis Summary ===")
+        lines.append(f"Total unique instructions: {overall['total_unique_instructions']}")
+        lines.append(f"Total errors: {overall['total_errors']}")
+        lines.append(f"Total successes: {overall['total_successes']}")
         
         if overall["overall_error_rate_percent"] is not None:
-            print(f"Overall error rate: {overall['overall_error_rate_percent']}%", file=sys.stderr)
+            lines.append(f"Overall error rate: {overall['overall_error_rate_percent']}%")
         else:
-            print(f"Overall error rate: N/A (no data)", file=sys.stderr)
+            lines.append(f"Overall error rate: N/A (no data)")
         
-        # Print instruction count analysis
-        print(f"\n=== Instruction Count Analysis ===", file=sys.stderr)
+        # Instruction count analysis
+        lines.append("")
+        lines.append("=== Instruction Count Analysis ===")
         error_stats = instruction_analysis["error_samples"]
         success_stats = instruction_analysis["successful_samples"]
         
         if error_stats["sample_count"] > 0:
-            print(f"Error samples: {error_stats['sample_count']} samples, avg {error_stats['avg_instructions_per_sample']:.2f} instructions per sample", file=sys.stderr)
+            lines.append(f"Error samples: {error_stats['sample_count']} samples, avg {error_stats['avg_instructions_per_sample']:.2f} instructions per sample")
         else:
-            print(f"Error samples: 0 samples", file=sys.stderr)
+            lines.append(f"Error samples: 0 samples")
         
         if success_stats["sample_count"] > 0:
-            print(f"Successful samples: {success_stats['sample_count']} samples, avg {success_stats['avg_instructions_per_sample']:.2f} instructions per sample", file=sys.stderr)
+            lines.append(f"Successful samples: {success_stats['sample_count']} samples, avg {success_stats['avg_instructions_per_sample']:.2f} instructions per sample")
         else:
-            print(f"Successful samples: 0 samples", file=sys.stderr)
+            lines.append(f"Successful samples: 0 samples")
         
-        # Print comparison if both types have data
+        # Comparison if both types have data
         comparison = instruction_analysis["comparison"]
         if comparison["avg_instructions_difference"] is not None:
             diff = comparison["avg_instructions_difference"]
             if diff > 0:
-                print(f"Error samples have on average {diff:.2f} more instructions than successful samples", file=sys.stderr)
+                lines.append(f"Error samples have on average {diff:.2f} more instructions than successful samples")
             elif diff < 0:
-                print(f"Error samples have on average {abs(diff):.2f} fewer instructions than successful samples", file=sys.stderr)
+                lines.append(f"Error samples have on average {abs(diff):.2f} fewer instructions than successful samples")
             else:
-                print(f"Error and successful samples have the same average number of instructions", file=sys.stderr)
+                lines.append(f"Error and successful samples have the same average number of instructions")
+        
+        return "\n".join(lines) + "\n"
+    
+    def write_summary_txt(self, output_file: str) -> None:
+        """Write summary statistics to text format."""
+        summary_text = self.generate_summary_text()
+        with open(output_file, 'w', encoding='utf-8') as f:
+            f.write(summary_text)
+    
+    def print_summary(self) -> None:
+        """Print a summary of the analysis."""
+        summary_text = self.generate_summary_text()
+        # Print to stderr with a leading newline for formatting
+        print(f"\n{summary_text.rstrip()}", file=sys.stderr)
         
         # # Show breakdown by error type
         # if self.all_error_types:
@@ -469,27 +466,34 @@ class CategoryAnalyzer:
             writer.writeheader()
             writer.writerows(results)
     
-    def print_summary(self) -> None:
-        """Print a summary of the category analysis."""
+    def generate_summary_text(self) -> str:
+        """Generate summary text for both printing and file output."""
         results = self.get_results()
         
         if not results:
-            print("No category data found to analyze.", file=sys.stderr)
-            return
+            return "No category data found to analyze.\n"
         
         total_categories = len(results)
         total_errors = sum(r['total_errors'] for r in results)
         total_successes = sum(r['succeeded'] for r in results)
         
-        print(f"\n=== Category Analysis Summary ===", file=sys.stderr)
-        print(f"Total categories: {total_categories}", file=sys.stderr)
-        print(f"Total errors: {total_errors}", file=sys.stderr)
-        print(f"Total successes: {total_successes}", file=sys.stderr)
+        lines = []
+        lines.append("=== Category Analysis Summary ===")
+        lines.append(f"Total categories: {total_categories}")
+        lines.append(f"Total errors: {total_errors}")
+        lines.append(f"Total successes: {total_successes}")
         
         if total_errors + total_successes > 0:
-            print(f"Overall error rate: {total_errors/(total_errors+total_successes)*100:.1f}%", file=sys.stderr)
+            lines.append(f"Overall error rate: {total_errors/(total_errors+total_successes)*100:.1f}%")
         else:
-            print(f"Overall error rate: N/A (no data)", file=sys.stderr)
+            lines.append(f"Overall error rate: N/A (no data)")
+        
+        return "\n".join(lines) + "\n"
+    
+    def print_summary(self) -> None:
+        """Print a summary of the category analysis."""
+        summary_text = self.generate_summary_text()
+        print(f"\n{summary_text.rstrip()}", file=sys.stderr)
 
 
 def main():
@@ -498,13 +502,14 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  %(prog)s input.jsonl                    # Creates instruction_analysis.csv, categories_analysis.csv, and statistics.json
+  %(prog)s input.jsonl                    # Creates instruction_analysis.csv, categories_analysis.csv, and summary.txt
+  %(prog)s input.jsonl --analyze-n 1000   # Process only the first 1000 samples
 
 The script dynamically creates columns for each error type encountered in the data.
 Three output files will be created in the same directory as the input file:
 - instruction_analysis.csv: Analysis by individual instructions
 - categories_analysis.csv: Analysis by instruction categories
-- statistics.json: Comprehensive statistics including instruction count analysis
+- summary.txt: Summary statistics including instruction count analysis
         """
     )
     
@@ -513,27 +518,40 @@ Three output files will be created in the same directory as the input file:
         help='Input JSONL file to analyze'
     )
     
+    parser.add_argument(
+        '--analyze-n',
+        type=int,
+        default=None,
+        help='Number of samples to process from the beginning of the file (default: process all samples)'
+    )
+    
     args = parser.parse_args()
     
     # Get the directory of the input file
     input_dir = os.path.dirname(os.path.abspath(args.input_file))
     instruction_output_file = os.path.join(input_dir, 'instruction_analysis.csv')
     categories_output_file = os.path.join(input_dir, 'categories_analysis.csv')
-    statistics_output_file = os.path.join(input_dir, 'statistics.json')
+    summary_output_file = os.path.join(input_dir, 'summary.txt')
     
     # Analyze instructions
     analyzer = InstructionAnalyzer()
-    analyzer.process_file(args.input_file)
+    analyzer.process_file(args.input_file, analyze_n=args.analyze_n)
     analyzer.print_summary()
     analyzer.write_csv(instruction_output_file)
-    analyzer.write_statistics_json(statistics_output_file)
+    analyzer.write_summary_txt(summary_output_file)
     print(f"Instruction analysis written to: {instruction_output_file}", file=sys.stderr)
-    print(f"Statistics written to: {statistics_output_file}", file=sys.stderr)
     
     # Analyze categories
     category_analyzer = CategoryAnalyzer(analyzer)
     category_analyzer.print_summary()
     category_analyzer.write_csv(categories_output_file)
+    
+    # Append category summary to summary.txt
+    with open(summary_output_file, 'a', encoding='utf-8') as f:
+        f.write("\n")
+        f.write(category_analyzer.generate_summary_text())
+    
+    print(f"Summary written to: {summary_output_file}", file=sys.stderr)
     print(f"Category analysis written to: {categories_output_file}", file=sys.stderr)
 
 
