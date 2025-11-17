@@ -1,0 +1,55 @@
+# Finnish reasoning traces quality evaluation
+
+1. Translate prompts (deepscaler) with one model - this should be fixed in one experiment (for now deepseekv3)
+- DeepSeek-V3 translations at `data/default-train-sample-100_translations_DeepSeek-V3_fi.jsonl`
+
+2. Use different candidate non-reasoning models to generate answers with reasoning traces (although answers are not interesting to us here - perhaps can be affected by the prompt but in this stage we let the model generate the answer as well). The input to the model is the prompt with the math question in finnish + guiding the model to generate reasoning traces
+
+- Implemented in `tasks/traces_task.py`
+
+**Generate traces with Qwen2.5-72B-Instruct on LUMI**
+To run inference on LUMI with Qwen2.5-72B-Instruct model (works with vllm in LUMI module `pytorch/2.5`):
+
+```sh
+sbatch jobs/launch_traces_task.sh
+```
+
+**Generate traces with DeepSeek-V3 on VULTR**
+```sh
+sbatch jobs/launch_traces_task_deepseekv3.sh
+```
+
+
+3. Take a reasoning model (fixed) to get the answer given the translated prompt and generated reasoning trace. This can be one of deepseekv3, r1 or qwen3 (MoE) - for now we use Qwen3-30B-A3B-Thinking-2507 as the reasoning model.
+
+- Implemented in `tasks/answering_with_traces_task.py`
+
+```sh
+sbatch jobs/launch_answer_with_traces_task_sing.sh
+```
+
+4. The accuracy of the problem solving across the models in (2) is a proxy for how well the models in (2) translated the traces.
+
+run
+```sh
+python evaluate_prompts.py <path_to_generated_answers> /scratch/project_462000353/posttraining_data/DeepScaleR-Preview-Dataset/default-train-sample-100.jsonl
+```
+
+**Traces generated with Qwen2.5-72B-Instruct**
+
+```sh
+python evaluate_prompts.py data/default-train-sample-100_translations_DeepSeek-V3_fi_traces_Qwen2.5-72B-Instruct_fi_answers_Qwen3-30B-A3B-Thinking-2507_fi.jsonl /scratch/project_462000353/posttraining_data/DeepScaleR-Preview-Dataset/default-train-sample-100.jsonl
+------
+Accuracy: 63.25% (253/400)
+Pass@4: 74.00% (74/100)
+```
+
+**Traces generated with DeepSeek-V3**
+
+```sh
+python evaluate_prompts.py data/default-train-sample-100_translations_DeepSeek-V3_fi_traces_DeepSeek-V3_fi_answers_Qwen3-30B-A3B-Thinking-2507_fi.jsonl /scratch/project_462000353/posttraining_data/DeepScaleR-Preview-Dataset/default-train-sample-100.jsonl
+------
+Accuracy: 69.50% (278/400)
+Pass@4: 81.00% (81/100)
+```
+
