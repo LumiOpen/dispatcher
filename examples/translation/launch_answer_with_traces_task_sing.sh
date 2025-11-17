@@ -23,7 +23,7 @@ set -euxo pipefail
 export LANGUAGE="${1:-fi}"
 export MODEL="${2:-Qwen/Qwen3-30B-A3B-Thinking-2507}"
 MODEL_NAME="$(basename "$MODEL")"
-INPUT_FILE="/scratch/project_462000353/adamhrin/dispatcher/examples/translation/data/default-train-sample-100_translations_DeepSeek-V3_fi_answers_Qwen2.5-72B-Instruct_fi.jsonl"
+INPUT_FILE="/scratch/project_462000353/adamhrin/dispatcher/examples/translation/data/default-train-sample-100_translations_DeepSeek-V3_fi_answers_DeepSeek-V3_fi.jsonl"
 
 DATADIR="$(dirname "$INPUT_FILE")"
 FILE_NAME="$(basename "$INPUT_FILE" .jsonl)"
@@ -35,6 +35,7 @@ BATCH_SIZE=1
 WORK_TIMEOUT=3600
 GPUS_PER_TASK=4
 MAX_MODEL_LEN=16384
+STARTUP_TIMEOUT=7200
 ### end config
 
 mkdir -p logs pythonuserbase
@@ -249,5 +250,6 @@ PY
     --max-model-len '"$MAX_MODEL_LEN"' \
     --tensor-parallel '"$GPUS_PER_TASK"' \
     --model '"$MODEL"' \
+    --startup-timeout '"$STARTUP_TIMEOUT"' \
     --port $VLLM_PORT
 '
