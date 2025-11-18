@@ -3,7 +3,7 @@ experiment:
   description: "Generate answers to translated math reasoning queries"
 
 pipeline:
-  - answer_generation: true
+  - traces_generation: true
 
 vllm_server:
   host: "127.0.0.1"
@@ -11,5 +11,6 @@ vllm_server:
 
 model: "/vfs_mount/models/DeepSeek-V3"
 
-answer_generation:
+traces_generation:
+  job_name: launch_traces_task
   input_file: "/workspace/adamhrin/dispatcher2/examples/translation/data/default-train-sample-100_translations_DeepSeek-V3_fi.jsonl"
