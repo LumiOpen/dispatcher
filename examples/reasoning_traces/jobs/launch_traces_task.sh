@@ -16,16 +16,15 @@
 
 ###
 # configure the following.
-export LANGUAGE="${1:-fi}"
-export MODEL=${2:-"Qwen/Qwen2.5-72B-Instruct"}
-#export MODEL=${2:-"Qwen/Qwen2.5-7B-Instruct"}
-MODEL_NAME=$(basename "$MODEL")
-INPUT_FILE=/scratch/project_462000353/adamhrin/dispatcher/examples/translation/data/default-train-sample-100_translations_DeepSeek-V3_fi.jsonl
+export LANGUAGE="${language:-fi}"
+export MODEL="${model:-Qwen/Qwen2.5-72B-Instruct}"
 
+INPUT_FILE="${input_file:-/scratch/project_462000353/adamhrin/dispatcher/examples/translation/data/default-train-sample-100_translations_DeepSeek-V3_fi.jsonl}"
 DATADIR=$(dirname "$INPUT_FILE")
 FILE_NAME=$(basename "$INPUT_FILE" .jsonl)
+MODEL_NAME=$(basename "$MODEL")
 OUTPUT_FILE=${DATADIR}/${FILE_NAME}_traces_${MODEL_NAME}_${LANGUAGE}.jsonl
-TASK=tasks.traces_task.TracesTask
+TASK=${TASK:-tasks.traces_task.TracesTask}
 
 echo "Using model: $MODEL"
 echo "Model base name: $MODEL_NAME"
@@ -37,14 +36,14 @@ echo "Output file: $OUTPUT_FILE"
 # These should be tuned so that you do not overload your backend vllm server,
 # or run into any timeouts.  timeouts greatly affect the efficiency of the
 # workflow.
-WORKERS=16          # number of simultaneous backend requests
-BATCH_SIZE=1        # amount of work to request from dispatcher. 1 is usually fine.
+WORKERS=${workers:-16}          # number of simultaneous backend requests
+BATCH_SIZE=${batch_size:-1}     # amount of work to request from dispatcher. 1 is usually fine.
 
 # Timeouts are safety valves and you should not hit them in the normal course
 # of your workflow.  if you do, it suggests you need to change something about
 # your configuration--tasks are usually written to expect success.
-REQUEST_TIMEOUT=3600 # adjust as needed for your task so that you do not hit
-WORK_TIMEOUT=7200   # time for dispatcher to give up on a work item and reissue it.  ideally this should never be hit.
+REQUEST_TIMEOUT=${request_timeout:-3600} # adjust as needed for your task so that you do not hit
+WORK_TIMEOUT=${work_timeout:-7200}   # time for dispatcher to give up on a work item and reissue it.  ideally this should never be hit.
 
 #
 # If you are changing the model, be sure to update GPUS_PER_TASK and the
@@ -53,8 +52,22 @@ WORK_TIMEOUT=7200   # time for dispatcher to give up on a work item and reissue 
 # --ntasks-per-node should be int(8 / GPUS_PER_TASK)
 #
 
-GPUS_PER_TASK=4     # enough for the model and large batch size
-MAX_MODEL_LEN=16384 # for efficiency, only as much as you think you need for efficiency
+GPUS_PER_TASK=${gpus_per_task:-4}    # enough for the model and large batch size
+MAX_MODEL_LEN=${max_model_len:-16384} # for efficiency, only as much as you think you need for efficiency
+
+# Optional vllm config if running externally
+VLLM_HOST="${vllm_host:-}"
+VLLM_PORT="${vllm_port:-}"
+
+if [[ -n "$VLLM_HOST" ]]; then
+    export DISPATCHER_VLLM=1
+    export DISPATCHER_VLLM_HOST="$VLLM_HOST"
+    export DISPATCHER_VLLM_PORT="${VLLM_PORT:-8000}"
+else
+    unset DISPATCHER_VLLM
+    unset DISPATCHER_VLLM_HOST
+    unset DISPATCHER_VLLM_PORT
+fi
 
 # end configuration
 ###################
@@ -75,10 +88,7 @@ module load pytorch/2.5
 export HF_HOME="/scratch/project_462000353/hf_cache"
 export SSL_CERT_FILE=$(python -m certifi)
 
-#cd /scratch/project_462000353/zosaelai2/LumiOpen/translation/dispatcher
-#pip install -e .
-# pip install fasttext
-#cd /scratch/project_462000353/zosaelai2/LumiOpen/translation/dispatcher/examples/translation
+pip install --user git+https://github.com/LumiOpen/dispatcher.git
 
 # dispatcher server will run on the first node, before we launch the worker
 # tasks.
@@ -110,7 +120,13 @@ srun -l \
 
     # Set ports uniquely per task (to avoid collisions)
     export MASTER_PORT=$(( 7000 + SLURM_LOCALID ))
-    export VLLM_PORT=$(( 8000 + SLURM_LOCALID * 100 ))
+
+    if [[ -n "$DISPATCHER_VLLM" ]]; then
+        echo "Using external vLLM server $DISPATCHER_VLLM_HOST:$DISPATCHER_VLLM_PORT"
+    else
+        TASK_VLLM_PORT=$(( 8000 + SLURM_LOCALID * 100 ))
+        echo "Starting per-task vLLM server on port $TASK_VLLM_PORT"
+    fi
 
     echo "Launching task $SLURM_LOCALID (global id: $SLURM_PROCID) with GPU $GPU_IDS on $(hostname)"
 
@@ -119,16 +135,24 @@ srun -l \
     export PYTHONUSERBASE=./pythonuserbase
     export HF_HOME="/scratch/project_462000353/hf_cache"
 
-    PYTHONPATH=. python -m dispatcher.taskmanager.cli \
-        --dispatcher ${DISPATCHER_SERVER}:${DISPATCHER_PORT} \
-        --task '"$TASK"' \
-        --batch-size 1 \
-        --workers '"$WORKERS"' \
-        --max-model-len '"$MAX_MODEL_LEN"' \
-        --tensor-parallel '"$GPUS_PER_TASK"' \
-        --port $VLLM_PORT \
-        --model '"$MODEL"' \
-        --request-timeout '"$REQUEST_TIMEOUT"' \
+    CLI_ARGS=(
+        --dispatcher "${DISPATCHER_SERVER}:${DISPATCHER_PORT}"
+        --task "$TASK"
+        --batch-size "$BATCH_SIZE"
+        --workers "$WORKERS"
+        --max-model-len "$MAX_MODEL_LEN"
+        --tensor-parallel "$GPUS_PER_TASK"
+        --model "$MODEL"
+        --request-timeout "$REQUEST_TIMEOUT"
         # --silence-vllm-logs
+    )
+
+    if [[ -n "$DISPATCHER_VLLM" ]]; then
+        CLI_ARGS+=(--host "$DISPATCHER_VLLM_HOST" --port "$DISPATCHER_VLLM_PORT" --no-launch)
+    else
+        CLI_ARGS+=(--port "$TASK_VLLM_PORT")
+    fi
+
+    PYTHONPATH=. python -m dispatcher.taskmanager.cli "${CLI_ARGS[@]}"
 '
 
