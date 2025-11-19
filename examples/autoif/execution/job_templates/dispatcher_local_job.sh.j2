@@ -1,0 +1,71 @@
+#!/bin/bash
+set -euo pipefail
+
+echo "======================================="
+echo "{{ job_name }} (Interactive Mode)"
+echo "======================================="
+echo "Started: $(date)"
+echo "Connecting to vLLM server: {{ vllm_server.host }}:{{ vllm_server.port }}"
+echo ""
+
+# ============================================================
+# Environment Setup
+# ============================================================
+{% include environment_setup %}
+
+# ============================================================
+# Job Configuration
+# ============================================================
+TASK="{{ task }}"
+INPUT_FILE="{{ input_file }}"
+OUTPUT_FILE="{{ output_file }}"
+MODEL="{{ model }}"
+VLLM_HOST="{{ vllm_server.host }}"
+VLLM_PORT="{{ vllm_server.port }}"
+WORKERS="{{ workers }}"
+BATCH_SIZE="{{ batch_size }}"
+WORK_TIMEOUT="{{ work_timeout|default(3600) }}"
+MAX_MODEL_LEN="{{ max_model_len }}"
+{% if request_timeout is defined %}REQUEST_TIMEOUT="{{ request_timeout }}"{% endif %}
+
+echo "Running {{ job_name }} in interactive mode..."
+echo "  Model: $MODEL"
+echo "  vLLM Server: $VLLM_HOST:$VLLM_PORT"
+echo "  Input: $INPUT_FILE"
+echo "  Output: $OUTPUT_FILE"
+echo "  Workers: $WORKERS"
+echo ""
+
+# ============================================================
+# Dispatcher Server
+# ============================================================
+export DISPATCHER_SERVER="127.0.0.1"
+export DISPATCHER_PORT=9999
+
+python -m dispatcher.server \
+    --infile "$INPUT_FILE" \
+    --outfile "$OUTPUT_FILE" \
+    --work-timeout "$WORK_TIMEOUT" \
+    --host 0.0.0.0 \
+    --port ${DISPATCHER_PORT} &
+
+SERVER_PID=$!
+sleep 10
+
+# ============================================================
+# Dispatcher Worker (Local File Mode)
+# ============================================================
+PYTHONPATH=. python -m dispatcher.taskmanager.cli \
+    --dispatcher ${DISPATCHER_SERVER}:${DISPATCHER_PORT} \
+    --task "$TASK" \
+    --batch-size "$BATCH_SIZE" \
+    --workers "$WORKERS" \
+    --max-model-len "$MAX_MODEL_LEN" \
+    --model "$MODEL" \
+    --host "$VLLM_HOST" \
+    --port "$VLLM_PORT" \
+    {% if request_timeout is defined %}--request-timeout "$REQUEST_TIMEOUT" \{% endif %}
+    --no-launch
+
+# Cleanup
+kill $SERVER_PID 2>/dev/null || true

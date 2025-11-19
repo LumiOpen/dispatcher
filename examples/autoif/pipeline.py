@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """
-AutoIF Pipeline - Simple config-driven orchestrator
+AutoIF Pipeline - Enhanced config-driven orchestrator with template-based job generation
 
-Reads config from OUT_DIR/config.yaml and submits SLURM jobs with dependencies.
-All configuration passed as environment variables to job scripts (auto-discovery).
+Reads task config from config.yaml and SLURM config from slurm.yaml.
+Automatically detects execution mode (interactive vs SLURM) based on vllm_server presence.
+Generates job scripts from templates and tracks execution status.
 """
 
 import argparse
@@ -12,134 +13,243 @@ import os
 import subprocess
 import sys
 import shutil
+import yaml
+import jinja2
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
+from datetime import datetime
 
 
 # =============================================================================
 # CONFIG LOADING
 # =============================================================================
 
-def load_config(out_dir: Path) -> dict:
-    """Load config.yaml from OUT_DIR, copy default if missing"""
-    import yaml
+def load_yaml_file(path: Path) -> dict:
+    """Load YAML configuration file"""
+    if not path.exists():
+        return {}
+    with open(path) as f:
+        return yaml.safe_load(f) or {}
 
-    config_path = out_dir / 'config.yaml'
 
-    if not config_path.exists():
-        default_config = Path(__file__).parent / 'config.default.yaml'
-        if not default_config.exists():
-            print(f"ERROR: No config at {config_path} and no default config found")
-            sys.exit(1)
+def detect_execution_mode(config: dict) -> str:
+    """
+    Detect execution mode based on vllm_server presence.
 
-        print(f"No config found, copying default to {config_path}")
-        out_dir.mkdir(parents=True, exist_ok=True)
-        shutil.copy(default_config, config_path)
-        print(f"Please edit {config_path} and rerun")
-        sys.exit(0)
+    Returns:
+        'interactive' if vllm_server is configured
+        'sbatch' otherwise
+    """
+    return 'interactive' if config.get('vllm_server') else 'sbatch'
 
-    with open(config_path) as f:
-        config = yaml.safe_load(f)
 
-    # Validate required fields
-    if not config.get('pipeline'):
-        print("ERROR: pipeline not defined in config")
+# =============================================================================
+# STATUS TRACKING
+# =============================================================================
+
+def load_status(out_dir: Path) -> dict:
+    """Load unified status tracking"""
+    status_file = out_dir / 'status.json'
+    if status_file.exists():
+        with open(status_file) as f:
+            return json.load(f)
+    return {
+        'sbatch': {},
+        'interactive': {}
+    }
+
+
+def save_status(out_dir: Path, status: dict):
+    """Save unified status"""
+    status['last_updated'] = datetime.now().isoformat()
+    status_file = out_dir / 'status.json'
+    with open(status_file, 'w') as f:
+        json.dump(status, f, indent=2)
+
+
+def get_job_status(job_id: str) -> str:
+    """Get SLURM job status using sacct"""
+    result = subprocess.run(
+        ['sacct', '-j', job_id, '--format=State', '--noheader', '--parsable2'],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True
+    )
+
+    if result.returncode == 0 and result.stdout.strip():
+        # Take first status (main job)
+        return result.stdout.strip().split('\n')[0]
+
+    return 'UNKNOWN'
+
+
+def check_pipeline_status(job_ids: Dict[str, str]) -> Tuple[bool, List[str], List[str]]:
+    """
+    Check pipeline status for SLURM jobs.
+
+    Returns:
+        (all_done, failed_jobs, running_jobs)
+    """
+    failed = []
+    running = []
+    all_done = True
+
+    for job, job_id in job_ids.items():
+        status = get_job_status(job_id)
+
+        if status in ['FAILED', 'CANCELLED', 'TIMEOUT', 'NODE_FAIL', 'OUT_OF_MEMORY'] or 'CANCELLED' in status:
+            failed.append(job)
+            all_done = False
+        elif status in ['PENDING', 'RUNNING']:
+            running.append(job)
+            all_done = False
+
+    return all_done, failed, running
+
+
+def print_status(status: dict, execution_mode: str):
+    """Print pipeline status"""
+    print("\nPipeline Status:\n" + "=" * 70)
+
+    mode_key = execution_mode
+    if mode_key in status and status[mode_key]:
+        for job, job_info in status[mode_key].items():
+            if execution_mode == 'sbatch':
+                job_id = job_info.get('job_id', 'N/A')
+                job_status = get_job_status(job_id) if job_id != 'N/A' else 'UNKNOWN'
+                print(f"{job:40} {job_id:10} {job_status}")
+            else:  # interactive
+                job_status = job_info.get('status', 'unknown')
+                print(f"{job:40} {job_status:15}")
+
+    print("=" * 70 + "\n")
+
+
+# =============================================================================
+# JOB SCRIPT GENERATION
+# =============================================================================
+
+def resolve_template_variables(value, config: dict, out_dir: Path):
+    """
+    Resolve template variables and paths.
+
+    - Converts relative file paths to absolute (relative to out_dir)
+    - Keeps absolute paths and HF dataset paths as-is
+    """
+    if not isinstance(value, str):
+        return value
+
+    # Don't modify absolute paths or HF paths
+    if value.startswith('/') or ('/' in value and len(value) > 50):
+        return value
+
+    # Check if it looks like a file path
+    if any(value.endswith(ext) for ext in ['.jsonl', '.txt', '.json', '.csv', '.log']) or \
+       'dataset' in str(value).lower() or 'dir' in str(value).lower():
+        return str(out_dir / value)
+
+    return value
+
+
+def merge_configs(global_config: dict, job_config: dict, out_dir: Path) -> dict:
+    """
+    Merge global and job-level configurations.
+    Job-level configs override global configs.
+    Resolves all file paths to absolute paths.
+    """
+    merged = {}
+
+    # Start with global config (excluding reserved keys)
+    reserved_keys = {'experiment', 'pipeline', 'jobs', 'vllm_server', 'environment_setup'}
+    for key, value in global_config.items():
+        if key not in reserved_keys:
+            merged[key] = resolve_template_variables(value, global_config, out_dir)
+
+    # Override with job config
+    for key, value in job_config.items():
+        merged[key] = resolve_template_variables(value, job_config, out_dir)
+
+    return merged
+
+
+def generate_job_script(
+    job_name: str,
+    job_config: dict,
+    global_config: dict,
+    slurm_config: dict,
+    execution_mode: str,
+    out_dir: Path
+) -> Path:
+    """Generate job script from template using Jinja2"""
+
+    job_type = job_config.get('type', 'cpu_script')
+
+    # Determine template
+    custom_template = job_config.get('template')
+    if custom_template:
+        template_name = custom_template
+    else:
+        # Default templates
+        if job_type == 'dispatcher_task':
+            template_name = (
+                'dispatcher_local_job.sh.j2' if execution_mode == 'interactive'
+                else 'dispatcher_job.sh.j2'
+            )
+        else:  # cpu_script
+            template_name = 'cpu_job.sh.j2'
+
+    # Merge configs
+    merged_config = merge_configs(global_config, job_config, out_dir)
+
+    # Resolve SLURM settings (global defaults + job type defaults + job overrides)
+    slurm_settings = {}
+    if execution_mode == 'sbatch':
+        slurm_settings = {**slurm_config.get('slurm', {})}
+        slurm_settings.update(slurm_config.get('job_type_defaults', {}).get(job_type, {}))
+        slurm_settings.update(slurm_config.get('jobs', {}).get(job_name, {}))
+
+    # Prepare template context
+    context = {
+        'job_name': job_name,
+        'execution_mode': execution_mode,
+        'environment_setup': global_config.get('environment_setup'),
+        'slurm': slurm_settings,
+        'vllm_server': global_config.get('vllm_server', {}),
+        **merged_config
+    }
+
+    # Render template
+    template_loader = jinja2.FileSystemLoader('execution/job_templates')
+    env = jinja2.Environment(
+        loader=template_loader,
+        undefined=jinja2.StrictUndefined
+    )
+
+    try:
+        template = env.get_template(template_name)
+        script_content = template.render(**context)
+    except jinja2.exceptions.TemplateError as e:
+        print(f"ERROR: Failed to render template for {job_name}: {e}")
         sys.exit(1)
 
-    return config
+    # Write to generated_jobs/
+    generated_dir = out_dir / 'generated_jobs'
+    generated_dir.mkdir(exist_ok=True)
+    script_path = generated_dir / f"{job_name}.sh"
+    script_path.write_text(script_content)
+    script_path.chmod(0o755)
+
+    return script_path
 
 
 # =============================================================================
-# PARAMETER BUILDING (GENERIC CASCADE RESOLUTION)
+# JOB EXECUTION
 # =============================================================================
 
-# Reserved keys that should not be passed as env vars
-RESERVED_KEYS = {
-    'experiment', 'pipeline', 'jobs', 'vllm_server'
-}
-
-
-def resolve_config_value(key: str, global_cfg: dict, job_cfg: dict):
-    """
-    Generic cascade resolution: job > global.
-
-    Returns None if key not found at any level.
-    """
-    if job_cfg and key in job_cfg:
-        return job_cfg[key]
-    if global_cfg and key in global_cfg:
-        return global_cfg[key]
-    return None
-
-
-def build_env_vars(config: dict, job: str, out_dir: Path) -> dict:
-    """
-    Build environment variables for job using generic cascade resolution.
-
-    Any config at global level can be overridden at job level using the same keyword.
-    Cascade: job config > global config
-    """
-    env = {}
-
-    # Extract config levels
-    global_cfg = config
-    job_cfg = config.get('jobs', {}).get(job, {})
-
-    # Handle 'pass' keyword in YAML (becomes None in Python)
-    if job_cfg is None:
-        job_cfg = {}
-
-    # 1. Collect ALL keys from all levels (excluding reserved keys)
-    all_keys = set()
-    all_keys.update(k for k in global_cfg.keys() if k not in RESERVED_KEYS)
-    all_keys.update(k for k in job_cfg.keys())
-
-    # 2. Generic cascade resolution for all keys
-    for key in all_keys:
-        value = resolve_config_value(key, global_cfg, job_cfg)
-        if value is not None:
-            env[key] = str(value)
-
-    # 3. Output directory
-    env['out_dir'] = str(out_dir)
-
-    # 4. Handle vllm_server configuration
-    vllm_server = config.get('vllm_server')
-    if vllm_server:
-        env['vllm_host'] = str(vllm_server.get('host', '127.0.0.1'))
-        env['vllm_port'] = str(vllm_server.get('port', 8000))
-
-    # 5. Resolve file paths to absolute paths (relative to out_dir)
-    for key, value in list(env.items()):
-        # If value looks like a relative file path, resolve to out_dir
-        if isinstance(value, str) and value and not value.startswith('/'):
-            # Check if it's a file path (ends with common extensions or is a directory name)
-            if any(value.endswith(ext) for ext in ['.jsonl', '.txt', '.json', '.csv', '.log']) or \
-               'dataset' in key.lower() or 'dir' in key.lower():
-                # Keep HF dataset paths and absolute paths as-is
-                if not ('/' in value and len(value) > 50):  # Heuristic: long paths with / are likely HF paths
-                    env[key] = str(out_dir / value)
-
-    return env
-
-
-# =============================================================================
-# JOB SUBMISSION
-# =============================================================================
-
-def submit_job(job_script: str, env_vars: dict, dependency: Optional[str] = None) -> Optional[str]:
-    """Submit SLURM job with environment variables, return job ID"""
+def submit_job(job_script: str, dependency: Optional[str] = None) -> Optional[str]:
+    """Submit SLURM job, return job ID"""
     cmd = ['sbatch']
 
     if dependency:
         cmd += ['--dependency', dependency]
-
-    export_vars = {}
-    for k, v in env_vars.items():
-        export_vars[k] = v
-
-    export_str = ','.join([f'{k}={v}' for k, v in export_vars.items()])
-    cmd += ['--export', f'ALL,{export_str}']
 
     cmd.append(job_script)
     result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
@@ -155,22 +265,50 @@ def submit_job(job_script: str, env_vars: dict, dependency: Optional[str] = None
     return None
 
 
-def run_job_directly(job_script: str, env_vars: dict) -> bool:
-    """Run job script directly (for local vLLM mode), return success status"""
-    # Prepare environment
-    env = dict(os.environ)
-    env.update(env_vars)
+def run_job_interactive(
+    job_script: Path,
+    job_name: str,
+    out_dir: Path,
+    status: dict
+) -> bool:
+    """Run job in interactive mode with logging"""
 
-    # Run the job script
-    result = subprocess.run(
-        ['bash', job_script],
-        env=env
-    )
+    log_dir = Path('logs')
+    log_dir.mkdir(exist_ok=True)
 
-    # Print output in real-time fashion
-    print(result.stdout)
+    stdout_log = log_dir / f"local_{job_name}.out"
+    stderr_log = log_dir / f"local_{job_name}.err"
 
-    return result.returncode == 0
+    # Update status
+    status['interactive'][job_name] = {
+        'status': 'running',
+        'started': datetime.now().isoformat(),
+        'log_stdout': str(stdout_log),
+        'log_stderr': str(stderr_log)
+    }
+    save_status(out_dir, status)
+
+    print(f"  Logs: {stdout_log} / {stderr_log}")
+
+    # Run job
+    with open(stdout_log, 'w') as fout, open(stderr_log, 'w') as ferr:
+        result = subprocess.run(
+            ['bash', str(job_script)],
+            stdout=fout,
+            stderr=ferr,
+            cwd=Path.cwd()
+        )
+
+    # Update status
+    success = result.returncode == 0
+    status['interactive'][job_name].update({
+        'status': 'completed' if success else 'failed',
+        'finished': datetime.now().isoformat(),
+        'exit_code': result.returncode
+    })
+    save_status(out_dir, status)
+
+    return success
 
 
 def get_pipeline_sequence(config: dict) -> List[Tuple[str, bool]]:
@@ -196,188 +334,87 @@ def get_pipeline_sequence(config: dict) -> List[Tuple[str, bool]]:
 
 def execute_jobs(
     config: dict,
+    slurm_config: dict,
     out_dir: Path,
     job_names: List[str],
-    prev_job_id: Optional[str] = None,
-    show_header: bool = True
-) -> Dict[str, str]:
-    """
-    Execute a sequence of jobs using the appropriate execution mode.
+    execution_mode: str,
+    prev_job_id: Optional[str] = None
+) -> dict:
+    """Execute jobs in appropriate mode"""
 
-    Automatically detects execution mode from config (local vs SLURM).
+    status = load_status(out_dir)
+    status['execution_mode'] = execution_mode
 
-    Args:
-        config: Pipeline configuration
-        out_dir: Output directory
-        job_names: List of job names to execute in order
-        prev_job_id: Optional SLURM job ID to depend on (SLURM mode only)
-        show_header: Whether to print execution mode header
-
-    Returns:
-        Dict mapping job names to job IDs (empty dict for local mode)
-    """
-    # Detect execution mode
-    use_vllm_server = config.get('vllm_server') is not None
-
-    if use_vllm_server:
-        return _execute_jobs_local(config, out_dir, job_names, show_header)
-    else:
-        return _execute_jobs_slurm(config, out_dir, job_names, prev_job_id, show_header)
-
-
-def _execute_jobs_local(
-    config: dict,
-    out_dir: Path,
-    job_names: List[str],
-    show_header: bool = True
-) -> Dict[str, str]:
-    """Execute jobs locally using external vLLM server"""
-    if show_header:
-        vllm_server = config.get('vllm_server', {})
-        host = vllm_server.get('host', '127.0.0.1')
-        port = vllm_server.get('port', 8000)
-        print(f"\nRunning jobs in local mode...")
-        print(f"vLLM Server: {host}:{port}\n")
+    mode_key = execution_mode
 
     for job_name in job_names:
-        env_vars = build_env_vars(config, job_name, out_dir)
+        job_config = config['jobs'].get(job_name, {})
 
-        # GPU jobs (ending with "_generation") use _local version
-        if job_name.endswith('_generation'):
-            job_script = f"jobs/{job_name}_local.sh"
-            if not Path(job_script).exists():
-                print(f" ERROR: Local job script not found: {job_script}")
+        # Check for manual override
+        custom_script = Path('custom_jobs') / f"{job_name}.sh"
+        if custom_script.exists():
+            print(f"  Using custom script: {custom_script}")
+            job_script = custom_script
+        else:
+            # Generate from template
+            job_script = generate_job_script(
+                job_name,
+                job_config,
+                config,
+                slurm_config,
+                execution_mode,
+                out_dir
+            )
+
+        # Execute
+        if execution_mode == 'sbatch':
+            dependency = f"afterany:{prev_job_id}" if prev_job_id else None
+            job_id = submit_job(str(job_script), dependency)
+
+            if job_id:
+                status['sbatch'][job_name] = {
+                    'job_id': job_id,
+                    'status': 'PENDING',
+                    'started': datetime.now().isoformat()
+                }
+                save_status(out_dir, status)
+
+                dep_str = f" (depends on {prev_job_id})" if prev_job_id else ""
+                print(f"  {job_name:45} → {job_id}{dep_str}")
+                prev_job_id = job_id
+            else:
+                print(f"  Failed to submit {job_name}")
+                # Cancel already submitted jobs
+                cancel_jobs([info['job_id'] for info in status['sbatch'].values()])
                 sys.exit(1)
-        else:
-            job_script = f"jobs/{job_name}.sh"
 
-        print(f" Running {job_name}...")
-        success = run_job_directly(job_script, env_vars)
+        else:  # interactive
+            print(f"\n  Running {job_name}...")
+            success = run_job_interactive(job_script, job_name, out_dir, status)
 
-        if not success:
-            print(f" ERROR: Job {job_name} failed")
-            sys.exit(1)
+            if not success:
+                print(f"  ERROR: Job {job_name} failed")
+                print(f"  Check logs: logs/local_{job_name}.err")
+                sys.exit(1)
 
-        print(f" {job_name} completed successfully\n")
+            print(f"  ✓ {job_name} completed successfully")
 
-    # Return empty dict since we're not tracking SLURM job IDs
-    return {}
-
-
-def _execute_jobs_slurm(
-    config: dict,
-    out_dir: Path,
-    job_names: List[str],
-    prev_job_id: Optional[str] = None,
-    show_header: bool = True
-) -> Dict[str, str]:
-    """Execute jobs on SLURM with dependencies"""
-    if show_header:
-        print("\nSubmitting jobs to SLURM...\n")
-
-    job_ids = {}
-
-    for job_name in job_names:
-        # Job script path convention: jobs/{job_name}.sh
-        job_script = f"jobs/{job_name}.sh"
-        env_vars = build_env_vars(config, job_name, out_dir)
-
-        dependency = f"afterany:{prev_job_id}" if prev_job_id else None
-        job_id = submit_job(job_script, env_vars, dependency)
-
-        if job_id:
-            job_ids[job_name] = job_id
-            prev_job_id = job_id
-            dep_str = f" (depends on {dependency.split(':')[1]})" if dependency else ""
-            print(f" {job_name:45} → {job_id}{dep_str}")
-        else:
-            print(f" Failed to submit {job_name}")
-            # Cancel already submitted jobs
-            cancel_jobs(list(job_ids.values()))
-            sys.exit(1)
-
-    return job_ids
+    return status
 
 
-def submit_pipeline(config: dict, out_dir: Path) -> Dict[str, str]:
-    """Submit all enabled jobs with dependencies"""
+def submit_pipeline(config: dict, slurm_config: dict, out_dir: Path, execution_mode: str) -> dict:
+    """Submit all enabled jobs"""
     pipeline_sequence = get_pipeline_sequence(config)
     job_names = [name for name, enabled in pipeline_sequence if enabled]
 
-    return execute_jobs(config, out_dir, job_names, show_header=True)
+    if execution_mode == 'sbatch':
+        print("\nSubmitting jobs to SLURM...\n")
+    else:
+        vllm = config['vllm_server']
+        print(f"\nRunning jobs in interactive mode...")
+        print(f"vLLM Server: {vllm['host']}:{vllm['port']}\n")
 
-
-# =============================================================================
-# STATUS CHECKING
-# =============================================================================
-
-def get_job_status(job_id: str) -> str:
-    """Get SLURM job status using sacct"""
-    result = subprocess.run(
-        ['sacct', '-j', job_id, '--format=State', '--noheader', '--parsable2'],
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True
-    )
-
-    if result.returncode == 0 and result.stdout.strip():
-        # Take first status (main job)
-        return result.stdout.strip().split('\n')[0]
-
-    return 'UNKNOWN'
-
-
-def check_pipeline_status(job_ids: Dict[str, str]) -> Tuple[bool, List[str], List[str]]:
-    """
-    Check pipeline status.
-
-    Returns:
-        (all_done, failed_jobs, running_jobs)
-    """
-    failed = []
-    running = []
-    all_done = True
-
-    for job, job_id in job_ids.items():
-        status = get_job_status(job_id)
-
-        if status in ['FAILED', 'CANCELLED', 'TIMEOUT', 'NODE_FAIL', 'OUT_OF_MEMORY'] or 'CANCELLED' in status:
-            failed.append(job)
-            all_done = False
-        elif status in ['PENDING', 'RUNNING']:
-            running.append(job)
-            all_done = False
-
-    return all_done, failed, running
-
-
-def print_status(job_ids: Dict[str, str]):
-    """Print pipeline status"""
-    print("\nPipeline Status:\n" + "=" * 70)
-
-    for job, job_id in job_ids.items():
-        status = get_job_status(job_id)
-        print(f"{job:40} {job_id:10} {status}")
-
-    print("=" * 70 + "\n")
-
-
-# =============================================================================
-# JOB HISTORY (MINIMAL)
-# =============================================================================
-
-def save_job_ids(out_dir: Path, job_ids: Dict[str, str]):
-    """Save job IDs for recovery"""
-    history_file = out_dir / 'job_ids.json'
-    with open(history_file, 'w') as f:
-        json.dump(job_ids, f, indent=2)
-
-
-def load_job_ids(out_dir: Path) -> Dict[str, str]:
-    """Load last submitted job IDs"""
-    history_file = out_dir / 'job_ids.json'
-    if history_file.exists():
-        with open(history_file, 'r') as f:
-            return json.load(f)
-    return {}
+    return execute_jobs(config, slurm_config, out_dir, job_names, execution_mode)
 
 
 # =============================================================================
@@ -387,43 +424,52 @@ def load_job_ids(out_dir: Path) -> Dict[str, str]:
 def cancel_jobs(job_ids: List[str]):
     """Cancel SLURM jobs"""
     for job_id in job_ids:
-        subprocess.run(['scancel', job_id], stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
+        subprocess.run(['scancel', job_id], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
 
 def get_all_jobs_ordered(config: dict) -> List[str]:
-    """Get all enabled jobs in pipeline order as job names"""
-    result = []
+    """Get all enabled jobs in pipeline order"""
     pipeline_sequence = get_pipeline_sequence(config)
-
-    for job_name, enabled in pipeline_sequence:
-        if enabled:
-            result.append(job_name)
-
-    return result
+    return [job_name for job_name, enabled in pipeline_sequence if enabled]
 
 
-def handle_force(config: dict, out_dir: Path):
+def handle_force(config: dict, slurm_config: dict, out_dir: Path, execution_mode: str):
     """Cancel all existing jobs and rerun entire pipeline"""
-    print("\n  Force mode: Cancelling existing jobs and rerunning...\n")
+    print("\n  Force mode: Rerunning entire pipeline...\n")
 
-    old_jobs = load_job_ids(out_dir)
-    if old_jobs:
-        cancel_jobs(list(old_jobs.values()))
-        
-    print(f"Re-running all jobs. Do you need to delete dispatcher checkpoints for generator jobs?")
-    job_ids = submit_pipeline(config, out_dir)
-    save_job_ids(out_dir, job_ids)
+    status = load_status(out_dir)
+
+    # Cancel SLURM jobs if in sbatch mode
+    if execution_mode == 'sbatch' and 'sbatch' in status:
+        old_jobs = [info['job_id'] for info in status['sbatch'].values()]
+        if old_jobs:
+            cancel_jobs(old_jobs)
+
+    # Clear status
+    status = {'sbatch': {}, 'interactive': {}}
+    save_status(out_dir, status)
+
+    # Rerun pipeline
+    submit_pipeline(config, slurm_config, out_dir, execution_mode)
 
 
-def handle_rerun_failed(config: dict, out_dir: Path):
+def handle_rerun_failed(config: dict, slurm_config: dict, out_dir: Path, execution_mode: str):
     """Rerun from first failed job onwards"""
-    old_jobs = load_job_ids(out_dir)
+    status = load_status(out_dir)
 
+    if execution_mode == 'interactive':
+        print("\nInteractive mode: rerunning entire pipeline")
+        submit_pipeline(config, slurm_config, out_dir, execution_mode)
+        return
+
+    # SLURM mode
+    old_jobs = status.get('sbatch', {})
     if not old_jobs:
         print("No previous jobs found")
         sys.exit(1)
 
-    all_done, failed, running = check_pipeline_status(old_jobs)
+    job_ids = {name: info['job_id'] for name, info in old_jobs.items()}
+    all_done, failed, running = check_pipeline_status(job_ids)
 
     if not failed:
         print("\nNo failed jobs to rerun")
@@ -438,7 +484,7 @@ def handle_rerun_failed(config: dict, out_dir: Path):
     first_failed_idx = min(all_jobs.index(f) for f in failed)
 
     # Cancel downstream jobs
-    to_cancel = [old_jobs[name] for name in all_jobs[first_failed_idx:] if name in running]
+    to_cancel = [old_jobs[name]['job_id'] for name in all_jobs[first_failed_idx:] if name in running]
     if to_cancel:
         cancel_jobs(to_cancel)
         print(f"Cancelled {len(to_cancel)} downstream job(s)")
@@ -447,82 +493,20 @@ def handle_rerun_failed(config: dict, out_dir: Path):
     prev_job_id = None
     if first_failed_idx > 0:
         prev_name = all_jobs[first_failed_idx - 1]
-        prev_job_id = old_jobs.get(prev_name)
+        prev_job_id = old_jobs.get(prev_name, {}).get('job_id')
 
-    # Rerun from failed job onwards using unified execution
+    # Rerun from failed job onwards
     print("\nRerunning:\n")
     jobs_to_rerun = all_jobs[first_failed_idx:]
 
-    new_jobs = execute_jobs(
+    execute_jobs(
         config,
+        slurm_config,
         out_dir,
         jobs_to_rerun,
-        prev_job_id=prev_job_id,
-        show_header=False
+        execution_mode,
+        prev_job_id=prev_job_id
     )
-
-    # Update job history
-    old_jobs.update(new_jobs)
-    save_job_ids(out_dir, old_jobs)
-
-
-def handle_continue(config: dict, out_dir: Path):
-    """Skip failed jobs, submit downstream without dependency"""
-    # Check if using local mode
-    use_vllm_server = config.get('vllm_server') is not None
-
-    if use_vllm_server:
-        print("\nLocal mode doesn't support continue (no job tracking).")
-        print("Use --rerun-failed to rerun the entire pipeline.\n")
-        sys.exit(1)
-
-    # SLURM mode: continue from next job after failure
-    old_jobs = load_job_ids(out_dir)
-
-    if not old_jobs:
-        print("No previous jobs found")
-        sys.exit(1)
-
-    all_done, failed, running = check_pipeline_status(old_jobs)
-
-    if not failed:
-        print("\nNo failed jobs to skip")
-        sys.exit(0)
-
-    print(f"\nSkipping {len(failed)} failed job(s), submitting downstream...\n")
-
-    # Find first failed job
-    all_jobs = get_all_jobs_ordered(config)
-    first_failed_idx = min(all_jobs.index(f) for f in failed)
-
-    # Cancel downstream jobs
-    to_cancel = [old_jobs[name] for name in all_jobs[first_failed_idx + 1:] if name in running]
-    if to_cancel:
-        cancel_jobs(to_cancel)
-        print(f"Cancelled {len(to_cancel)} downstream job(s)")
-
-    # Submit downstream WITHOUT dependency (assumes data exists)
-    print("\nSubmitting downstream jobs:\n")
-    jobs_to_submit = all_jobs[first_failed_idx + 1:]
-
-    if not jobs_to_submit:
-        print("No downstream jobs to submit")
-        sys.exit(0)
-
-    new_jobs = execute_jobs(
-        config,
-        out_dir,
-        jobs_to_submit,
-        prev_job_id=None,  # No dependency - assumes data exists
-        show_header=False
-    )
-
-    # Update job history
-    old_jobs.update(new_jobs)
-    save_job_ids(out_dir, old_jobs)
-
-    print(f"\n  Skipped failed: {', '.join(failed)}")
-    print("  Ensure output files exist for downstream jobs\n")
 
 
 # =============================================================================
@@ -531,55 +515,74 @@ def handle_continue(config: dict, out_dir: Path):
 
 def main():
     parser = argparse.ArgumentParser(
-        description='AutoIF Pipeline - Config-driven SLURM orchestrator',
+        description='AutoIF Pipeline - Enhanced config-driven orchestrator',
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
 
-    parser.add_argument('--out-dir', type=Path, required=True,
-                       help='Output directory (must contain config.yaml)')
+    parser.add_argument('--config', type=Path, required=True,
+                       help='Path to task config.yaml')
+    parser.add_argument('--slurm-config', type=Path, default=Path('configs/slurm.default.yaml'),
+                       help='Path to slurm.yaml (default: configs/slurm.default.yaml)')
+    parser.add_argument('--out-dir', type=Path, default=Path('data'),
+                       help='Output directory (default: data)')
     parser.add_argument('--force', action='store_true',
                        help='Cancel all jobs and rerun entire pipeline')
     parser.add_argument('--rerun-failed', action='store_true',
-                       help='Re-run failed jobs and all downstream dependencies. If batch jobs: resubmit from first failed job onwards.')
-    parser.add_argument('--continue', dest='continue_mode', action='store_true',
-                       help='Skip failed jobs, submit downstream (assumes data exists)')
+                       help='Re-run failed jobs and all downstream dependencies')
+    parser.add_argument('--status', action='store_true',
+                       help='Show pipeline status and exit')
 
     args = parser.parse_args()
 
-    # Load config
-    config = load_config(args.out_dir)
+    # Load configs
+    config = load_yaml_file(args.config)
+    if not config:
+        print(f"ERROR: Failed to load config from {args.config}")
+        sys.exit(1)
+
+    slurm_config = load_yaml_file(args.slurm_config)
+
+    # Create output directory
+    args.out_dir.mkdir(parents=True, exist_ok=True)
+
+    # Detect execution mode
+    execution_mode = detect_execution_mode(config)
 
     print(f"\nAutoIF Pipeline")
     print(f"Experiment: {config.get('experiment', {}).get('name', 'N/A')}")
+    print(f"Execution Mode: {execution_mode.upper()}")
     print(f"Output: {args.out_dir}")
 
     # Handle different modes
-    if args.force:
-        handle_force(config, args.out_dir)
+    if args.status:
+        status = load_status(args.out_dir)
+        print_status(status, execution_mode)
+        sys.exit(0)
+    elif args.force:
+        handle_force(config, slurm_config, args.out_dir, execution_mode)
     elif args.rerun_failed:
-        handle_rerun_failed(config, args.out_dir)
-    elif args.continue_mode:
-        handle_continue(config, args.out_dir)
+        handle_rerun_failed(config, slurm_config, args.out_dir, execution_mode)
     else:
         # Check for existing jobs
-        old_jobs = load_job_ids(args.out_dir)
-        if old_jobs:
-            print_status(old_jobs)
-            all_done, failed, running = check_pipeline_status(old_jobs)
+        status = load_status(args.out_dir)
+
+        if execution_mode == 'sbatch' and status.get('sbatch'):
+            print_status(status, execution_mode)
+            job_ids = {name: info['job_id'] for name, info in status['sbatch'].items()}
+            all_done, failed, running = check_pipeline_status(job_ids)
 
             if failed:
-                print(f" {len(failed)} job(s) failed. Use --rerun-failed or --continue")
+                print(f" {len(failed)} job(s) failed. Use --rerun-failed or --force")
                 sys.exit(1)
             elif running:
-                print(f" {len(running)} job(s) still running")
+                print(f" {len(running)} job(s) still running. Use --status to check")
                 sys.exit(0)
             elif all_done:
                 print(" All jobs completed. Use --force to rerun")
                 sys.exit(0)
 
         # Fresh submission
-        job_ids = submit_pipeline(config, args.out_dir)
-        save_job_ids(args.out_dir, job_ids)
+        submit_pipeline(config, slurm_config, args.out_dir, execution_mode)
 
 
 if __name__ == "__main__":

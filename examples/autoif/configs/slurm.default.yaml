@@ -1,0 +1,47 @@
+# SLURM Configuration for AutoIF Pipeline
+# This file contains SLURM-specific settings for job submission
+
+# Global SLURM defaults
+slurm:
+  account: project_462000963
+  partition: dev-g
+  time: "01:00:00"
+  output: "logs/%j.out"
+  error: "logs/%j.err"
+
+# Job type defaults
+job_type_defaults:
+  dispatcher_task:
+    nodes: 1
+    ntasks_per_node: 2
+    mem: "480G"
+    cpus_per_task: 7
+    exclusive: user
+    hint: nomultithread
+    gpus_per_node: "mi250:8"
+
+  cpu_script:
+    partition: small
+    nodes: 1
+    ntasks_per_node: 1
+    mem: "32G"
+    cpus_per_task: 8
+    time: "00:30:00"
+
+# Per-job SLURM overrides
+jobs:
+  verifiers_generation:
+    time: "02:00:00"
+    startup_timeout: 1800
+    request_timeout: 1800
+    work_timeout: 3600
+
+  responses_generation:
+    time: "02:00:00"
+    ntasks_per_node: 2
+    startup_timeout: 1800
+    request_timeout: 1800
+    work_timeout: 3600
+
+  concatenation_job:
+    mem: "64G"

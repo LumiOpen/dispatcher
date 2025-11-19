@@ -1,0 +1,172 @@
+# AutoIF Pipeline Configuration
+#
+# This is the main task configuration for the AutoIF pipeline.
+# SLURM-specific settings are in slurm.yaml
+
+# ==============================================================================
+# Experiment Metadata
+# ==============================================================================
+experiment:
+  name: "exp1"
+  description: "Baseline IFEval instruction following dataset generation"
+
+# ==============================================================================
+# Optional: vLLM Server Configuration
+# ==============================================================================
+# If present: pipeline runs in interactive mode, connects to this server
+# If absent: pipeline submits jobs to SLURM
+# Uncomment to use interactive mode:
+# vllm_server:
+#   host: "127.0.0.1"
+#   port: 8000
+
+# ==============================================================================
+# Environment Setup
+# ==============================================================================
+# Path to environment setup script (user-editable)
+environment_setup: "execution/environments/lumi_module.sh"
+
+# ==============================================================================
+# Pipeline Sequence
+# ==============================================================================
+# Set to false to disable a job, or remove it from the list to skip entirely
+pipeline:
+  - augmentation_preprocessing: true
+  - augmentation_generation: true
+  - augmentation_postprocessing: true
+  - verifiers_preprocessing: true
+  - verifiers_generation: true
+  - cross_validation_job: true
+  - concatenation_job: true
+  - responses_generation: true
+  - final_dataset_job: true
+
+# ==============================================================================
+# Global Configuration (can be overridden at job level)
+# ==============================================================================
+# Model parameters
+model: "meta-llama/Llama-3.3-70B-Instruct"
+max_model_len: 16384
+tensor_parallel: 4
+
+# Common parameters
+language: "en"
+function_timeout: 10
+score_threshold: 4
+workers: 8
+batch_size: 1
+
+# Environment
+venv_dir: "/scratch/project_462000353/adamhrin/dispatcher/examples/autoif/.venv"
+hf_home: "/scratch/project_462000353/hf_cache"
+
+# ==============================================================================
+# Jobs Configuration
+# ==============================================================================
+jobs:
+  # --------------------------------------------------------------------------
+  # Augmentation: Generate augmented instructions from seed instructions
+  # --------------------------------------------------------------------------
+  augmentation_preprocessing:
+    type: cpu_script
+    script: src/create_instructions_input.py
+    args:
+      seed-file: "/scratch/project_462000353/adamhrin/dispatcher/examples/autoif/data/categorised_instructions.json"
+      output-file: "aug_input.jsonl"
+      num-instructions-per-category: 50
+      language: "en"
+
+  augmentation_generation:
+    type: dispatcher_task
+    task: tasks.augmentation_task.AugmentInstructionsTask
+    input_file: "aug_input.jsonl"
+    output_file: "aug_output.jsonl"
+
+  augmentation_postprocessing:
+    type: cpu_script
+    script: src/process_instructions_output.py
+    args:
+      input-file: "aug_output.jsonl"
+      output-file: "augmented_instructions.jsonl"
+      language: "en"
+      max-instructions: 200
+      seed-file: "/scratch/project_462000353/adamhrin/dispatcher/examples/autoif/data/categorised_instructions.json"
+
+  # --------------------------------------------------------------------------
+  # Verifiers: Generate and validate verification functions
+  # --------------------------------------------------------------------------
+  verifiers_preprocessing:
+    type: cpu_script
+    script: src/create_verifiers_input.py
+    args:
+      input: "augmented_instructions.jsonl"
+      output: "verifiers_input.jsonl"
+      language: "en"
+      min-functions: 1
+      min-test-cases: 1
+
+  verifiers_generation:
+    type: dispatcher_task
+    task: tasks.verifiers_task.VerifyInstructionsTask
+    input_file: "verifiers_input.jsonl"
+    output_file: "verifiers_output.jsonl"
+    workers: 16
+    num_verifier_generations: 10
+
+  cross_validation_job:
+    type: cpu_script
+    script: src/verifiers_cross_validation.py
+    args:
+      verifiers-file: "verifiers_output.jsonl"
+      output-all-file: "verifiers_all.jsonl"
+      output-filtered-file: "verifiers_filtered.jsonl"
+      logfile: "crossval.log"
+    # These are passed via environment variables in the legacy script
+    function_timeout: 10
+    min_functions: 1
+    min_test_cases: 1
+    function_pass_rate: 0.8
+
+  # --------------------------------------------------------------------------
+  # Concatenation: Create queries by concatenating instructions with dataset
+  # --------------------------------------------------------------------------
+  concatenation_job:
+    type: cpu_script
+    script: src/concat_queries.py
+    args:
+      verifiers-file: "verifiers_filtered.jsonl"
+      queries-dataset: null  # REQUIRED: Set to HF path or local JSONL
+      output-file: "verifiers_queries.jsonl"
+      language: "en"
+      num-output-lines: 300000
+      instructions-per-query: 1
+      query-max-len: 200
+      query-column-name: "instruction"
+      response-column-name: "response"
+      messages-format: true
+      messages-key: "messages"
+      turns: 1
+      no-followup: true
+      balance-categories: true
+
+  # --------------------------------------------------------------------------
+  # Responses: Generate and score responses to queries
+  # --------------------------------------------------------------------------
+  responses_generation:
+    type: dispatcher_task
+    task: tasks.responses_task.ResponsesTask
+    input_file: "verifiers_queries.jsonl"
+    output_file: "scored_responses.jsonl"
+    workers: 32
+
+  # --------------------------------------------------------------------------
+  # SFT: Build final supervised fine-tuning dataset
+  # --------------------------------------------------------------------------
+  final_dataset_job:
+    type: cpu_script
+    script: src/build_sft.py
+    args:
+      input-file: "scored_responses.jsonl"
+      output-dir: "sft_dataset"
+      score-threshold: 4
+      test: true  # Boolean flag
