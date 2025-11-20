@@ -283,7 +283,6 @@ def generate_job_script(
 
 def submit_job(job_script: str, dependency: Optional[str] = None) -> Optional[str]:
     """Submit SLURM job, return job ID"""
-    print(shutil.which('sbatch'))
     cmd = ['sbatch']
 
     if dependency:
@@ -311,7 +310,7 @@ def run_job_interactive(
 ) -> bool:
     """Run job in interactive mode with logging"""
 
-    log_dir = Path('logs')
+    log_dir = out_dir / 'logs'
     log_dir.mkdir(exist_ok=True)
 
     stdout_log = log_dir / f"local_{job_name}.out"
@@ -412,8 +411,7 @@ def execute_jobs(
             if job_id:
                 status['sbatch'][job_name] = {
                     'job_id': job_id,
-                    'status': 'PENDING',
-                    'started': datetime.now().isoformat()
+                    'submitted': datetime.now().isoformat()
                 }
                 save_status(out_dir, status)
 

@@ -50,7 +50,7 @@ max_model_len: 16384
 tensor_parallel: 4
 
 # Common parameters
-language: "en"
+language: "fi"
 function_timeout: 10
 score_threshold: 4
 workers: 8
@@ -71,10 +71,10 @@ jobs:
     type: cpu_script
     script: src/create_instructions_input.py
     args:
-      seed-file: "/scratch/project_462000353/adamhrin/dispatcher/examples/autoif/data/categorised_instructions.json"
+      seed-file: "/scratch/project_462000353/adamhrin/dispatcher/examples/autoif/data/categorised_instructions_fi.json"
       output-file: "aug_input.jsonl"
       num-instructions-per-category: 50
-      language: "en"
+      language: "${language}"
 
   augmentation_generation:
     type: dispatcher_task
@@ -88,9 +88,9 @@ jobs:
     args:
       input-file: "aug_output.jsonl"
       output-file: "augmented_instructions.jsonl"
-      language: "en"
+      language: "${language}"
       max-instructions: 200
-      seed-file: "/scratch/project_462000353/adamhrin/dispatcher/examples/autoif/data/categorised_instructions.json"
+      seed-file: "/scratch/project_462000353/adamhrin/dispatcher/examples/autoif/data/categorised_instructions_fi.json"
 
   # --------------------------------------------------------------------------
   # Verifiers: Generate and validate verification functions
@@ -101,7 +101,7 @@ jobs:
     args:
       input: "augmented_instructions.jsonl"
       output: "verifiers_input.jsonl"
-      language: "en"
+      language: "${language}"
       min-functions: 1
       min-test-cases: 1
 
@@ -121,11 +121,13 @@ jobs:
       output-all-file: "verifiers_all.jsonl"
       output-filtered-file: "verifiers_filtered.jsonl"
       logfile: "crossval.log"
-    # These are passed via environment variables in the legacy script
-    function_timeout: 10
-    min_functions: 1
-    min_test_cases: 1
-    function_pass_rate: 0.8
+    # Environment variables to export
+    exports:
+      FUNCTION_TIMEOUT: "${function_timeout}"
+      MIN_FUNCTIONS: 1
+      MIN_TEST_CASES: 1
+      FUNCTION_PASS_RATE: 0.8
+      LANGUAGE: "${language}"
 
   # --------------------------------------------------------------------------
   # Concatenation: Create queries by concatenating instructions with dataset
@@ -137,7 +139,7 @@ jobs:
       verifiers-file: "verifiers_filtered.jsonl"
       queries-dataset: null  # REQUIRED: Set to HF path or local JSONL
       output-file: "verifiers_queries.jsonl"
-      language: "en"
+      language: "${language}"
       num-output-lines: 300000
       instructions-per-query: 1
       query-max-len: 200
@@ -168,5 +170,5 @@ jobs:
     args:
       input-file: "scored_responses.jsonl"
       output-dir: "sft_dataset"
-      score-threshold: 4
+      score-threshold: "${score_threshold}"
       test: true  # Boolean flag

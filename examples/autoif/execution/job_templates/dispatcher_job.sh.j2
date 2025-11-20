@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name={{ job_name }}
-{% for key, value in slurm.items() %}
+{% for key, value in slurm.items() -%}
 #SBATCH --{{ key.replace('_', '-') }}={{ value }}
 {% endfor %}
 

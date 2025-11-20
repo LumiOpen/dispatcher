@@ -64,7 +64,9 @@ PYTHONPATH=. python -m dispatcher.taskmanager.cli \
     --model "$MODEL" \
     --host "$VLLM_HOST" \
     --port "$VLLM_PORT" \
-    {% if request_timeout is defined %}--request-timeout "$REQUEST_TIMEOUT" \{% endif %}
+{%- if request_timeout is defined %}
+    --request-timeout "$REQUEST_TIMEOUT" \
+{%- endif %}
     --no-launch
 
 # Cleanup
