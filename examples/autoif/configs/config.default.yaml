@@ -160,6 +160,8 @@ jobs:
     input_file: "verifiers_queries.jsonl"
     output_file: "scored_responses.jsonl"
     workers: 32
+    exports:
+      SCORE_THRESHOLD: "${score_threshold}"
 
   # --------------------------------------------------------------------------
   # SFT: Build final supervised fine-tuning dataset

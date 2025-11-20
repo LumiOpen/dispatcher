@@ -16,6 +16,14 @@ echo ""
 # Environment Setup
 # ============================================================
 {% include environment_setup %}
+{% if exports is defined %}
+# ============================================================
+# Set Environment Variables
+# ============================================================
+{% for key, value in exports.items() %}
+export {{ key }}="{{ value }}"
+{% endfor %}
+{% endif %}
 
 # ============================================================
 # Job Configuration
@@ -58,6 +66,12 @@ sleep 10
 # Dispatcher Workers
 # ============================================================
 srun -l bash -c '
+    {% if exports is defined %}
+    # Export custom variables inside worker
+    {% for key, value in exports.items() %}
+    export {{ key }}="{{ value }}"
+    {% endfor %}
+    {% endif %}
     # GPU allocation
     start_gpu=$(( SLURM_LOCALID * '"$GPUS_PER_TASK"' ))
     GPU_IDS=""

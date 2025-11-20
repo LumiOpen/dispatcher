@@ -182,6 +182,22 @@ def resolve_nested_variables(obj, config: dict, out_dir: Path):
         return obj
 
 
+def _merge_exports(global_config: dict, job_config: dict, out_dir: Path) -> Dict[str, str]:
+    """Merge and resolve export environment variables."""
+    exports: Dict[str, str] = {}
+
+    def _resolve_exports(source: Optional[dict]) -> Dict[str, str]:
+        if not isinstance(source, dict):
+            return {}
+        resolved = resolve_nested_variables(source, global_config, out_dir)
+        return resolved if isinstance(resolved, dict) else {}
+
+    exports.update(_resolve_exports(global_config.get('exports')))
+    exports.update(_resolve_exports(job_config.get('exports')))
+
+    return exports
+
+
 def merge_configs(global_config: dict, job_config: dict, out_dir: Path) -> dict:
     """
     Merge global and job-level configurations.
@@ -191,14 +207,20 @@ def merge_configs(global_config: dict, job_config: dict, out_dir: Path) -> dict:
     merged = {}
 
     # Start with global config (excluding reserved keys)
-    reserved_keys = {'experiment', 'pipeline', 'jobs', 'vllm_server', 'environment_setup'}
+    reserved_keys = {'experiment', 'pipeline', 'jobs', 'vllm_server', 'environment_setup', 'exports'}
     for key, value in global_config.items():
         if key not in reserved_keys:
             merged[key] = resolve_nested_variables(value, global_config, out_dir)
 
     # Override with job config (recursively resolve nested structures)
     for key, value in job_config.items():
+        if key == 'exports':
+            continue
         merged[key] = resolve_nested_variables(value, global_config, out_dir)
+
+    exports = _merge_exports(global_config, job_config, out_dir)
+    if exports:
+        merged['exports'] = exports
 
     return merged
 

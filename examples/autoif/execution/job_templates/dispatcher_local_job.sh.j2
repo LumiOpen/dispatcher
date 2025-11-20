@@ -12,6 +12,14 @@ echo ""
 # Environment Setup
 # ============================================================
 {% include environment_setup %}
+{% if exports is defined %}
+# ============================================================
+# Set Environment Variables
+# ============================================================
+{% for key, value in exports.items() %}
+export {{ key }}="{{ value }}"
+{% endfor %}
+{% endif %}
 
 # ============================================================
 # Job Configuration
