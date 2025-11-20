@@ -1,9 +1,9 @@
 #!/bin/bash
-{% if execution_mode == 'sbatch' %}
+{% if execution_mode == 'sbatch' -%}
 #SBATCH --job-name={{ job_name }}
-{% for key, value in slurm.items() %}
+{% for key, value in slurm.items() -%}
 #SBATCH --{{ key.replace('_', '-') }}={{ value }}
-{% endfor %}
+{% endfor -%}
 {% endif %}
 
 set -euo pipefail
@@ -19,30 +19,34 @@ echo ""
 # ============================================================
 {% include environment_setup %}
 
+{% if exports is defined %}
 # ============================================================
-# Set Environment Variables (if needed)
+# Set Environment Variables
 # ============================================================
-{% if function_timeout is defined %}export FUNCTION_TIMEOUT="{{ function_timeout }}"{% endif %}
-{% if min_functions is defined %}export MIN_FUNCTIONS="{{ min_functions }}"{% endif %}
-{% if min_test_cases is defined %}export MIN_TEST_CASES="{{ min_test_cases }}"{% endif %}
-{% if function_pass_rate is defined %}export FUNCTION_PASS_RATE="{{ function_pass_rate }}"{% endif %}
+{% for key, value in exports.items() %}
+export {{ key }}="{{ value }}"
+{% endfor %}
 
+{% endif %}
 # ============================================================
 # Execute Python Script
 # ============================================================
 echo "Running: python {{ script }}"
 echo ""
 
+{%- if args %}
 python {{ script }} \
-{% for key, value in args.items() %}
-{% if value is not none %}
-{% if value is sameas true %}
+{%- for key, value in args.items() if value is not none %}
+{%- if value is sameas true %}
     --{{ key }}{% if not loop.last %} \{% endif %}
-{% elif value is not sameas false %}
+{%- elif value is sameas false %}
+{%- else %}
     --{{ key }} "{{ value }}"{% if not loop.last %} \{% endif %}
-{% endif %}
-{% endif %}
-{% endfor %}
+{%- endif %}
+{%- endfor %}
+{%- else %}
+python {{ script }}
+{%- endif %}
 
 if [ $? -ne 0 ]; then
     echo "ERROR: Script failed"

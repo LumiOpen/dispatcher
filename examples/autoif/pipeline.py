@@ -19,6 +19,9 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from datetime import datetime
 
+BASE_DIR = Path(__file__).resolve().parent
+TEMPLATE_DIR = BASE_DIR / 'execution' / 'job_templates'
+ENV_DIR = BASE_DIR / 'execution' / 'environments'
 
 # =============================================================================
 # CONFIG LOADING
@@ -131,11 +134,27 @@ def resolve_template_variables(value, config: dict, out_dir: Path):
     """
     Resolve template variables and paths.
 
+    - Resolves variable references like "${variable_name}"
     - Converts relative file paths to absolute (relative to out_dir)
     - Keeps absolute paths and HF dataset paths as-is
     """
     if not isinstance(value, str):
         return value
+
+    # Resolve variable references like "${var_name}"
+    import re
+    var_pattern = r'\$\{(\w+)\}'
+
+    def replace_var(match):
+        var_name = match.group(1)
+        # Look up variable in global config (excluding reserved keys)
+        reserved_keys = {'experiment', 'pipeline', 'jobs', 'vllm_server', 'environment_setup'}
+        if var_name in config and var_name not in reserved_keys:
+            return str(config[var_name])
+        # If not found, return original
+        return match.group(0)
+
+    value = re.sub(var_pattern, replace_var, value)
 
     # Don't modify absolute paths or HF paths
     if value.startswith('/') or ('/' in value and len(value) > 50):
@@ -149,11 +168,25 @@ def resolve_template_variables(value, config: dict, out_dir: Path):
     return value
 
 
+def resolve_nested_variables(obj, config: dict, out_dir: Path):
+    """
+    Recursively resolve variables in nested structures (dicts, lists).
+    """
+    if isinstance(obj, dict):
+        return {k: resolve_nested_variables(v, config, out_dir) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [resolve_nested_variables(item, config, out_dir) for item in obj]
+    elif isinstance(obj, str):
+        return resolve_template_variables(obj, config, out_dir)
+    else:
+        return obj
+
+
 def merge_configs(global_config: dict, job_config: dict, out_dir: Path) -> dict:
     """
     Merge global and job-level configurations.
     Job-level configs override global configs.
-    Resolves all file paths to absolute paths.
+    Resolves all file paths and variable references.
     """
     merged = {}
 
@@ -161,11 +194,11 @@ def merge_configs(global_config: dict, job_config: dict, out_dir: Path) -> dict:
     reserved_keys = {'experiment', 'pipeline', 'jobs', 'vllm_server', 'environment_setup'}
     for key, value in global_config.items():
         if key not in reserved_keys:
-            merged[key] = resolve_template_variables(value, global_config, out_dir)
+            merged[key] = resolve_nested_variables(value, global_config, out_dir)
 
-    # Override with job config
+    # Override with job config (recursively resolve nested structures)
     for key, value in job_config.items():
-        merged[key] = resolve_template_variables(value, job_config, out_dir)
+        merged[key] = resolve_nested_variables(value, global_config, out_dir)
 
     return merged
 
@@ -217,7 +250,11 @@ def generate_job_script(
     }
 
     # Render template
-    template_loader = jinja2.FileSystemLoader('execution/job_templates')
+    template_loader = jinja2.FileSystemLoader([
+        str(TEMPLATE_DIR),
+        str(ENV_DIR),
+        str(BASE_DIR)
+    ])
     env = jinja2.Environment(
         loader=template_loader,
         undefined=jinja2.StrictUndefined
@@ -246,6 +283,7 @@ def generate_job_script(
 
 def submit_job(job_script: str, dependency: Optional[str] = None) -> Optional[str]:
     """Submit SLURM job, return job ID"""
+    print(shutil.which('sbatch'))
     cmd = ['sbatch']
 
     if dependency:
