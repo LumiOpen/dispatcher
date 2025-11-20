@@ -1,0 +1,5 @@
+fasttext
+huggingface_hub
+numpy<2.0
+jinja2
+openai
