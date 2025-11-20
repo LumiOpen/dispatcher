@@ -567,6 +567,122 @@ def handle_rerun_failed(config: dict, slurm_config: dict, out_dir: Path, executi
     )
 
 
+def handle_continue(config: dict, slurm_config: dict, out_dir: Path, execution_mode: str):
+    """Skip failed jobs and submit/run only jobs that have not yet been submitted"""
+    status = load_status(out_dir)
+
+    if execution_mode == 'interactive':
+        # In interactive mode, check which jobs have been completed/failed
+        old_jobs = status.get('interactive', {})
+        all_jobs = get_all_jobs_ordered(config)
+        
+        if not old_jobs:
+            print("\nNo previous jobs found, running entire pipeline")
+            submit_pipeline(config, slurm_config, out_dir, execution_mode)
+            return
+        
+        # Find jobs that haven't been submitted yet (not in status)
+        jobs_to_run = [job for job in all_jobs if job not in old_jobs]
+        
+        if not jobs_to_run:
+            print("\nAll jobs have already been submitted/run")
+            sys.exit(0)
+        
+        print(f"\nContinuing from unsubmitted jobs ({len(jobs_to_run)} remaining)...\n")
+        
+        # Run remaining jobs
+        for job_name in jobs_to_run:
+            job_config = config['jobs'].get(job_name, {})
+            
+            # Check for manual override
+            custom_script = Path('custom_jobs') / f"{job_name}.sh"
+            if custom_script.exists():
+                print(f"  Using custom script: {custom_script}")
+                job_script = custom_script
+            else:
+                # Generate from template
+                job_script = generate_job_script(
+                    job_name,
+                    job_config,
+                    config,
+                    slurm_config,
+                    execution_mode,
+                    out_dir
+                )
+            
+            print(f"\n  Running {job_name}...")
+            success = run_job_interactive(job_script, job_name, out_dir, status)
+            
+            if not success:
+                print(f"  ERROR: Job {job_name} failed")
+                print(f"  Check logs: logs/local_{job_name}.err")
+                sys.exit(1)
+            
+            print(f"  ✓ {job_name} completed successfully")
+        
+        return
+
+    # SLURM mode
+    old_jobs = status.get('sbatch', {})
+    if not old_jobs:
+        print("\nNo previous jobs found, running entire pipeline")
+        submit_pipeline(config, slurm_config, out_dir, execution_mode)
+        return
+
+    # Get all jobs in pipeline order
+    all_jobs = get_all_jobs_ordered(config)
+    
+    # Find jobs that haven't been submitted yet
+    jobs_to_submit = [job for job in all_jobs if job not in old_jobs]
+    
+    if not jobs_to_submit:
+        print("\nAll jobs have already been submitted")
+        
+        # Check status of existing jobs
+        job_ids = {name: info['job_id'] for name, info in old_jobs.items()}
+        all_done, failed, running = check_pipeline_status(job_ids)
+        
+        if failed:
+            print(f"{len(failed)} job(s) failed (skipped with --continue)")
+        if running:
+            print(f"{len(running)} job(s) still running")
+        if all_done:
+            print("All jobs completed (some may have failed)")
+        
+        sys.exit(0)
+    
+    # Find the last submitted job to use as dependency
+    prev_job_id = None
+    first_unsubmitted_idx = all_jobs.index(jobs_to_submit[0])
+    
+    if first_unsubmitted_idx > 0:
+        # Get the most recent submitted job before the first unsubmitted one
+        for i in range(first_unsubmitted_idx - 1, -1, -1):
+            if all_jobs[i] in old_jobs:
+                prev_job_id = old_jobs[all_jobs[i]]['job_id']
+                break
+    
+    # Cancel any running jobs that are in the jobs_to_submit list (shouldn't happen, but be safe)
+    job_ids = {name: info['job_id'] for name, info in old_jobs.items()}
+    _, _, running = check_pipeline_status(job_ids)
+    to_cancel = [old_jobs[name]['job_id'] for name in jobs_to_submit if name in running]
+    
+    if to_cancel:
+        cancel_jobs(to_cancel)
+        print(f"Cancelled {len(to_cancel)} conflicting job(s)")
+    
+    print(f"\nSubmitting {len(jobs_to_submit)} unsubmitted job(s)...\n")
+    
+    execute_jobs(
+        config,
+        slurm_config,
+        out_dir,
+        jobs_to_submit,
+        execution_mode,
+        prev_job_id=prev_job_id
+    )
+
+
 # =============================================================================
 # MAIN
 # =============================================================================
@@ -587,6 +703,8 @@ def main():
                        help='Cancel all jobs and rerun entire pipeline')
     parser.add_argument('--rerun-failed', action='store_true',
                        help='Re-run failed jobs and all downstream dependencies')
+    parser.add_argument('--continue', action='store_true', dest='continue_pipeline',
+                       help='Skip failed jobs and submit/run only jobs that have not yet been submitted')
     parser.add_argument('--status', action='store_true',
                        help='Show pipeline status and exit')
 
@@ -620,6 +738,8 @@ def main():
         handle_force(config, slurm_config, args.out_dir, execution_mode)
     elif args.rerun_failed:
         handle_rerun_failed(config, slurm_config, args.out_dir, execution_mode)
+    elif args.continue_pipeline:
+        handle_continue(config, slurm_config, args.out_dir, execution_mode)
     else:
         # Check for existing jobs
         status = load_status(args.out_dir)
