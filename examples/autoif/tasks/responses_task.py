@@ -29,9 +29,6 @@ class GenerateQueryResponsesTask(GeneratorTask):
         "top_p": 0.95,
         "max_tokens": 4096,
     }
-    
-    # Score threshold for accepting responses
-    SCORE_THRESHOLD = int(os.environ.get("SCORE_THRESHOLD", "4"))
 
     # --------------- generator ---------------
     def task_generator(self) -> Generator[Union[Request, List[Request]], Any, Dict[str, Any]]:
@@ -73,100 +70,106 @@ class GenerateQueryResponsesTask(GeneratorTask):
         
         # Process each turn
         for turn_idx in range(num_turns):
-            current_prompt = prompts[turn_idx]
-            # Step 0 (optional) - Create per-turn keyword handler and process keywords if needed
-            keyword_handler = KeywordHandler(
-                turn_idx=turn_idx,
-                instruction_categories=instruction_categories[turn_idx] if turn_idx < len(instruction_categories) else [],
-                instructions=instructions[turn_idx] if turn_idx < len(instructions) else [],
-                instruction_ids=instruction_ids[turn_idx] if turn_idx < len(instruction_ids) else [],
-                query=queries[0] if is_no_followup else queries[turn_idx] if turn_idx < len(queries) else "" # for no-followup case we want to potentially generate keywords for all turns that are related only to the first (and only) query
-            )
+            try:
+                current_prompt = prompts[turn_idx]
+                # Step 0 (optional) - Create per-turn keyword handler and process keywords if needed
+                keyword_handler = KeywordHandler(
+                    turn_idx=turn_idx,
+                    instruction_categories=instruction_categories[turn_idx] if turn_idx < len(instruction_categories) else [],
+                    instructions=instructions[turn_idx] if turn_idx < len(instructions) else [],
+                    instruction_ids=instruction_ids[turn_idx] if turn_idx < len(instruction_ids) else [],
+                    query=queries[0] if is_no_followup else queries[turn_idx] if turn_idx < len(queries) else "" # for no-followup case we want to potentially generate keywords for all turns that are related only to the first (and only) query
+                )
 
-            # Process keyword generation for this turn if needed
-            if keyword_handler.has_keyword_instructions():
-                yield from keyword_handler.process_keyword_generation(self.GEN_PARAMS)
-                current_prompt = keyword_handler.apply_keyword_modifications_to_prompt(current_prompt)
-            
-            # Store the final prompt (potentially modified with keywords)
-            final_prompts.append(current_prompt)
-            
-            # Add user message for this turn (potentially modified with new keywords)
-            queries_messages.append({
-                "role": "user",
-                "content": current_prompt
-            })
-            
-            # Step 1 – get response for the current turn
-            queries_resp: Response = yield Request({"messages": queries_messages, **self.GEN_PARAMS})
-            response_text = queries_resp.get_text()
-            all_responses.append(response_text)
-            
-            # Step 2 - verify response
-            verification_handler = VerificationHandler(
-                turn_idx=turn_idx,
-                instruction_ids=instruction_ids,
-                instructions=instructions,
-                eval_funcs=eval_funcs,
-                instruction_categories=instruction_categories,
-                keyword_handler=keyword_handler
-            )
-            verification_handler.verify_response(response_text)
+                # Process keyword generation for this turn if needed
+                if keyword_handler.has_keyword_instructions():
+                    yield from keyword_handler.process_keyword_generation(self.GEN_PARAMS)
+                    current_prompt = keyword_handler.apply_keyword_modifications_to_prompt(current_prompt)
+                
+                # Store the final prompt (potentially modified with keywords)
+                final_prompts.append(current_prompt)
+                
+                # Add user message for this turn (potentially modified with new keywords)
+                queries_messages.append({
+                    "role": "user",
+                    "content": current_prompt
+                })
+                
+                # Step 1 – get response for the current turn
+                queries_resp: Response = yield Request({"messages": queries_messages, **self.GEN_PARAMS})
+                response_text = queries_resp.get_text()
+                all_responses.append(response_text)
+                
+                # Step 2 - verify response
+                verification_handler = VerificationHandler(
+                    turn_idx=turn_idx,
+                    instruction_ids=instruction_ids,
+                    instructions=instructions,
+                    eval_funcs=eval_funcs,
+                    instruction_categories=instruction_categories,
+                    keyword_handler=keyword_handler
+                )
+                verification_handler.verify_response(response_text)
 
-            # Step 3 - score the response for this turn
-            scoring_handler = ScoringHandler(
-                turn_idx=turn_idx,
-                is_no_followup=is_no_followup,
-                instruction_ids=instruction_ids,
-                instructions=instructions,
-                queries=queries,
-                all_responses=all_responses
-            )
+                # Step 3 - score the response for this turn
+                scoring_handler = ScoringHandler(
+                    turn_idx=turn_idx,
+                    is_no_followup=is_no_followup,
+                    instruction_ids=instruction_ids,
+                    instructions=instructions,
+                    queries=queries,
+                    all_responses=all_responses
+                )
 
-            scoring_messages = scoring_handler.construct_scoring_messages(response_text)
-            scored_resp: Response = yield Request({"messages": scoring_messages, **self.GEN_PARAMS})
-            scoring_text = scored_resp.get_text()
+                scoring_messages = scoring_handler.construct_scoring_messages(response_text)
+                scored_resp: Response = yield Request({"messages": scoring_messages, **self.GEN_PARAMS})
+                scoring_text = scored_resp.get_text()
 
-            # Extract score and check threshold
-            score = scoring_handler.extract_and_check_score(scoring_text)
+                # Extract score and check threshold
+                score = scoring_handler.extract_and_check_score(scoring_text)
 
-            all_scores.append(score)
-            all_scoring_responses.append(scoring_text)
-            
-            # Add assistant response to conversation for next turn
-            queries_messages.append({
-                "role": "assistant",
-                "content": response_text
-            })
-            
-            # Build final messages format for this turn
-            query = queries[turn_idx] if turn_idx < len(queries) else ""
-            
-            # Get final instructions with keyword replacements applied (if any)
-            turn_final_instructions = keyword_handler.get_final_instructions()
-            final_instructions.append(turn_final_instructions)
-            
-            # Format instructions with proper conjunctions
-            instructions_text = format_instructions_with_conjunctions(turn_final_instructions)
-            
-            # Construct user_content consistently for both keyword and non-keyword cases
-            if query.strip():
-                if not re.search(r'[.!?]$', query):
-                    query += "."
-                user_content = f"{query} {instructions_text}"
-            else: # rephrasing message - only instructions without any "query"
-                user_content = instructions_text
-            
-            final_messages.extend([
-                {
-                    "role": "user", 
-                    "content": user_content
-                },
-                {
-                    "role": "assistant", 
+                all_scores.append(score)
+                all_scoring_responses.append(scoring_text)
+                
+                # Add assistant response to conversation for next turn
+                queries_messages.append({
+                    "role": "assistant",
                     "content": response_text
-                }
-            ])
+                })
+                
+                # Build final messages format for this turn
+                query = queries[turn_idx] if turn_idx < len(queries) else ""
+                
+                # Get final instructions with keyword replacements applied (if any)
+                turn_final_instructions = keyword_handler.get_final_instructions()
+                final_instructions.append(turn_final_instructions)
+                
+                # Format instructions with proper conjunctions
+                instructions_text = format_instructions_with_conjunctions(turn_final_instructions)
+                
+                # Construct user_content consistently for both keyword and non-keyword cases
+                if query.strip():
+                    if not re.search(r'[.!?]$', query):
+                        query += "."
+                    user_content = f"{query} {instructions_text}"
+                else: # rephrasing message - only instructions without any "query"
+                    user_content = instructions_text
+                
+                final_messages.extend([
+                    {
+                        "role": "user", 
+                        "content": user_content
+                    },
+                    {
+                        "role": "assistant", 
+                        "content": response_text
+                    }
+                ])
+            except TaskFailed as tf:
+                # we already have some data in final_messages (at least one turn) - return what we have
+                if turn_idx > 0:
+                    break
+                raise # otherwise re-raise
         
         # Dump eval_funcs as dicts with instruction_ids as keys
         eval_funcs_dict = {}

@@ -126,9 +126,8 @@ class KeywordHandler:
             original_instruction = self.data.original_instructions[instruction_idx]
             new_instruction = keyword_data['new_instruction']
 
-            # Use regex to find and replace the original instruction in the prompt
-            escaped_original = re.escape(original_instruction)
-            modified_prompt = re.sub(escaped_original, new_instruction, modified_prompt)
+            # Replace the original instruction with the new one in the prompt
+            modified_prompt = modified_prompt.replace(original_instruction, new_instruction)
 
         return modified_prompt
 
