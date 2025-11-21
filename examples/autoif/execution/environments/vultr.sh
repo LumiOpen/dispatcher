@@ -22,7 +22,7 @@ else
     exit 1
 fi
 
-pip install -r requirements.txt
+pip install -r requirements-vultr.txt
 export PYTHONPATH="${PYTHONPATH:+${PYTHONPATH}:}$(pwd)"
 
 export HF_HOME="{{ hf_home }}"
