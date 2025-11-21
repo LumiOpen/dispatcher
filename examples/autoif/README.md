@@ -71,6 +71,12 @@ augmentation_generation:
 
 ### Executing as sbatch queued jobs with dependencies (Large-scale generations)
 
+Simply run 
+
+```sh
+python3 pipeline.py --config data/experiment_name/config.lumi.yaml --slurm-config data/experiment_name/slurm.lumi.yaml --out-dir data/experiment_name
+```
+
 The pipeline generates job sbatch files using the templates at `execution/job_templates/` and environment setup at `execution/environments` into `data/experiment_name/generated_scripts` and submits them with dependencies (sequentially) so that input from one job is ready before starting the next job.
 
 To configure slurm for each job modify `data/experiment_name/slurm.lumi.yaml`
@@ -102,6 +108,10 @@ vllm_server:
 ```
 
 3. Run the pipeline
+
+```sh
+python3 pipeline.py --config data/experiment_name/config.lumi.yaml --slurm-config data/experiment_name/slurm.lumi.yaml --out-dir data/experiment_name
+```
 
 
 This tells the pipeline that you want to run all GPU jobs against this vllm backend and will run them with dispatcher in local file mode. The generated scripts are based on the template `execution/job_templates/dispatcher_local_job.sh.j2`
