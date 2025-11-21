@@ -1,5 +1,5 @@
 """
-Task description: Generates answers with a reasoning (thinking) model given the question and the ("pre-generated") reasoning traces as input.
+Task description: Generates answers with a reasoning (thinking) model given the question and empty reasoning traces as input.
 """
 import logging
 import os
@@ -9,11 +9,11 @@ from typing import Any, Dict, Generator, List, Union
 from dispatcher.taskmanager.backend.request import Request, Response
 from dispatcher.taskmanager.task.base import GeneratorTask, TaskFailed
 
-__all__ = ["AnsweringWithTracesTask"]
+__all__ = ["AnsweringWithEmptyTracesTask"]
 
 MODEL = os.environ.get("MODEL")
 
-class AnsweringWithTracesTask(GeneratorTask):
+class AnsweringWithEmptyTracesTask(GeneratorTask):
     """Reasoning trace + answer generation."""
 
     ANSWER_GEN_PARAMS: Dict[str, Any] = {
@@ -38,19 +38,8 @@ class AnsweringWithTracesTask(GeneratorTask):
         # self.data is prepopulated with the data from the jsonl row being processed
         return_dict = self.data.copy()
         self.logger.info(f"Processing sample id: {self.data.get('id')}")
-        # preprocess traces - extract from <think></think> tags
-        traces = []
-        for trace in self.data["generated_traces"]:
-            if '<think>' in trace and '</think>' in trace:
-                trace = trace.split('<think>')[1].split('</think>')[0]
-                traces.append(trace)
-            else:
-                self.logger.info("Missing <think> tags in generated answer.")
-        if len(traces) == 0:
-            raise TaskFailed(
-                message=f"No traces found for sample {self.data.get('id')}",
-                error_type="no_traces_found"
-            )
+        # construct empty traces
+        traces = [""] * 4
 
         answers = []
         tokenizer = self.get_tokenizer()
@@ -84,5 +73,5 @@ class AnsweringWithTracesTask(GeneratorTask):
             answer_resp: Response = yield Request(req_dict)
             answers.append(answer_resp.get_text().strip() if answer_resp.get_text() else "")
 
-        return_dict["generated_solution_given_traces"] = answers
+        return_dict["generated_solution_given_empty_traces"] = answers
         return return_dict
