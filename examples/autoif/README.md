@@ -1,28 +1,42 @@
 # AutoIF pipeline
 
-## Quick start
+Generating synthetic instruction following data on SLURM environment, inspired by [AutoIF](https://github.com/QwenLM/AutoIF). Currently includes experiments for English and Finnish.
 
-Copy `config.default.yaml` into an experiment directory under `data/` and edit it to set your parameters
+Pipeline overview:
+1. Generate augmented constraints given seed constraints (latest seed data is IFEval + Tulu3-IFEval-OOD categorised into 4 categories `data/categorised_instructions.json`)
+2. Generate python verifiers that verify whether a response adheres to the constraint (IFEval-like)
+3. Construct prompts (can be multiturn) using the constraints and a user query (latest user queries taken from [lmsys-chat](https://huggingface.co/datasets/lmsys/lmsys-chat-1m))
+4. Generate answers to the prompts, verify the constraints using the python verifiers and score the relevancy to the user's query with LLM-as-a-judge
+5. Build final SFT dataset with the highest quality data
+
+## Quick start on LUMI
+
+1. Copy `config.lumi.yaml` and `slurm.lumi.yaml` into an experiment directory under `data/experiment_name` and edit it to set your parameters
+2. Run the pipeline
 
 ```sh
-mkdir -p data/your_experiment_name
-cp examples/autoif/config.default.yaml data/your_experiment_name/config.yaml
+python3 pipeline.py --config data/experiment_name/config.lumi.yaml --slurm-config data/experiment_name/slurm.lumi.yaml --out-dir data/experiment_name
 ```
 
-Run the pipeline
+## Quick start of VULTR - DeepSeek-V3
+
+1. Copy `config.vultr.yaml` into an experiment directory under `data/experiment_name` and edit it to set your parameters
+2. Submit a job that starts a vllm docker container and spawns a vllm backend with DeepSeek-V3. Once server is started the pipeline is run in an interactive mode
 
 ```sh
-sh pipeline.sh --out-dir data/your_experiment_name
+sbatch launch_deepseekv3_pipeline.sh
 ```
 
-This is a wrapper for `pipeline.py` which submits the jobs in order and takes care of re-running failed jobs if necessary. Jobs are submitted with dependencies, so that next job starts only after the previous one is completed.
+## How this pipeline works
 
 The order of the jobs is configured in config.yaml under `pipeline`. Set true/false to enable/disable each job.:
 
 ```yaml
 pipeline:
+  - augmentation_preprocessing: true
   - augmentation_generation: true
   - augmentation_postprocessing: true
+  - verifiers_preprocessing: true
   - verifiers_generation: true
   - cross_validation_job: true
   - concatenation_job: true
@@ -30,24 +44,56 @@ pipeline:
   - final_dataset_job: true
 ```
 
-**Using pipeline flags**
-```sh
-sh pipeline.sh --out-dir data/your_experiment_name --force # rerun all steps from the beginning.
-sh pipeline.sh --out-dir data/your_experiment_name --rerun-failed # restart failed jobs and all subsequent jobs (cancel pending jobs if exists).
-sh pipeline.sh --out-dir data/your_experiment_name --continue # continue from the last failed job without rerunning it. Useful if partial result is enough
+A CPU job specifies the script to run and its arguments
+
+```yaml
+augmentation_preprocessing:
+  type: cpu_script
+  script: src/create_instructions_input.py
+  args:
+    seed-file: "/scratch/project_462000353/adamhrin/dispatcher/examples/autoif/data/categorised_instructions_fi.json"
+    output-file: "aug_input.jsonl"
+    num-instructions-per-category: 50
+    language: "${language}"
 ```
 
-**Jobs** are configured in `jobs/`. These can be GPU jobs or CPU jobs (pre/postprocessing of data). The jobs read configuration from `config.yaml`.
+A GPU inference job in its simplest form specifies the dispatcher task implementation, input and output jsonl files
 
-**Tasks** jobs that use LLM generations are implemented as instances of dispatcher.taskmanager.task.base.GeneratorTask. The implementation of each task is in `tasks/`
+```yaml
+augmentation_generation:
+  type: dispatcher_task
+  task: tasks.augmentation_task.AugmentInstructionsTask
+  input_file: "aug_input.jsonl"
+  output_file: "aug_output.jsonl"
+```
 
-## Running with vllm server in local file mode
+**Tasks** in `tasks/` are dispatcher GeneratorTask implementations. This is the main logic of the LLM generations.
 
-To speed up experimentation, you can also run jobs with dispatcher in local file mode. This is especially useful if vllm server is running on the background and you want to connect to it from multiple jobs.
+### Executing as sbatch queued jobs with dependencies (Large-scale generations)
 
-1. To launch the openai compatible vllm server directly, follow the [steps 0 and 1](../README.md#development) in Development section in the examples README.
+The pipeline generates job sbatch files using the templates at `execution/job_templates/` and environment setup at `execution/environments` into `data/experiment_name/generated_scripts` and submits them with dependencies (sequentially) so that input from one job is ready before starting the next job.
 
-2. Configure the endpoint in `config.yaml`:
+To configure slurm for each job modify `data/experiment_name/slurm.lumi.yaml`
+
+### Executing on an interactive node (Experimentation, debugging)
+
+1. Allocate a GPU node and run a vllm backend with your model of choice, for example with
+
+```bash
+# Activate your Python environment if needed, e.g.
+module use /appl/local/csc/modulefiles; module load pytorch/2.5
+
+
+# Launch the vLLM server and leave it running
+MODEL=meta-llama/Llama-3.1-8B-Instruct
+python -m vllm.entrypoints.openai.api_server \
+    --model meta-llama/Llama-3.1-8B-Instruct \
+    --host 0.0.0.0 \
+    --port 8000 \
+    --tensor-parallel-size 1
+```
+
+2. Uncomment this section in your `config.yaml`
 
 ```yaml
 vllm_server:
@@ -55,10 +101,15 @@ vllm_server:
   port: 8000
 ```
 
-3. Implement local versions of the jobs that use LLM generations implemented as tasks. Name them as `<original_task_name>_local.sh`. For example, you can create a new job file `jobs/autoif/responses_generation_local.py` from `jobs/autoif/responses_generation.py`. This job starts the dispatcher server and executes the task in local file mode.
+3. Run the pipeline
 
-4. Run the pipeline as usual:
 
+This tells the pipeline that you want to run all GPU jobs against this vllm backend and will run them with dispatcher in local file mode. The generated scripts are based on the template `execution/job_templates/dispatcher_local_job.sh.j2`
+
+
+**Using pipeline flags**
 ```sh
-sh pipeline.sh --out-dir data/your_experiment_name
+python3 pipeline.py <args> --force # rerun all steps from the beginning.
+python3 pipeline.py <args> --rerun-failed # restart failed jobs and all subsequent jobs (cancel pending jobs if exists).
+python3 pipeline.py <args> --continue # continue from the last failed job without rerunning it. Useful if partial result is enough
 ```
