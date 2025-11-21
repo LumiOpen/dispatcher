@@ -119,6 +119,7 @@ This tells the pipeline that you want to run all GPU jobs against this vllm back
 
 **Using pipeline flags**
 ```sh
+python3 pipeline.py <args> [ --status ] # optional --status flag, check the status of the pipeline if not run for the first time
 python3 pipeline.py <args> --force # rerun all steps from the beginning.
 python3 pipeline.py <args> --rerun-failed # restart failed jobs and all subsequent jobs (cancel pending jobs if exists).
 python3 pipeline.py <args> --continue # continue from the last failed job without rerunning it. Useful if partial result is enough
