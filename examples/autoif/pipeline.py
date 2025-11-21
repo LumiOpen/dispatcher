@@ -9,10 +9,9 @@ Generates job scripts from templates and tracks execution status.
 
 import argparse
 import json
-import os
+import re
 import subprocess
 import sys
-import shutil
 import yaml
 import jinja2
 from pathlib import Path
@@ -22,6 +21,13 @@ from datetime import datetime
 BASE_DIR = Path(__file__).resolve().parent
 TEMPLATE_DIR = BASE_DIR / 'execution' / 'job_templates'
 ENV_DIR = BASE_DIR / 'execution' / 'environments'
+
+# SLURM job status constants
+SLURM_FAILED_STATES = ['FAILED', 'CANCELLED', 'TIMEOUT', 'NODE_FAIL', 'OUT_OF_MEMORY']
+SLURM_RUNNING_STATES = ['PENDING', 'RUNNING']
+
+# Reserved config keys that shouldn't be merged into job configs
+RESERVED_CONFIG_KEYS = {'experiment', 'pipeline', 'jobs', 'vllm_server', 'environment_setup', 'exports'}
 
 # =============================================================================
 # CONFIG LOADING
@@ -98,14 +104,20 @@ def check_pipeline_status(job_ids: Dict[str, str]) -> Tuple[bool, List[str], Lis
     for job, job_id in job_ids.items():
         status = get_job_status(job_id)
 
-        if status in ['FAILED', 'CANCELLED', 'TIMEOUT', 'NODE_FAIL', 'OUT_OF_MEMORY'] or 'CANCELLED' in status:
+        if status in SLURM_FAILED_STATES or 'CANCELLED' in status:
             failed.append(job)
             all_done = False
-        elif status in ['PENDING', 'RUNNING']:
+        elif status in SLURM_RUNNING_STATES:
             running.append(job)
             all_done = False
 
     return all_done, failed, running
+
+
+def get_job_ids_from_status(status: dict, mode_key: str) -> Dict[str, str]:
+    """Extract job_id mapping from status dict"""
+    old_jobs = status.get(mode_key, {})
+    return {name: info['job_id'] for name, info in old_jobs.items()}
 
 
 def print_status(status: dict, execution_mode: str):
@@ -130,6 +142,24 @@ def print_status(status: dict, execution_mode: str):
 # JOB SCRIPT GENERATION
 # =============================================================================
 
+_jinja_env = None
+
+def get_jinja_environment() -> jinja2.Environment:
+    """Get or create cached Jinja2 environment"""
+    global _jinja_env
+    if _jinja_env is None:
+        template_loader = jinja2.FileSystemLoader([
+            str(TEMPLATE_DIR),
+            str(ENV_DIR),
+            str(BASE_DIR)
+        ])
+        _jinja_env = jinja2.Environment(
+            loader=template_loader,
+            undefined=jinja2.StrictUndefined
+        )
+    return _jinja_env
+
+
 def resolve_template_variables(value, config: dict, out_dir: Path):
     """
     Resolve template variables and paths.
@@ -142,16 +172,12 @@ def resolve_template_variables(value, config: dict, out_dir: Path):
         return value
 
     # Resolve variable references like "${var_name}"
-    import re
     var_pattern = r'\$\{(\w+)\}'
 
     def replace_var(match):
         var_name = match.group(1)
-        # Look up variable in global config (excluding reserved keys)
-        reserved_keys = {'experiment', 'pipeline', 'jobs', 'vllm_server', 'environment_setup'}
-        if var_name in config and var_name not in reserved_keys:
+        if var_name in config and var_name not in RESERVED_CONFIG_KEYS:
             return str(config[var_name])
-        # If not found, return original
         return match.group(0)
 
     value = re.sub(var_pattern, replace_var, value)
@@ -206,17 +232,13 @@ def merge_configs(global_config: dict, job_config: dict, out_dir: Path) -> dict:
     """
     merged = {}
 
-    # Start with global config (excluding reserved keys)
-    reserved_keys = {'experiment', 'pipeline', 'jobs', 'vllm_server', 'environment_setup', 'exports'}
     for key, value in global_config.items():
-        if key not in reserved_keys:
+        if key not in RESERVED_CONFIG_KEYS:
             merged[key] = resolve_nested_variables(value, global_config, out_dir)
 
-    # Override with job config (recursively resolve nested structures)
     for key, value in job_config.items():
-        if key == 'exports':
-            continue
-        merged[key] = resolve_nested_variables(value, global_config, out_dir)
+        if key != 'exports':
+            merged[key] = resolve_nested_variables(value, global_config, out_dir)
 
     exports = _merge_exports(global_config, job_config, out_dir)
     if exports:
@@ -272,17 +294,8 @@ def generate_job_script(
     }
 
     # Render template
-    template_loader = jinja2.FileSystemLoader([
-        str(TEMPLATE_DIR),
-        str(ENV_DIR),
-        str(BASE_DIR)
-    ])
-    env = jinja2.Environment(
-        loader=template_loader,
-        undefined=jinja2.StrictUndefined
-    )
-
     try:
+        env = get_jinja_environment()
         template = env.get_template(template_name)
         script_content = template.render(**context)
     except jinja2.exceptions.TemplateError as e:
@@ -302,6 +315,48 @@ def generate_job_script(
 # =============================================================================
 # JOB EXECUTION
 # =============================================================================
+
+def get_job_script(
+    job_name: str,
+    job_config: dict,
+    config: dict,
+    slurm_config: dict,
+    execution_mode: str,
+    out_dir: Path
+) -> Path:
+    """
+    Get job script path, either from custom script or generated from template.
+    
+    Returns:
+        Path to the job script
+    """
+    # Check for custom script in job config
+    if 'custom_script' in job_config:
+        custom_script = Path(job_config['custom_script'])
+        if not custom_script.exists():
+            print(f"  ERROR: Custom script not found: {custom_script}")
+            sys.exit(1)
+        
+        print(f"  Using custom script: {custom_script}")
+        
+        # Warn if there are other parameters that will be ignored
+        ignored_keys = set(job_config.keys()) - {'custom_script', 'type'}
+        if ignored_keys:
+            print(f"  WARNING: Job '{job_name}' has custom_script configured. "
+                  f"The following parameters will be ignored: {', '.join(sorted(ignored_keys))}")
+        
+        return custom_script
+    else:
+        # Generate from template
+        return generate_job_script(
+            job_name,
+            job_config,
+            config,
+            slurm_config,
+            execution_mode,
+            out_dir
+        )
+
 
 def submit_job(job_script: str, dependency: Optional[str] = None) -> Optional[str]:
     """Submit SLURM job, return job ID"""
@@ -370,6 +425,27 @@ def run_job_interactive(
     return success
 
 
+def execute_interactive_job(
+    job_script: Path,
+    job_name: str,
+    out_dir: Path,
+    status: dict
+):
+    """
+    Execute a single job in interactive mode with error handling.
+    Exits on failure.
+    """
+    print(f"\n  Running {job_name}...")
+    success = run_job_interactive(job_script, job_name, out_dir, status)
+
+    if not success:
+        print(f"  ERROR: Job {job_name} failed")
+        print(f"  Check logs: logs/local_{job_name}.err")
+        sys.exit(1)
+
+    print(f"  ✓ {job_name} completed successfully")
+
+
 def get_pipeline_sequence(config: dict) -> List[Tuple[str, bool]]:
     """
     Parse pipeline config into list of (job_name, enabled) tuples.
@@ -404,26 +480,18 @@ def execute_jobs(
     status = load_status(out_dir)
     status['execution_mode'] = execution_mode
 
-    mode_key = execution_mode
-
     for job_name in job_names:
         job_config = config['jobs'].get(job_name, {})
 
-        # Check for manual override
-        custom_script = Path('custom_jobs') / f"{job_name}.sh"
-        if custom_script.exists():
-            print(f"  Using custom script: {custom_script}")
-            job_script = custom_script
-        else:
-            # Generate from template
-            job_script = generate_job_script(
-                job_name,
-                job_config,
-                config,
-                slurm_config,
-                execution_mode,
-                out_dir
-            )
+        # Get job script (custom or generated)
+        job_script = get_job_script(
+            job_name,
+            job_config,
+            config,
+            slurm_config,
+            execution_mode,
+            out_dir
+        )
 
         # Execute
         if execution_mode == 'sbatch':
@@ -447,15 +515,7 @@ def execute_jobs(
                 sys.exit(1)
 
         else:  # interactive
-            print(f"\n  Running {job_name}...")
-            success = run_job_interactive(job_script, job_name, out_dir, status)
-
-            if not success:
-                print(f"  ERROR: Job {job_name} failed")
-                print(f"  Check logs: logs/local_{job_name}.err")
-                sys.exit(1)
-
-            print(f"  ✓ {job_name} completed successfully")
+            execute_interactive_job(job_script, job_name, out_dir, status)
 
     return status
 
@@ -489,6 +549,13 @@ def get_all_jobs_ordered(config: dict) -> List[str]:
     """Get all enabled jobs in pipeline order"""
     pipeline_sequence = get_pipeline_sequence(config)
     return [job_name for job_name, enabled in pipeline_sequence if enabled]
+
+
+def get_unsubmitted_jobs(config: dict, status: dict, mode_key: str) -> List[str]:
+    """Get list of jobs that haven't been submitted yet"""
+    all_jobs = get_all_jobs_ordered(config)
+    old_jobs = status.get(mode_key, {})
+    return [job for job in all_jobs if job not in old_jobs]
 
 
 def handle_force(config: dict, slurm_config: dict, out_dir: Path, execution_mode: str):
@@ -526,7 +593,7 @@ def handle_rerun_failed(config: dict, slurm_config: dict, out_dir: Path, executi
         print("No previous jobs found")
         sys.exit(1)
 
-    job_ids = {name: info['job_id'] for name, info in old_jobs.items()}
+    job_ids = get_job_ids_from_status(status, 'sbatch')
     all_done, failed, running = check_pipeline_status(job_ids)
 
     if not failed:
@@ -570,116 +637,72 @@ def handle_rerun_failed(config: dict, slurm_config: dict, out_dir: Path, executi
 def handle_continue(config: dict, slurm_config: dict, out_dir: Path, execution_mode: str):
     """Skip failed jobs and submit/run only jobs that have not yet been submitted"""
     status = load_status(out_dir)
+    mode_key = execution_mode
 
-    if execution_mode == 'interactive':
-        # In interactive mode, check which jobs have been completed/failed
-        old_jobs = status.get('interactive', {})
-        all_jobs = get_all_jobs_ordered(config)
-        
-        if not old_jobs:
-            print("\nNo previous jobs found, running entire pipeline")
-            submit_pipeline(config, slurm_config, out_dir, execution_mode)
-            return
-        
-        # Find jobs that haven't been submitted yet (not in status)
-        jobs_to_run = [job for job in all_jobs if job not in old_jobs]
-        
-        if not jobs_to_run:
-            print("\nAll jobs have already been submitted/run")
-            sys.exit(0)
-        
-        print(f"\nContinuing from unsubmitted jobs ({len(jobs_to_run)} remaining)...\n")
-        
-        # Run remaining jobs
-        for job_name in jobs_to_run:
-            job_config = config['jobs'].get(job_name, {})
-            
-            # Check for manual override
-            custom_script = Path('custom_jobs') / f"{job_name}.sh"
-            if custom_script.exists():
-                print(f"  Using custom script: {custom_script}")
-                job_script = custom_script
-            else:
-                # Generate from template
-                job_script = generate_job_script(
-                    job_name,
-                    job_config,
-                    config,
-                    slurm_config,
-                    execution_mode,
-                    out_dir
-                )
-            
-            print(f"\n  Running {job_name}...")
-            success = run_job_interactive(job_script, job_name, out_dir, status)
-            
-            if not success:
-                print(f"  ERROR: Job {job_name} failed")
-                print(f"  Check logs: logs/local_{job_name}.err")
-                sys.exit(1)
-            
-            print(f"  ✓ {job_name} completed successfully")
-        
-        return
-
-    # SLURM mode
-    old_jobs = status.get('sbatch', {})
-    if not old_jobs:
+    # Check if there are any previous jobs
+    if not status.get(mode_key):
         print("\nNo previous jobs found, running entire pipeline")
         submit_pipeline(config, slurm_config, out_dir, execution_mode)
         return
 
-    # Get all jobs in pipeline order
-    all_jobs = get_all_jobs_ordered(config)
-    
     # Find jobs that haven't been submitted yet
-    jobs_to_submit = [job for job in all_jobs if job not in old_jobs]
+    jobs_to_run = get_unsubmitted_jobs(config, status, mode_key)
     
-    if not jobs_to_submit:
-        print("\nAll jobs have already been submitted")
+    if not jobs_to_run:
+        print("\nAll jobs have already been submitted/run")
         
-        # Check status of existing jobs
-        job_ids = {name: info['job_id'] for name, info in old_jobs.items()}
-        all_done, failed, running = check_pipeline_status(job_ids)
-        
-        if failed:
-            print(f"{len(failed)} job(s) failed (skipped with --continue)")
-        if running:
-            print(f"{len(running)} job(s) still running")
-        if all_done:
-            print("All jobs completed (some may have failed)")
+        # For sbatch mode, show status of existing jobs
+        if execution_mode == 'sbatch':
+            job_ids = get_job_ids_from_status(status, 'sbatch')
+            all_done, failed, running = check_pipeline_status(job_ids)
+            
+            if failed:
+                print(f"{len(failed)} job(s) failed (skipped with --continue)")
+            if running:
+                print(f"{len(running)} job(s) still running")
+            if all_done:
+                print("All jobs completed (some may have failed)")
         
         sys.exit(0)
+
+    # Interactive mode: run jobs sequentially
+    if execution_mode == 'interactive':
+        print(f"\nContinuing from unsubmitted jobs ({len(jobs_to_run)} remaining)...\n")
+        
+        for job_name in jobs_to_run:
+            job_config = config['jobs'].get(job_name, {})
+            job_script = get_job_script(
+                job_name, job_config, config, slurm_config, execution_mode, out_dir
+            )
+            execute_interactive_job(job_script, job_name, out_dir, status)
+        return
+
+    # SLURM mode: submit jobs with dependencies
+    all_jobs = get_all_jobs_ordered(config)
+    old_jobs = status.get('sbatch', {})
+    first_unsubmitted_idx = all_jobs.index(jobs_to_run[0])
     
-    # Find the last submitted job to use as dependency
+    # Find dependency from previous submitted job
     prev_job_id = None
-    first_unsubmitted_idx = all_jobs.index(jobs_to_submit[0])
-    
     if first_unsubmitted_idx > 0:
-        # Get the most recent submitted job before the first unsubmitted one
         for i in range(first_unsubmitted_idx - 1, -1, -1):
             if all_jobs[i] in old_jobs:
                 prev_job_id = old_jobs[all_jobs[i]]['job_id']
                 break
     
-    # Cancel any running jobs that are in the jobs_to_submit list (shouldn't happen, but be safe)
-    job_ids = {name: info['job_id'] for name, info in old_jobs.items()}
+    # Cancel any conflicting running jobs (shouldn't happen, but be safe)
+    job_ids = get_job_ids_from_status(status, 'sbatch')
     _, _, running = check_pipeline_status(job_ids)
-    to_cancel = [old_jobs[name]['job_id'] for name in jobs_to_submit if name in running]
+    to_cancel = [old_jobs[name]['job_id'] for name in jobs_to_run if name in running]
     
     if to_cancel:
         cancel_jobs(to_cancel)
         print(f"Cancelled {len(to_cancel)} conflicting job(s)")
     
-    print(f"\nSubmitting {len(jobs_to_submit)} unsubmitted job(s)...\n")
+    print(f"\nSubmitting {len(jobs_to_run)} unsubmitted job(s)...\n")
     
     execute_jobs(
-        config,
-        slurm_config,
-        out_dir,
-        jobs_to_submit,
-        execution_mode,
-        prev_job_id=prev_job_id
+        config, slurm_config, out_dir, jobs_to_run, execution_mode, prev_job_id=prev_job_id
     )
 
 
@@ -746,7 +769,7 @@ def main():
 
         if execution_mode == 'sbatch' and status.get('sbatch'):
             print_status(status, execution_mode)
-            job_ids = {name: info['job_id'] for name, info in status['sbatch'].items()}
+            job_ids = get_job_ids_from_status(status, 'sbatch')
             all_done, failed, running = check_pipeline_status(job_ids)
 
             if failed:

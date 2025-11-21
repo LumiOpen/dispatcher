@@ -124,3 +124,22 @@ python3 pipeline.py <args> --force # rerun all steps from the beginning.
 python3 pipeline.py <args> --rerun-failed # restart failed jobs and all subsequent jobs (cancel pending jobs if exists).
 python3 pipeline.py <args> --continue # continue from the last failed job without rerunning it. Useful if partial result is enough
 ```
+
+**Using custom template**
+To add a custom job template, create a new file under `execution/job_templates/` and specify its path in the slurm config for the job, e.g.
+
+```yaml
+augmentation_generation:
+  template: "execution/job_templates/my_custom_template.sh.j2"
+```
+
+**Using custom script**
+
+If you don't want to use the template rendering system, you can provide a fully self-contained custom script:
+
+```yaml
+augmentation_generation:
+  custom_script: "custom_jobs/my_custom_script.sh"
+```
+
+The custom script should be a complete, executable bash script ready to run. It will be executed directly without any parameter substitution or template rendering.
