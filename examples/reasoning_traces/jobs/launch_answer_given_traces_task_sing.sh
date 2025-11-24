@@ -2,7 +2,7 @@
 #SBATCH --job-name=ans_traces
 #SBATCH --nodes=1
 #SBATCH --partition=dev-g
-#SBATCH --time=02:00:00
+#SBATCH --time=1:00:00
 #SBATCH --ntasks-per-node=1
 #SBATCH --mem=480G
 #SBATCH --cpus-per-task=7
@@ -23,12 +23,12 @@ set -euxo pipefail
 export LANGUAGE="${1:-fi}"
 export MODEL="${2:-Qwen/Qwen3-30B-A3B-Thinking-2507}"
 MODEL_NAME="$(basename "$MODEL")"
-INPUT_FILE="/scratch/project_462000353/adamhrin/dispatcher/examples/reasoning_traces/data/default-train-sample-100_translations_DeepSeek-V3_fi.jsonl"
+INPUT_FILE="/scratch/project_462000353/adamhrin/dispatcher/examples/reasoning_traces/data/default-train-sample-100_translations_DeepSeek-V3_fi_traces_DeepSeek-V3_fi.jsonl"
 
 DATADIR="$(dirname "$INPUT_FILE")"
 FILE_NAME="$(basename "$INPUT_FILE" .jsonl)"
-OUTPUT_FILE="${DATADIR}/${FILE_NAME}_answers_given_empty_traces_${MODEL_NAME}_${LANGUAGE}.jsonl"
-TASK="tasks.answering_with_empty_traces_task.AnsweringWithEmptyTracesTask"
+OUTPUT_FILE="${DATADIR}/${FILE_NAME}_answers_${MODEL_NAME}_${LANGUAGE}.jsonl"
+TASK="tasks.answering_given_traces_task.AnsweringGivenTracesTask"
 
 WORKERS=16
 BATCH_SIZE=1
