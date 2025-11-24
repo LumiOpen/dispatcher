@@ -22,10 +22,10 @@ sbatch jobs/launch_traces_task_deepseekv3.sh
 
 3. Take a reasoning model (fixed) to get the answer given the translated prompt and generated reasoning trace. This can be one of deepseekv3, r1 or qwen3 (MoE) - for now we use Qwen3-30B-A3B-Thinking-2507 as the reasoning model.
 
-- Implemented in `tasks/answering_with_traces_task.py`
+- Implemented in `tasks/answering_given_traces_task.py`
 
 ```sh
-sbatch jobs/launch_answer_with_traces_task_sing.sh
+sbatch jobs/launch_answer_given_traces_task_sing.sh
 ```
 
 4. The accuracy of the problem solving across the models in (2) is a proxy for how well the models in (2) translated the traces.
@@ -53,3 +53,11 @@ Accuracy: 69.50% (278/400)
 Pass@4: 81.00% (81/100)
 ```
 
+## Baseline 1: Generate solutions without traces
+
+**Approach 1: prefill the input with empty <think></think> tags**
+
+```sh
+sbatch jobs/launch_answer_given_empty_traces_task_sing.sh
+# runs tasks/answering_given_empty_traces_task.py
+```

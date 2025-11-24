@@ -9,11 +9,11 @@ from typing import Any, Dict, Generator, List, Union
 from dispatcher.taskmanager.backend.request import Request, Response
 from dispatcher.taskmanager.task.base import GeneratorTask, TaskFailed
 
-__all__ = ["AnsweringWithTracesTask"]
+__all__ = ["AnsweringGivenTracesTask"]
 
 MODEL = os.environ.get("MODEL")
 
-class AnsweringWithTracesTask(GeneratorTask):
+class AnsweringGivenTracesTask(GeneratorTask):
     """Reasoning trace + answer generation."""
 
     ANSWER_GEN_PARAMS: Dict[str, Any] = {

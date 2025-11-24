@@ -9,17 +9,17 @@ from typing import Any, Dict, Generator, List, Union
 from dispatcher.taskmanager.backend.request import Request, Response
 from dispatcher.taskmanager.task.base import GeneratorTask, TaskFailed
 
-__all__ = ["AnsweringWithEmptyTracesTask"]
+__all__ = ["AnsweringGivenEmptyTracesTask"]
 
 MODEL = os.environ.get("MODEL")
 
-class AnsweringWithEmptyTracesTask(GeneratorTask):
+class AnsweringGivenEmptyTracesTask(GeneratorTask):
     """Reasoning trace + answer generation."""
 
     ANSWER_GEN_PARAMS: Dict[str, Any] = {
         "temperature": 0.6,
         "top_p": 0.95,
-        "max_tokens": 2048,  # Leave 14K tokens for the prompt+traces
+        "max_tokens": 14336,  # Increase to 14k since now the model seems to reason with the answer. Leave 2K tokens for the prompt
     }
 
     logger = logging.getLogger(__name__)
