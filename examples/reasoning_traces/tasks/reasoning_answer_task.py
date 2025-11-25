@@ -29,7 +29,7 @@ class ReasoningAnswerTask(GeneratorTask):
         input_messages = [
             {
                 "role": "user",
-                "content": self.data["generated_translation"]
+                "content": self.data["text"]
             }
         ]
 
