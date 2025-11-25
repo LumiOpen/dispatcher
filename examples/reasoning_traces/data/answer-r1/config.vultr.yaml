@@ -1,0 +1,56 @@
+# AutoIF Pipeline Configuration
+#
+# This is the main task configuration for the AutoIF pipeline.
+# SLURM-specific settings are in slurm.yaml
+
+# ==============================================================================
+# Experiment Metadata
+# ==============================================================================
+experiment:
+  name: "answer-r1"
+  description: "Generate reasoning answers with DeepSeek-R1"
+
+# ==============================================================================
+# Optional: vLLM Server Configuration
+# ==============================================================================
+# If present: pipeline runs in interactive mode, connects to this server
+# If absent: pipeline submits jobs to SLURM
+# Uncomment to use interactive mode:
+vllm_server:
+  host: "127.0.0.1"
+  port: 8000
+
+# ==============================================================================
+# Environment Setup
+# ==============================================================================
+# Path to environment setup script (user-editable)
+environment_setup: "execution/environments/vultr.sh"
+
+# ==============================================================================
+# Pipeline Sequence
+# ==============================================================================
+# Set to false to disable a job, or remove it from the list to skip entirely
+pipeline:
+  - reasoning_answer_generation: true
+
+# ==============================================================================
+# Global Configuration (can be overridden at job level)
+# ==============================================================================
+# Model parameters
+model: "/vfs_mount/models/DeepSeek-R1"
+max_model_len: 65536
+tensor_parallel: 8
+
+# ==============================================================================
+# Jobs Configuration
+# ==============================================================================
+jobs:
+  # --------------------------------------------------------------------------
+  # Augmentation: Generate augmented instructions from seed instructions
+  # --------------------------------------------------------------------------
+  reasoning_answer_generation:
+    type: dispatcher_task
+    task: tasks.reasoning_answer_task.ReasoningAnswerTask
+    # we will only take the original english "text" from this translated file
+    input_file: "/nvme_local/scratch/adamhrin/dispatcher2/examples/reasoning_traces/data/default-train-sample-100_translations_DeepSeek-V3_fi.jsonl"
+    output_file: "/nvme_local/scratch/adamhrin/dispatcher2/examples/reasoning_traces/data/default-train-sample-100_reasoning_answers_DeepSeek-R1_en.jsonl"

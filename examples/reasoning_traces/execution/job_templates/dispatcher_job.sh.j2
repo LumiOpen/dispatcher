@@ -1,0 +1,112 @@
+#!/bin/bash
+#SBATCH --job-name={{ job_name }}
+{% for key, value in slurm.items() -%}
+#SBATCH --{{ key.replace('_', '-') }}={{ value }}
+{% endfor %}
+
+set -euo pipefail
+
+echo "======================================="
+echo "{{ job_name }}"
+echo "======================================="
+echo "Started: $(date)"
+echo ""
+
+# ============================================================
+# Environment Setup
+# ============================================================
+{% include environment_setup %}
+{% if exports is defined %}
+# ============================================================
+# Set Environment Variables
+# ============================================================
+{% for key, value in exports.items() %}
+export {{ key }}="{{ value }}"
+{% endfor %}
+{% endif %}
+
+# ============================================================
+# Job Configuration
+# ============================================================
+TASK="{{ task }}"
+INPUT_FILE="{{ input_file }}"
+OUTPUT_FILE="{{ output_file }}"
+MODEL="{{ model }}"
+WORKERS="{{ workers }}"
+BATCH_SIZE="{{ batch_size }}"
+WORK_TIMEOUT="{{ work_timeout|default(3600) }}"
+GPUS_PER_TASK="{{ tensor_parallel }}"
+MAX_MODEL_LEN="{{ max_model_len }}"
+{% if startup_timeout is defined %}STARTUP_TIMEOUT="{{ startup_timeout }}"{% endif %}
+{% if request_timeout is defined %}REQUEST_TIMEOUT="{{ request_timeout }}"{% endif %}
+
+echo "Running {{ job_name }}..."
+echo "  Model: $MODEL"
+echo "  Input: $INPUT_FILE"
+echo "  Output: $OUTPUT_FILE"
+echo "  Workers: $WORKERS"
+echo ""
+
+# ============================================================
+# Dispatcher Server
+# ============================================================
+export DISPATCHER_SERVER=$(hostname)
+export DISPATCHER_PORT=9999
+
+python -m dispatcher.server \
+    --infile "$INPUT_FILE" \
+    --outfile "$OUTPUT_FILE" \
+    --work-timeout "$WORK_TIMEOUT" \
+    --host 0.0.0.0 \
+    --port ${DISPATCHER_PORT} &
+
+sleep 10
+
+# ============================================================
+# Dispatcher Workers
+# ============================================================
+srun -l bash -c '
+    {% if exports is defined %}
+    # Export custom variables inside worker
+    {% for key, value in exports.items() %}
+    export {{ key }}="{{ value }}"
+    {% endfor %}
+    {% endif %}
+    # GPU allocation
+    start_gpu=$(( SLURM_LOCALID * '"$GPUS_PER_TASK"' ))
+    GPU_IDS=""
+    for (( i=0; i < '"$GPUS_PER_TASK"'; i++ )); do
+        if [ -z "$GPU_IDS" ]; then
+            GPU_IDS="$(( start_gpu + i ))"
+        else
+            GPU_IDS="${GPU_IDS},$(( start_gpu + i ))"
+        fi
+    done
+    export CUDA_VISIBLE_DEVICES=$GPU_IDS
+
+    # Ports
+    export MASTER_PORT=$(( 7000 + SLURM_LOCALID ))
+    export VLLM_PORT=$(( 8000 + SLURM_LOCALID * 100 ))
+
+    echo "Launching task $SLURM_LOCALID (global id: $SLURM_PROCID) with GPUs $GPU_IDS on $(hostname)"
+
+    # Re-source environment for srun context
+    module use /appl/local/csc/modulefiles
+    module load pytorch/2.5
+    export PYTHONUSERBASE=./pythonuserbase
+    export HF_HOME="'"$HF_HOME"'"
+
+    # Run dispatcher worker
+    PYTHONPATH=. python -m dispatcher.taskmanager.cli \
+        --dispatcher ${DISPATCHER_SERVER}:${DISPATCHER_PORT} \
+        --task '"$TASK"' \
+        --batch-size '"$BATCH_SIZE"' \
+        --workers '"$WORKERS"' \
+        --max-model-len '"$MAX_MODEL_LEN"' \
+        --tensor-parallel '"$GPUS_PER_TASK"' \
+        --model '"$MODEL"' \
+        --port $VLLM_PORT \
+        {% if startup_timeout is defined %}--startup-timeout '"$STARTUP_TIMEOUT"' \{% endif %}
+        {% if request_timeout is defined %}--request-timeout '"$REQUEST_TIMEOUT"'{% endif %}
+'
+
