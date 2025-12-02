@@ -109,30 +109,9 @@ srun -l singularity exec --rocm --cleanenv "${BINDS[@]}" "$IMG" bash --noprofile
 
   echo "Launching task $LOCALID on GPUs $HIP_VISIBLE_DEVICES"
 
-  # Setup Python environment
-  export PYTHONUSERBASE="/workspace/pythonuserbase"
-  export PATH="$PYTHONUSERBASE/bin:$PATH"
-  export AITER_INSTALL="$HOME/.aiter/jit/install"
-  export PYTHONPATH="$PYTHONUSERBASE/lib/python3.12/site-packages:$AITER_INSTALL:${PYTHONPATH-}"
-  
-  # Export cache and compiler variables
-  export HF_HOME="'"$HF_HOME"'"
-  export TRANSFORMERS_CACHE="'"$TRANSFORMERS_CACHE"'"
-  export TORCHINDUCTOR_CACHE="'"$TORCHINDUCTOR_CACHE"'"
-  export PYTHONNOUSERSITE=
-  export CC="'"$CC"'"
-  export CXX="'"$CXX"'"
-  export VLLM_USE_V1=1
-  export VLLM_TARGET_DEVICE=rocm
-  export VLLM_WORKER_MULTIPROC_METHOD=spawn
-  export HIP_ARCHITECTURES=gfx90a
-  export TORCH_EXTENSIONS_DIR=/dev/shm/torch_ext
-  mkdir -p "$TORCH_EXTENSIONS_DIR" "$AITER_INSTALL/private_aiter/jit" 2>/dev/null || true
-
-  # Stage AIter module (from launcher library)
-  export PYEXEC_IN_IMG="'"$PYEXEC_IN_IMG"'"
+  # Setup worker environment (imports container config, Python paths, AITER staging, etc.)
   source '"$LAUNCHER_DIR"'/singularity_launcher.sh
-  run_aiter_staging
+  setup_worker_environment
 
   # Run task manager worker
   echo "Starting dispatcher task manager..."

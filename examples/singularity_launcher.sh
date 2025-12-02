@@ -195,49 +195,8 @@ setup_cleanup_trap() {
 ###############################################################################
 run_aiter_staging() {
   echo "Staging AIter module..."
-  cat >/workspace/stage_aiter.py <<'AITER_PY'
-import os, sys, glob, shutil, importlib, subprocess, pathlib
-
-try:
-    import ninja
-    print(f"[stage_aiter] Ninja import OK: {ninja.__file__}")
-except ImportError as e:
-    print(f"[stage_aiter] FATAL: Ninja import failed, though it should be on PATH. {e!r}")
-    sys.exit(1)
-
-home=os.path.expanduser("~")
-print(f"[stage_aiter] Using HOME={home}")
-jit_root=os.path.join(home,".aiter","jit")
-build_root=os.path.join(jit_root,"build")
-inst_root=os.path.join(home,".aiter","jit","install")
-pkg_root=os.path.join(inst_root,"private_aiter")
-pkg_jit=os.path.join(pkg_root,"jit")
-os.makedirs(pkg_jit, exist_ok=True)
-pathlib.Path(os.path.join(pkg_root,"__init__.py")).write_text("")
-pathlib.Path(os.path.join(pkg_jit,"__init__.py")).write_text("")
-try:
-    import aiter
-    from aiter.ops import enum
-    print("[stage_aiter] AIter prewarm build triggered.")
-except Exception as e:
-    print(f"[stage_aiter] AIter prewarm raised: {e!r}")
-hits=glob.glob(os.path.join(build_root,"**","module_aiter_enum*.so"), recursive=True)
-if not hits:
-    raise SystemExit("[stage_aiter] FATAL: No compiled module_aiter_enum*.so found in " + build_root)
-so_src=max(hits, key=os.path.getmtime)
-dst=os.path.join(pkg_jit,"module_aiter_enum.so")
-if os.path.lexists(dst):
-    os.remove(dst)
-try:
-    os.symlink(so_src,dst)
-    print(f"[stage_aiter] Symlinked: {dst} -> {so_src}")
-except OSError:
-    shutil.copy2(so_src,dst)
-    print(f"[stage_aiter] Copied: {so_src} -> {dst}")
-sys.path.insert(0, inst_root)
-m=importlib.import_module("private_aiter.jit.module_aiter_enum")
-print("[stage_aiter] Staging complete.")
-AITER_PY
+  # Use the centralized script definition to avoid duplication
+  get_aiter_staging_script > /workspace/stage_aiter.py
   
   # Run the staging script with the Python from the container
   # Expects $PYEXEC_IN_IMG to be set in the worker environment
@@ -255,12 +214,63 @@ setup_launcher_environment() {
   setup_cleanup_trap
 }
 
+###############################################################################
+# import_container_config
+# Imports container configuration from parent environment into worker context
+# Must be called inside srun workers to inherit parent container settings
+###############################################################################
+import_container_config() {
+  # Import cache and compiler variables from parent environment
+  export HF_HOME="${HF_HOME}"
+  export TRANSFORMERS_CACHE="${TRANSFORMERS_CACHE}"
+  export TORCHINDUCTOR_CACHE="${TORCHINDUCTOR_CACHE}"
+  export CC="${CC}"
+  export CXX="${CXX}"
+  export PYEXEC_IN_IMG="${PYEXEC_IN_IMG}"
+}
+
+###############################################################################
+# setup_worker_environment
+# Complete worker-side environment setup (for use inside srun workers)
+# Sets up Python paths, cache variables, creates directories, and runs AIter staging
+# This encapsulates all AITER-related setup so parent scripts don't need to know about it
+###############################################################################
+setup_worker_environment() {
+  # Import container configuration from parent environment
+  import_container_config
+  
+  # Setup Python environment (including AITER)
+  export PYTHONUSERBASE="/workspace/pythonuserbase"
+  export PATH="$PYTHONUSERBASE/bin:$PATH"
+  export AITER_INSTALL="$HOME/.aiter/jit/install"
+  export PYTHONPATH="$PYTHONUSERBASE/lib/python3.12/site-packages:$AITER_INSTALL:${PYTHONPATH-}"
+  export PYTHONNOUSERSITE=
+  
+  # vLLM/ROCm flags
+  export VLLM_USE_V1=1
+  export VLLM_TARGET_DEVICE=rocm
+  export VLLM_WORKER_MULTIPROC_METHOD=spawn
+  export HIP_ARCHITECTURES=gfx90a
+  
+  # Create necessary directories
+  export TORCH_EXTENSIONS_DIR=/dev/shm/torch_ext
+  mkdir -p "$TORCH_EXTENSIONS_DIR" "$AITER_INSTALL/private_aiter/jit" 2>/dev/null || true
+  
+  # Run AIter staging automatically
+  run_aiter_staging
+}
+
 echo "[singularity_launcher] Library loaded. Available functions:"
-echo "  - setup_singularity_environment"
-echo "  - install_dispatcher_packages"
-echo "  - setup_cleanup_trap"
-echo "  - setup_launcher_environment (combines all 3 above)"
-echo "  - SING_EXEC"
-echo "  - get_aiter_staging_script"
-echo "  - run_aiter_staging (for use inside srun workers)"
+echo "  Host-side functions:"
+echo "    - setup_singularity_environment"
+echo "    - install_dispatcher_packages"
+echo "    - setup_cleanup_trap"
+echo "    - setup_launcher_environment (combines all 3 above)"
+echo "    - SING_EXEC"
+echo "  Worker-side functions (inside srun):"
+echo "    - setup_worker_environment (complete worker setup including AITER)"
+echo "  Low-level functions (used internally):"
+echo "    - import_container_config"
+echo "    - run_aiter_staging"
+echo "    - get_aiter_staging_script"
 
