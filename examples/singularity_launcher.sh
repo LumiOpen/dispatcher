@@ -72,6 +72,7 @@ setup_singularity_environment() {
   export SINGULARITYENV_TORCHINDUCTOR_CACHE="$TORCHINDUCTOR_CACHE"
   export SINGULARITYENV_PYTHONUSERBASE="$PYUSERBASE"
   export SINGULARITYENV_PYTHONPATH="$PYUSERPKG:$AITER_INSTALL:\${PYTHONPATH-}"
+  export SINGULARITYENV_PYEXEC_IN_IMG="$PYEXEC_IN_IMG"
   export SINGULARITYENV_DISPATCHER_SERVER="${DISPATCHER_SERVER}"
   export SINGULARITYENV_DISPATCHER_PORT="${DISPATCHER_PORT}"
   
@@ -161,16 +162,96 @@ if not hits:
     raise SystemExit("[stage_aiter] FATAL: No compiled module_aiter_enum*.so found in " + build_root)
 so_src=max(hits, key=os.path.getmtime)
 dst=os.path.join(pkg_jit,"module_aiter_enum.so")
+
+# Check if destination already exists and points to the correct source
+need_update = True
 if os.path.lexists(dst):
-    os.remove(dst)
-try:
-    os.symlink(so_src,dst)
-    print(f"[stage_aiter] Symlinked: {dst} -> {so_src}")
-except OSError:
-    shutil.copy2(so_src,dst)
-    print(f"[stage_aiter] Copied: {so_src} -> {dst}")
-sys.path.insert(0, inst_root)
-m=importlib.import_module("private_aiter.jit.module_aiter_enum")
+    try:
+        if os.path.islink(dst):
+            # Check if symlink points to the correct source
+            actual_target = os.readlink(dst)
+            # Resolve relative symlinks
+            if not os.path.isabs(actual_target):
+                actual_target = os.path.normpath(os.path.join(os.path.dirname(dst), actual_target))
+            # Check if the resolved target is the same as our source
+            if os.path.exists(actual_target) and os.path.exists(so_src):
+                try:
+                    if os.path.samefile(actual_target, so_src):
+                        print(f"[stage_aiter] Symlink already exists and points to correct source: {dst} -> {so_src}")
+                        need_update = False
+                    else:
+                        print(f"[stage_aiter] Symlink exists but points to different source. Removing old symlink.")
+                        os.remove(dst)
+                except OSError:
+                    # samefile can fail in some cases, just remove and recreate
+                    print(f"[stage_aiter] Could not verify symlink target, removing and recreating.")
+                    os.remove(dst)
+            else:
+                print(f"[stage_aiter] Symlink target or source missing, removing old symlink.")
+                os.remove(dst)
+        elif os.path.exists(dst):
+            # It's a regular file, check if it's the same file or needs updating
+            try:
+                if os.path.samefile(dst, so_src):
+                    print(f"[stage_aiter] Destination is already the same file as source: {dst}")
+                    need_update = False
+                else:
+                    print(f"[stage_aiter] Destination exists but is different. Removing old file.")
+                    os.remove(dst)
+            except OSError:
+                # samefile can fail, just remove and recreate
+                print(f"[stage_aiter] Could not verify file, removing and recreating.")
+                os.remove(dst)
+    except Exception as e:
+        # If anything goes wrong checking, just remove and recreate
+        print(f"[stage_aiter] Error checking existing destination: {e}, removing and recreating.")
+        try:
+            os.remove(dst)
+        except:
+            pass
+
+if need_update:
+    try:
+        os.symlink(so_src,dst)
+        print(f"[stage_aiter] Symlinked: {dst} -> {so_src}")
+    except OSError as e:
+        # If symlink fails (e.g., cross-filesystem or file exists), try copy
+        # But first check if they're the same file
+        try:
+            if os.path.exists(dst) and os.path.samefile(so_src, dst):
+                print(f"[stage_aiter] Source and destination are the same file, skipping copy")
+            else:
+                shutil.copy2(so_src,dst)
+                print(f"[stage_aiter] Copied: {so_src} -> {dst}")
+        except (OSError, shutil.SameFileError) as copy_err:
+            # If copy also fails because they're the same file, that's actually OK
+            if "same file" in str(copy_err).lower() or isinstance(copy_err, shutil.SameFileError):
+                print(f"[stage_aiter] Source and destination are the same file, no action needed")
+            else:
+                raise
+
+# Ensure the file exists and is readable
+if not os.path.exists(dst):
+    raise SystemExit(f"[stage_aiter] FATAL: Destination file {dst} does not exist after symlink/copy")
+if not os.access(dst, os.R_OK):
+    raise SystemExit(f"[stage_aiter] FATAL: Destination file {dst} is not readable")
+
+# Ensure inst_root is in sys.path (it should already be via PYTHONPATH, but be explicit)
+if inst_root not in sys.path:
+    sys.path.insert(0, inst_root)
+
+# Clear any cached imports for this module to force a fresh import
+module_name = "private_aiter.jit.module_aiter_enum"
+if module_name in sys.modules:
+    del sys.modules[module_name]
+# Also clear parent modules if they exist
+for mod in list(sys.modules.keys()):
+    if mod.startswith("private_aiter"):
+        del sys.modules[mod]
+
+# Now import the module
+m=importlib.import_module(module_name)
+print(f"[stage_aiter] Successfully imported {module_name} from {m.__file__}")
 print("[stage_aiter] Staging complete.")
 AITER_SCRIPT
 }
@@ -221,12 +302,13 @@ setup_launcher_environment() {
 ###############################################################################
 import_container_config() {
   # Import cache and compiler variables from parent environment
-  export HF_HOME="${HF_HOME}"
-  export TRANSFORMERS_CACHE="${TRANSFORMERS_CACHE}"
-  export TORCHINDUCTOR_CACHE="${TORCHINDUCTOR_CACHE}"
-  export CC="${CC}"
-  export CXX="${CXX}"
-  export PYEXEC_IN_IMG="${PYEXEC_IN_IMG}"
+  # These should be available via SINGULARITYENV_* variables passed from host
+  export HF_HOME="${HF_HOME:-}"
+  export TRANSFORMERS_CACHE="${TRANSFORMERS_CACHE:-}"
+  export TORCHINDUCTOR_CACHE="${TORCHINDUCTOR_CACHE:-}"
+  export CC="${CC:-}"
+  export CXX="${CXX:-}"
+  export PYEXEC_IN_IMG="${PYEXEC_IN_IMG:-}"
 }
 
 ###############################################################################

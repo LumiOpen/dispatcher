@@ -90,40 +90,50 @@ done
 echo "Server is up."
 
 # Launch workers in containers
-srun -l singularity exec --rocm --cleanenv "${BINDS[@]}" "$IMG" bash --noprofile --norc -c '
-  set -euxo pipefail
+# Use a wrapper to export SLURM variables as SINGULARITYENV_* so they pass through --cleanenv
+srun -l bash -c "
+  # Export SLURM variables as SINGULARITYENV_* so they pass through --cleanenv
+  export SINGULARITYENV_SLURM_PROCID=\"\${SLURM_PROCID:-}\"
+  export SINGULARITYENV_SLURM_LOCALID=\"\${SLURM_LOCALID:-}\"
+  export SINGULARITYENV_SLURM_STEP_TASK_ID=\"\${SLURM_STEP_TASK_ID:-}\"
+  
+  singularity exec --rocm --cleanenv ${BINDS[*]} $IMG bash --noprofile --norc -c '
+    set -euxo pipefail
 
-  export HOME=/workspace
-  LOCALID=${SLURM_LOCALID:-0}
+    export HOME=/workspace
+    LOCALID=\${SLURM_LOCALID:-0}
 
-  # Compute GPU allocation
-  start_gpu=$(( LOCALID * '"$GPUS_PER_TASK"' ))
-  GPU_IDS=""
-  for (( i=0; i<'"$GPUS_PER_TASK"'; i++ )); do
-    if [ -z "$GPU_IDS" ]; then GPU_IDS="$(( start_gpu + i ))"; else GPU_IDS="${GPU_IDS},$(( start_gpu + i ))"; fi
-  done
-  export HIP_VISIBLE_DEVICES="$GPU_IDS"
+    # Compute GPU allocation (use LOCALID for per-node GPU assignment)
+    start_gpu=\$(( LOCALID * $GPUS_PER_TASK ))
+    GPU_IDS=\"\"
+    for (( i=0; i<$GPUS_PER_TASK; i++ )); do
+      if [ -z \"\$GPU_IDS\" ]; then GPU_IDS=\"\$(( start_gpu + i ))\"; else GPU_IDS=\"\${GPU_IDS},\$(( start_gpu + i ))\"; fi
+    done
+    export HIP_VISIBLE_DEVICES=\"\$GPU_IDS\"
 
-  export MASTER_PORT=$(( 7000 + LOCALID ))
-  export VLLM_PORT=$(( 8000 + LOCALID * 100 ))
+    # Use LOCALID for ports to ensure uniqueness across tasks on the same node
+    export MASTER_ADDR=\${MASTER_ADDR:-127.0.0.1}
+    export MASTER_PORT=\$(( 7000 + LOCALID ))
+    export VLLM_PORT=\$(( 8000 + LOCALID * 100 ))
 
-  echo "Launching task $LOCALID on GPUs $HIP_VISIBLE_DEVICES"
+    echo \"Launching task LOCALID=\$LOCALID (global id: \$SLURM_PROCID) on GPUs \$HIP_VISIBLE_DEVICES (MASTER_PORT=\$MASTER_PORT, VLLM_PORT=\$VLLM_PORT)\"
 
-  # Setup worker environment (imports container config, Python paths, AITER staging, etc.)
-  source '"$LAUNCHER_DIR"'/singularity_launcher.sh
-  setup_worker_environment
+    # Setup worker environment (imports container config, Python paths, AITER staging, etc.)
+    source \"\$HOME/singularity_launcher.sh\"
+    setup_worker_environment
 
-  # Run task manager worker
-  echo "Starting dispatcher task manager..."
-  "'$PYEXEC_IN_IMG'" -m dispatcher.taskmanager.cli \
-    --dispatcher '"$DISPATCHER_SERVER"':'"$DISPATCHER_PORT"' \
-    --task '"$TASK"' \
-    --batch-size '"$BATCH_SIZE"' \
-    --workers '"$WORKERS"' \
-    --max-model-len '"$MAX_MODEL_LEN"' \
-    --tensor-parallel '"$GPUS_PER_TASK"' \
-    --model '"$MODEL"' \
-    --port $VLLM_PORT \
-    --request-timeout '"$REQUEST_TIMEOUT"'
-'
+    # Run task manager worker
+    echo \"Starting dispatcher task manager...\"
+    \"$PYEXEC_IN_IMG\" -m dispatcher.taskmanager.cli \
+      --dispatcher $DISPATCHER_SERVER:$DISPATCHER_PORT \
+      --task $TASK \
+      --batch-size $BATCH_SIZE \
+      --workers $WORKERS \
+      --max-model-len $MAX_MODEL_LEN \
+      --tensor-parallel $GPUS_PER_TASK \
+      --model $MODEL \
+      --port \$VLLM_PORT \
+      --request-timeout $REQUEST_TIMEOUT
+  '
+"
 
