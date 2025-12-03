@@ -59,25 +59,18 @@ export DISPATCHER_SERVER=$(hostname)
 export DISPATCHER_PORT=9999
 
 ###############################################################################
-# Load launcher library and setup environment
+# Load launcher library - environment is automatically set up when sourced
 ###############################################################################
 LAUNCHER_DIR="${SLURM_SUBMIT_DIR:-$PWD}"
 source "$LAUNCHER_DIR/singularity_launcher.sh"
 
-# Setup environment (container, packages, cleanup trap)
-setup_launcher_environment
-
 # Start dispatcher server in background
 echo "Starting dispatcher server..."
-SING_EXEC "
-  set -eux
-  export PYTHONPATH=\"$PYUSERPKG:\${PYTHONPATH-}\"
-  \"$PYEXEC_IN_IMG\" -m dispatcher.server \
-    --infile \"$INPUT_FILE\" \
-    --outfile \"$OUTPUT_FILE\" \
-    --host 0.0.0.0 \
-    --port \"$DISPATCHER_PORT\"
-" &
+run_sing_python -m dispatcher.server \
+  --infile "$INPUT_FILE" \
+  --outfile "$OUTPUT_FILE" \
+  --host 0.0.0.0 \
+  --port "$DISPATCHER_PORT" &
 srv_pid=$!
 
 # Wait for server to be ready
@@ -93,14 +86,13 @@ done
 echo "Server is up."
 
 # Launch workers in containers
-# Use a wrapper to export SLURM variables as SINGULARITYENV_* so they pass through --cleanenv
+# SLURM variables are automatically translated to SINGULARITYENV_* by the launcher
+# Environment is automatically set up when sourcing the launcher
 srun -l bash -c "
-  # Export SLURM variables as SINGULARITYENV_* so they pass through --cleanenv
-  export SINGULARITYENV_SLURM_PROCID=\"\${SLURM_PROCID:-}\"
-  export SINGULARITYENV_SLURM_LOCALID=\"\${SLURM_LOCALID:-}\"
-  export SINGULARITYENV_SLURM_STEP_TASK_ID=\"\${SLURM_STEP_TASK_ID:-}\"
+  # Source launcher - auto-translates SLURM vars and sets up environment
+  source \"${LAUNCHER_DIR}/singularity_launcher.sh\"
   
-  singularity exec --rocm --cleanenv ${BINDS[*]} $IMG bash --noprofile --norc -c '
+  run_sing_bash '
     set -euxo pipefail
 
     export HOME=/workspace
@@ -121,13 +113,12 @@ srun -l bash -c "
 
     echo \"Launching task LOCALID=\$LOCALID (global id: \$SLURM_PROCID) on GPUs \$HIP_VISIBLE_DEVICES (MASTER_PORT=\$MASTER_PORT, VLLM_PORT=\$VLLM_PORT)\"
 
-    # Setup worker environment (imports container config, Python paths, AITER staging, etc.)
+    # Worker environment is automatically set up when sourcing inside container
     source \"\$HOME/singularity_launcher.sh\"
-    setup_worker_environment
 
     # Run inference worker
     echo \"Starting inference worker...\"
-    \"$PYEXEC_IN_IMG\" /workspace/inference.py \
+    run_python /workspace/inference.py \
       --batch_size $BATCH_SIZE \
       --dispatcher_server $DISPATCHER_SERVER:$DISPATCHER_PORT \
       --prompt_path \"$PROMPT_PATH\" \

@@ -89,29 +89,27 @@ setup_singularity_environment() {
   export SINGULARITYENV_VLLM_WORKER_MULTIPROC_METHOD=spawn
   export SINGULARITYENV_HIP_ARCHITECTURES=gfx90a
 
-  # Bind paths as an array to avoid quote parsing errors
-  BINDS=(
+  echo "[singularity_launcher] Singularity environment setup complete."
+}
+
+###############################################################################
+# get_binds
+# Returns bind mount arguments as an array
+# This function-based approach ensures BINDS are always available regardless of sourcing context
+###############################################################################
+get_binds() {
+  local binds=(
     -B /scratch/project_462000353
     -B /flash/project_462000353
     -B /scratch/project_462000394/containers/for-turkunlp-team
     -B /pfs/lustrep3/scratch/project_462000394/containers/for-turkunlp-team
     -B "/scratch/${LAUNCHER_HF_CACHE_PROJECT}:/scratch/${LAUNCHER_HF_CACHE_PROJECT}:rw"
-    -B "$PWD:/workspace"
+    -B "${PWD:-$(pwd)}:/workspace"
   )
   if [ -f /usr/share/libdrm/amdgpu.ids ]; then
-    BINDS+=(-B /usr/share/libdrm:/usr/share/libdrm:ro)
+    binds+=(-B /usr/share/libdrm:/usr/share/libdrm:ro)
   fi
-
-  echo "[singularity_launcher] Singularity environment setup complete."
-}
-
-###############################################################################
-# SING_EXEC command [args...]
-# Helper function to run commands inside the Singularity container
-# Usage: SING_EXEC "command to run"
-###############################################################################
-SING_EXEC() {
-  singularity exec --rocm --cleanenv "${BINDS[@]}" "$IMG" bash --noprofile --norc -c "$@"
+  printf '%s\n' "${binds[@]}"
 }
 
 ###############################################################################
@@ -120,7 +118,11 @@ SING_EXEC() {
 ###############################################################################
 install_dispatcher_packages() {
   echo "[singularity_launcher] Installing dispatcher and ninja in container..."
-  SING_EXEC "$PIP_IN_IMG install --user --upgrade 'git+https://github.com/LumiOpen/dispatcher.git' ninja"
+  # Use get_binds() function to get bind mounts
+  local binds_array
+  mapfile -t binds_array < <(get_binds)
+  singularity exec --rocm --cleanenv "${binds_array[@]}" "$IMG" bash --noprofile --norc -c \
+    "$PIP_IN_IMG install --user --upgrade 'git+https://github.com/LumiOpen/dispatcher.git' ninja"
   echo "[singularity_launcher] Package installation complete."
 }
 
@@ -259,29 +261,20 @@ AITER_SCRIPT
 
 ###############################################################################
 # setup_cleanup_trap
-# Sets up a cleanup trap to kill the server process on exit
+# Sets up cleanup trap to kill server process on exit
 ###############################################################################
 setup_cleanup_trap() {
-  cleanup() {
-    echo "[singularity_launcher] Cleaning up server PID ${srv_pid:-}"
-    kill "${srv_pid:-0}" 2>/dev/null || true
-  }
-  trap cleanup EXIT
+  trap 'echo "[singularity_launcher] Cleaning up server PID ${srv_pid:-}"; kill "${srv_pid:-0}" 2>/dev/null || true' EXIT
 }
 
 ###############################################################################
 # run_aiter_staging
-# Runs the AIter staging script inside a worker container
-# Must be called from within the worker environment (inside srun)
+# Runs the AIter staging script inside a container
 ###############################################################################
 run_aiter_staging() {
   echo "Staging AIter module..."
-  # Use the centralized script definition to avoid duplication
   get_aiter_staging_script > /workspace/stage_aiter.py
-  
-  # Run the staging script with the Python from the container
-  # Expects $PYEXEC_IN_IMG to be set in the worker environment
-  "$PYEXEC_IN_IMG" /workspace/stage_aiter.py
+  run_python /workspace/stage_aiter.py
 }
 
 ###############################################################################
@@ -298,11 +291,11 @@ setup_launcher_environment() {
 ###############################################################################
 # import_container_config
 # Imports container configuration from parent environment into worker context
-# Must be called inside srun workers to inherit parent container settings
+# Variables are already available via SINGULARITYENV_* from host, just ensure they're exported
 ###############################################################################
 import_container_config() {
-  # Import cache and compiler variables from parent environment
-  # These should be available via SINGULARITYENV_* variables passed from host
+  # These variables are passed via SINGULARITYENV_* and available in container
+  # Just ensure they're exported (they should already be set by Singularity)
   export HF_HOME="${HF_HOME:-}"
   export TRANSFORMERS_CACHE="${TRANSFORMERS_CACHE:-}"
   export TORCHINDUCTOR_CACHE="${TORCHINDUCTOR_CACHE:-}"
@@ -321,7 +314,7 @@ setup_worker_environment() {
   # Import container configuration from parent environment
   import_container_config
   
-  # Setup Python environment (including AITER)
+  # Setup Python environment
   export PYTHONUSERBASE="/workspace/pythonuserbase"
   export PATH="$PYTHONUSERBASE/bin:$PATH"
   export AITER_INSTALL="$HOME/.aiter/jit/install"
@@ -342,17 +335,121 @@ setup_worker_environment() {
   run_aiter_staging
 }
 
-echo "[singularity_launcher] Library loaded. Available functions:"
-echo "  Host-side functions:"
-echo "    - setup_singularity_environment"
-echo "    - install_dispatcher_packages"
-echo "    - setup_cleanup_trap"
-echo "    - setup_launcher_environment (combines all 3 above)"
-echo "    - SING_EXEC"
-echo "  Worker-side functions (inside srun):"
-echo "    - setup_worker_environment (complete worker setup including AITER)"
-echo "  Low-level functions (used internally):"
-echo "    - import_container_config"
-echo "    - run_aiter_staging"
-echo "    - get_aiter_staging_script"
+###############################################################################
+# auto_translate_slurm_vars
+# Automatically translates SLURM_* environment variables to SINGULARITYENV_*
+# versions so they pass through --cleanenv. Called automatically when script is sourced.
+###############################################################################
+auto_translate_slurm_vars() {
+  # Only translate if we're in a SLURM context (not inside container yet)
+  if [ -z "${SINGULARITY_NAME:-}" ] && [ -n "${SLURM_JOB_ID:-}" ]; then
+    # Key SLURM variables that need to be passed into containers
+    for var in SLURM_PROCID SLURM_LOCALID SLURM_STEP_ID SLURM_STEP_TASK_ID SLURM_JOB_ID SLURM_NODEID SLURM_NTASKS; do
+      if [ -n "${!var:-}" ]; then
+        export "SINGULARITYENV_${var}=${!var}"
+      fi
+    done
+  fi
+}
+
+###############################################################################
+# is_inside_container
+# Detects if we're running inside a Singularity container
+# Returns 0 if inside container, 1 if not
+###############################################################################
+is_inside_container() {
+  [ -n "${SINGULARITY_NAME:-}" ] || [ -f /.singularity.d/env/99-base.sh ]
+}
+
+###############################################################################
+# is_in_srun_worker
+# Detects if we're running inside an srun worker (but not yet in container)
+# Returns 0 if in srun worker context, 1 if not
+###############################################################################
+is_in_srun_worker() {
+  # SLURM_STEP_ID and SLURM_STEP_TASK_ID are only set in srun workers (not in launcher)
+  # We're in an srun worker if we have step variables and we're not in a container
+  [ -z "${SINGULARITY_NAME:-}" ] && { [ -n "${SLURM_STEP_ID:-}" ] || [ -n "${SLURM_STEP_TASK_ID:-}" ]; }
+}
+
+###############################################################################
+# is_launcher_context
+# Detects if we're in the main launcher script (not in srun, not in container)
+# Returns 0 if in launcher context, 1 if not
+###############################################################################
+is_launcher_context() {
+  # Launcher context: has SLURM_JOB_ID but no step variables (which are set by srun)
+  # and not inside container
+  [ -z "${SINGULARITY_NAME:-}" ] && \
+  [ -n "${SLURM_JOB_ID:-}" ] && \
+  [ -z "${SLURM_STEP_ID:-}" ] && \
+  [ -z "${SLURM_STEP_TASK_ID:-}" ]
+}
+
+###############################################################################
+# run_python
+# Helper function to run Python commands when inside a container
+# Usage: run_python -m module.name args...  or  run_python script.py args...
+###############################################################################
+run_python() {
+  is_inside_container || {
+    echo "[singularity_launcher] ERROR: run_python called outside container" >&2
+    return 1
+  }
+  "${PYEXEC_IN_IMG:-python3}" "$@"
+}
+
+###############################################################################
+# run_sing_bash
+# Helper function to run bash commands inside the Singularity container
+# Usage: run_sing_bash "command to run"
+###############################################################################
+run_sing_bash() {
+  [ -n "${IMG:-}" ] || {
+    echo "[singularity_launcher] ERROR: run_sing_bash called before setup_singularity_environment" >&2
+    return 1
+  }
+  # Use get_binds() function to get bind mounts - works regardless of sourcing context
+  local binds_array
+  mapfile -t binds_array < <(get_binds)
+  singularity exec --rocm --cleanenv "${binds_array[@]}" "$IMG" bash --noprofile --norc -c "$@"
+}
+
+###############################################################################
+# run_sing_python
+# Helper function to run Python commands inside the Singularity container
+# PYTHONPATH is already configured via SINGULARITYENV_PYTHONPATH from setup_singularity_environment
+# Usage: run_sing_python -m module.name --arg1 val1 --arg2 val2
+###############################################################################
+run_sing_python() {
+  [ -n "${IMG:-}" ] && [ -n "${PYEXEC_IN_IMG:-}" ] || {
+    echo "[singularity_launcher] ERROR: run_sing_python called before setup_singularity_environment" >&2
+    return 1
+  }
+  # Use get_binds() function to get bind mounts - works regardless of sourcing context
+  local binds_array
+  mapfile -t binds_array < <(get_binds)
+  singularity exec --rocm --cleanenv "${binds_array[@]}" "$IMG" "$PYEXEC_IN_IMG" "$@"
+}
+
+###############################################################################
+# Auto-execution when script is sourced
+# Automatically detects context and sets up environment accordingly
+###############################################################################
+# Auto-translate SLURM variables when sourced (on host side or in srun workers)
+auto_translate_slurm_vars
+
+# Auto-setup based on context
+if is_inside_container; then
+  setup_worker_environment
+elif [ -z "${IMG:-}" ] && is_launcher_context; then
+  # Launcher: do full setup (env vars + package install + cleanup trap)
+  # Workers: inherit SINGULARITYENV_* from launcher, only need SLURM translation
+  # (which already happened via auto_translate_slurm_vars above)
+  setup_launcher_environment
+fi
+
+echo "[singularity_launcher] Library loaded."
+echo "  Public functions: run_sing_bash, run_sing_python, run_python"
+echo "  Auto-setup: SLURM vars translated, environment configured by context"
 
