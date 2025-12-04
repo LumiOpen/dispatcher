@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=deepseek-r1
+#SBATCH --job-name=translate-traces-v3
 #SBATCH --gpus=8
 #SBATCH --nodes=1
 #SBATCH --cpus-per-gpu=16
@@ -17,9 +17,9 @@ mkdir -p logs
 # docker run --rm ubuntu:20.04 bash -c "echo 'Hello from inside container'; sleep 30"
 # echo "Done"
 
-MODEL_PATH=/vfs_mount/models/DeepSeek-R1
+MODEL_PATH=/vfs_mount/models/DeepSeek-V3
 # CONTAINER_NAME=${SLURM_JOB_NAME}-${USER}-${SLURM_JOB_ID}-slurmdocker # this is what slurmdocker names the container
-CONTAINER_NAME=vllm-deepseek-r1
+CONTAINER_NAME=vllm-deepseek-v3
 
 # Step 1: Start the vLLM server container in detached mode
 
@@ -74,11 +74,11 @@ while true; do
 done
 
 # Step 3: Launch your client in the same container 
-echo "[$(date)] Launching client inside container..."
+# echo "[$(date)] Launching client inside container..."
 docker exec $CONTAINER_NAME bash -c "
     set -x
-    # cd /workspace/adamhrin/dispatcher/examples/reasoning_traces
-    python3 -u pipeline.py --config data/answer-r1/config.vutlr.yaml --out-dir data/answer-r1/
+    cd /workspace/adamhrin/dispatcher/examples/reasoning_traces
+    python3 -u pipeline.py --config data/translate-traces-v3/config.vultr.yaml --out-dir data/translate-traces-v3/
 "
 
 # Step 4: stop docker container

@@ -7,8 +7,8 @@
 # Experiment Metadata
 # ==============================================================================
 experiment:
-  name: "answer-r1"
-  description: "Generate reasoning answers with DeepSeek-R1"
+  name: "translate-traces-v3"
+  description: "Translate reasoning traces with DeepSeek-V3"
 
 # ==============================================================================
 # Optional: vLLM Server Configuration
@@ -31,13 +31,13 @@ environment_setup: "execution/environments/vultr.sh"
 # ==============================================================================
 # Set to false to disable a job, or remove it from the list to skip entirely
 pipeline:
-  - reasoning_answer_generation: true
+  - traces_translation: true
 
 # ==============================================================================
 # Global Configuration (can be overridden at job level)
 # ==============================================================================
 # Model parameters
-model: "/vfs_mount/models/DeepSeek-R1"
+model: "/vfs_mount/models/DeepSeek-V3"
 max_model_len: 65536
 tensor_parallel: 8
 work_timeout: 7200
@@ -48,11 +48,12 @@ request_timeout: 3600
 # ==============================================================================
 jobs:
   # --------------------------------------------------------------------------
-  # Augmentation: Generate augmented instructions from seed instructions
+  # Translation: Translate reasoning traces with DeepSeek-V3
   # --------------------------------------------------------------------------
-  reasoning_answer_generation:
+  traces_translation:
     type: dispatcher_task
-    task: tasks.reasoning_answer_task.ReasoningAnswerTask
-    # we will only take the original english "text" from this translated file
-    input_file: "/workspace/adamhrin/dispatcher/examples/reasoning_traces/data/default-train-sample-100_translations_DeepSeek-V3_fi.jsonl"
-    output_file: "/workspace/adamhrin/dispatcher/examples/reasoning_traces/data/default-train-sample-100_reasoning_answers_DeepSeek-R1_en.jsonl"
+    task: tasks.traces_translation_task.TracesTranslationTask
+    input_file: "/workspace/adamhrin/dispatcher/examples/reasoning_traces/data/default-train-sample-100_reasoning_answers_DeepSeek-R1_en.jsonl"
+    output_file: "/workspace/adamhrin/dispatcher/examples/reasoning_traces/data/default-train-sample-100_reasoning_answers_DeepSeek-R1_en_translated_traces_DeepSeek-V3_fi.jsonl"
+    exports:
+      LANGUAGE: "fi"

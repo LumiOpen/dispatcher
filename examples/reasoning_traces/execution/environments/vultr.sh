@@ -1,4 +1,4 @@
-# LUMI Environment Setup using Module System
+# Vultr Environment Setup
 # Users can customize this for their specific environment
 
 # Clean environment
@@ -13,16 +13,36 @@ unset PYTHONEXECUTABLE
 mkdir -p logs pythonuserbase
 export PYTHONUSERBASE="$(pwd)/pythonuserbase"
 
-# Activate virtual environment for task dependencies
-VENV_DIR="{{ venv_dir }}"
-if [ -d "$VENV_DIR" ]; then
+# Activate virtual environment for task dependencies (optional)
+VENV_DIR="{{ venv_dir | default('') }}"
+if [ -n "$VENV_DIR" ] && [ -d "$VENV_DIR" ]; then
     source "$VENV_DIR/bin/activate"
+    echo "Activated virtual environment: $VENV_DIR"
+elif [ -n "$VENV_DIR" ]; then
+    echo "Warning: Virtual environment not found at $VENV_DIR (continuing without venv)"
 else
-    echo "ERROR: Virtual environment not found at $VENV_DIR"
-    exit 1
+    echo "Info: No virtual environment configured (venv_dir not set)"
 fi
 
-pip install -r requirements-vultr.txt
+# Install requirements if file is set and exists
+REQUIREMENTS_FILE="{{ requirements_file | default('') }}"
+if [ -n "$REQUIREMENTS_FILE" ] && [ -f "$REQUIREMENTS_FILE" ]; then
+    echo "Installing requirements from $REQUIREMENTS_FILE..."
+    pip install -r "$REQUIREMENTS_FILE" || echo "Warning: Some requirements failed to install (continuing anyway)"
+elif [ -n "$REQUIREMENTS_FILE" ]; then
+    echo "Warning: Requirements file not found at $REQUIREMENTS_FILE (skipping pip install)"
+else
+    echo "Info: No requirements file configured (requirements_file not set)"
+fi
+
+# Add current directory to PYTHONPATH
 export PYTHONPATH="${PYTHONPATH:+${PYTHONPATH}:}$(pwd)"
 
-export HF_HOME="{{ hf_home }}"
+# Set HF_HOME if configured
+HF_HOME_VALUE="{{ hf_home | default('') }}"
+if [ -n "$HF_HOME_VALUE" ]; then
+    export HF_HOME="$HF_HOME_VALUE"
+    echo "HF_HOME set to: $HF_HOME"
+else
+    echo "Info: HF_HOME not configured"
+fi
