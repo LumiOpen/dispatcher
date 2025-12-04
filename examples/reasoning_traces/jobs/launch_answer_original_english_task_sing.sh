@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=ans_traces
+#SBATCH --job-name=ans_original_english
 #SBATCH --nodes=1
 #SBATCH --partition=dev-g
 #SBATCH --time=1:00:00
@@ -20,21 +20,21 @@
 set -euxo pipefail
 
 ### config
-export LANGUAGE="${1:-fi}"
+export LANGUAGE="${1:-en}"
 export MODEL="${2:-Qwen/Qwen3-30B-A3B-Thinking-2507}"
 MODEL_NAME="$(basename "$MODEL")"
-INPUT_FILE="${input_file:-/scratch/project_462000353/adamhrin/dispatcher/examples/reasoning_traces/data/default-train-sample-100_reasoning_answers_DeepSeek-R1_en_translated_traces_DeepSeek-V3_fi_randomly_shuffled.jsonl}"
+INPUT_FILE="${input_file:-/scratch/project_462000353/adamhrin/dispatcher/examples/reasoning_traces/data/default-train-sample-100_reasoning_answers_DeepSeek-R1_en.jsonl}"
 
 DATADIR="$(dirname "$INPUT_FILE")"
 FILE_NAME="$(basename "$INPUT_FILE" .jsonl)"
-OUTPUT_FILE="${DATADIR}/${FILE_NAME}_answers_given_translated_traces_${MODEL_NAME}_${LANGUAGE}.jsonl"
-TASK="tasks.answering_given_translated_traces_task.AnsweringGivenTranslatedTracesTask"
+OUTPUT_FILE="${DATADIR}/${FILE_NAME}_answers_given_original_english_${MODEL_NAME}_${LANGUAGE}.jsonl"
+TASK="tasks.answering_original_english_task.AnsweringOriginalEnglishTask"
 
 WORKERS=16
 BATCH_SIZE=1
 WORK_TIMEOUT=3600
 GPUS_PER_TASK=4
-MAX_MODEL_LEN=65536
+MAX_MODEL_LEN=32768
 STARTUP_TIMEOUT=7200
 REQUEST_TIMEOUT=1800
 ### end config

@@ -32,13 +32,13 @@ TASK="{{ task }}"
 INPUT_FILE="{{ input_file }}"
 OUTPUT_FILE="{{ output_file }}"
 MODEL="{{ model }}"
-WORKERS="{{ workers }}"
-BATCH_SIZE="{{ batch_size }}"
+WORKERS="{{ workers|default(1) }}"
+BATCH_SIZE="{{ batch_size|default(1) }}"
 WORK_TIMEOUT="{{ work_timeout|default(3600) }}"
 GPUS_PER_TASK="{{ tensor_parallel }}"
-MAX_MODEL_LEN="{{ max_model_len }}"
-{% if startup_timeout is defined %}STARTUP_TIMEOUT="{{ startup_timeout }}"{% endif %}
-{% if request_timeout is defined %}REQUEST_TIMEOUT="{{ request_timeout }}"{% endif %}
+MAX_MODEL_LEN="{{ max_model_len|default(2048) }}"
+STARTUP_TIMEOUT="{{ startup_timeout|default(1500) }}"
+REQUEST_TIMEOUT="{{ request_timeout|default(1800) }}"
 
 echo "Running {{ job_name }}..."
 echo "  Model: $MODEL"
@@ -106,7 +106,7 @@ srun -l bash -c '
         --tensor-parallel '"$GPUS_PER_TASK"' \
         --model '"$MODEL"' \
         --port $VLLM_PORT \
-        {% if startup_timeout is defined %}--startup-timeout '"$STARTUP_TIMEOUT"' \{% endif %}
-        {% if request_timeout is defined %}--request-timeout '"$REQUEST_TIMEOUT"'{% endif %}
+        --startup-timeout '"$STARTUP_TIMEOUT"' \
+        --request-timeout '"$REQUEST_TIMEOUT"'
 '
 

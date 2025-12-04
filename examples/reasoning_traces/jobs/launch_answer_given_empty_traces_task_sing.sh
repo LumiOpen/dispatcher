@@ -27,7 +27,7 @@ INPUT_FILE="/scratch/project_462000353/adamhrin/dispatcher/examples/reasoning_tr
 
 DATADIR="$(dirname "$INPUT_FILE")"
 FILE_NAME="$(basename "$INPUT_FILE" .jsonl)"
-OUTPUT_FILE="${DATADIR}/${FILE_NAME}_answers_given_empty_traces_${MODEL_NAME}_${LANGUAGE}.jsonl"
+OUTPUT_FILE="${DATADIR}/${FILE_NAME}_answers_given_almost_empty_traces_${MODEL_NAME}_${LANGUAGE}.jsonl"
 TASK="tasks.answering_given_empty_traces_task.AnsweringGivenEmptyTracesTask"
 
 WORKERS=16
@@ -36,6 +36,7 @@ WORK_TIMEOUT=3600
 GPUS_PER_TASK=4
 MAX_MODEL_LEN=16384
 STARTUP_TIMEOUT=7200
+REQUEST_TIMEOUT=3600
 ### end config
 
 mkdir -p logs pythonuserbase
@@ -251,5 +252,6 @@ PY
     --tensor-parallel '"$GPUS_PER_TASK"' \
     --model '"$MODEL"' \
     --startup-timeout '"$STARTUP_TIMEOUT"' \
+    --request-timeout '"$REQUEST_TIMEOUT"' \
     --port $VLLM_PORT
 '

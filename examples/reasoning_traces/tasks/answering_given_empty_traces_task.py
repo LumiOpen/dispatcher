@@ -20,6 +20,7 @@ class AnsweringGivenEmptyTracesTask(GeneratorTask):
         "temperature": 0.6,
         "top_p": 0.95,
         "max_tokens": 14336,  # Increase to 14k since now the model seems to reason with the answer. Leave 2K tokens for the prompt
+        "n": 4, # number of answers to generate
     }
 
     logger = logging.getLogger(__name__)
@@ -38,40 +39,34 @@ class AnsweringGivenEmptyTracesTask(GeneratorTask):
         # self.data is prepopulated with the data from the jsonl row being processed
         return_dict = self.data.copy()
         self.logger.info(f"Processing sample id: {self.data.get('id')}")
-        # construct empty traces
-        traces = [""] * 4
-
-        answers = []
         tokenizer = self.get_tokenizer()
-        for t in traces:
-            input_messages = [
-                {
-                    "role": "user",
-                    "content": self.data["generated_translation"]
-                },
-                {
-                    "role": "assistant",
-                    "reasoning_content": t,
-                }
-            ]
-            # Render the chat template, leave the assistant turn open
-            rendered = tokenizer.apply_chat_template(
-                input_messages,
-                tokenize=False,
-                add_generation_prompt=False,
-                # continue_final_message=True, # this argument exists in the API but qwen template does not use it
-            )
-            # Because the template does not implement continue_final_message we must trim the final hard-coded <|im_end|> token manually
-            rendered = rendered.rsplit("<|im_end|>", 1)[0].rstrip()
-            # print for debugging just the very first time
-            self.logger.info(f"Rendered prompt: {rendered}")
-            # Request text completion from vLLM backend
-            req_dict = {
-                "prompt": rendered,
-                **self.ANSWER_GEN_PARAMS,
+        input_messages = [
+            {
+                "role": "user",
+                "content": self.data["generated_translation"]
+            },
+            {
+                "role": "assistant",
+                "reasoning_content": "Okay, let's try to follow the instructions from the user. I should provide the answer inside a \\boxed{} element", # prefill to prevent model to generate traces
             }
-            answer_resp: Response = yield Request(req_dict)
-            answers.append(answer_resp.get_text().strip() if answer_resp.get_text() else "")
-
+        ]
+        # Render the chat template, leave the assistant turn open
+        rendered = tokenizer.apply_chat_template(
+            input_messages,
+            tokenize=False,
+            add_generation_prompt=False,
+            # continue_final_message=True, # this argument exists in the API but qwen template does not use it
+        )
+        # Because the template does not implement continue_final_message we must trim the final hard-coded <|im_end|> token manually
+        rendered = rendered.rsplit("<|im_end|>", 1)[0].rstrip()
+        # print for debugging just the very first time
+        self.logger.info(f"Rendered prompt for sample {self.data.get('id')}: {rendered}")
+        # Request text completion from vLLM backend
+        req_dict = {
+            "prompt": rendered,
+            **self.ANSWER_GEN_PARAMS,
+        }
+        answer_resp: Response = yield Request(req_dict)
+        answers = answer_resp.get_text(n=4)
         return_dict["generated_solution_given_empty_traces"] = answers
         return return_dict
