@@ -34,14 +34,13 @@ WORKERS="{{ workers|default(1) }}"
 BATCH_SIZE="{{ batch_size|default(1) }}"
 WORK_TIMEOUT="{{ work_timeout|default(3600) }}"
 MAX_MODEL_LEN="{{ max_model_len|default(2048) }}"
-{% if request_timeout is defined %}REQUEST_TIMEOUT="{{ request_timeout }}"{% endif %}
+REQUEST_TIMEOUT="{{ request_timeout|default(1800) }}"
 
 echo "Running {{ job_name }} in interactive mode..."
 echo "  Model: $MODEL"
 echo "  vLLM Server: $VLLM_HOST:$VLLM_PORT"
 echo "  Input: $INPUT_FILE"
 echo "  Output: $OUTPUT_FILE"
-echo "  Workers: $WORKERS"
 echo ""
 
 # ============================================================
@@ -72,9 +71,7 @@ PYTHONPATH=. python -m dispatcher.taskmanager.cli \
     --model "$MODEL" \
     --host "$VLLM_HOST" \
     --port "$VLLM_PORT" \
-{%- if request_timeout is defined %}
     --request-timeout "$REQUEST_TIMEOUT" \
-{%- endif %}
     --no-launch
 
 # Cleanup

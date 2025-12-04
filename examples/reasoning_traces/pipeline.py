@@ -155,7 +155,7 @@ def get_jinja_environment() -> jinja2.Environment:
         ])
         _jinja_env = jinja2.Environment(
             loader=template_loader,
-            undefined=jinja2.StrictUndefined
+            undefined=jinja2.Undefined
         )
     return _jinja_env
 

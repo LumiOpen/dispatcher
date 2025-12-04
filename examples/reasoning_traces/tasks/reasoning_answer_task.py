@@ -16,7 +16,8 @@ class ReasoningAnswerTask(GeneratorTask):
     REASONING_ANSWER_GEN_PARAMS: Dict[str, Any] = {
         "temperature": 0.6,
         "top_p": 0.95,
-        "max_tokens": 14336,  # Leave 2K tokens for the prompt
+        "max_tokens": 30720,  # Leave 2K tokens for the prompt,
+        "n": 4
     }
 
     logger = logging.getLogger(__name__)
@@ -39,5 +40,5 @@ class ReasoningAnswerTask(GeneratorTask):
             **self.REASONING_ANSWER_GEN_PARAMS,
         }
         reasoning_answer_resp: Response = yield Request(req_dict)
-        return_dict["generated_reasoning_answer"] = reasoning_answer_resp.get_text().strip()
+        return_dict["generated_reasoning_answer"] = reasoning_answer_resp.get_text(n=4)
         return return_dict

@@ -72,7 +72,7 @@ class TracesTranslationTask(GeneratorTask):
     TRANSLATION_GEN_PARAMS: Dict[str, Any] = {
         "temperature": 0.0,
         "top_p": 1.0,
-        "max_tokens": 8192,
+        "max_tokens": 32768,
     }
 
     logger = logging.getLogger(__name__)
