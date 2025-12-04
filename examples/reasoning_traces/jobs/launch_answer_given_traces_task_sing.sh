@@ -23,7 +23,7 @@ set -euxo pipefail
 export LANGUAGE="${1:-fi}"
 export MODEL="${2:-Qwen/Qwen3-30B-A3B-Thinking-2507}"
 MODEL_NAME="$(basename "$MODEL")"
-INPUT_FILE="${input_file:-/scratch/project_462000353/adamhrin/dispatcher/examples/reasoning_traces/data/default-train-sample-100_reasoning_answers_DeepSeek-R1_en_translated_traces_DeepSeek-V3_fi_randomly_shuffled.jsonl}"
+INPUT_FILE="${input_file:-/scratch/project_462000353/adamhrin/dispatcher/examples/reasoning_traces/data/default-train-sample-100_reasoning_answers_DeepSeek-R1_en_translated_traces_DeepSeek-V3_fi.jsonl}"
 
 DATADIR="$(dirname "$INPUT_FILE")"
 FILE_NAME="$(basename "$INPUT_FILE" .jsonl)"
