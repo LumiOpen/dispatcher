@@ -5,3 +5,9 @@ __pycache__
 *.jsonl.checkpoint
 logs/
 pythonuserbase/
+.aiter
+.cache
+.config
+.triton
+stage_aiter.py
+container_entrypoint.sh

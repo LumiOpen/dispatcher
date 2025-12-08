@@ -9,7 +9,7 @@
 #SBATCH --exclusive=user
 #SBATCH --hint=nomultithread
 #SBATCH --gpus-per-node=mi250:8
-#SBATCH --account=project_462000353
+#SBATCH --account=project_462000963
 #SBATCH --output=logs/%j.out
 #SBATCH --error=logs/%j.err
 
@@ -47,73 +47,78 @@ MAX_MODEL_LEN=16384 # for efficiency, only as much as you think you need for eff
 # end configuration
 ###################
 
-# clean up any venv that might be inherited from the launch environment.
-unset VIRTUAL_ENV
-unset PYTHONHOME
-unset PYTHONPATH
-unset PYTHONSTARTUP
-unset PYTHONNOUSERSITE
-unset PYTHONEXECUTABLE
-
-# set up environment
-mkdir -p logs pythonuserbase
-export PYTHONUSERBASE="$(pwd)/pythonuserbase"
-module use /appl/local/csc/modulefiles
-module load pytorch/2.5
-
-# TODO REMOVE
-cd /scratch/project_462000353/jburdge/git/dispatcher
-pip install -e .
-cd -
-
-#pip install git+https://github.com/LumiOpen/dispatcher.git
+set -euxo pipefail
 
 # dispatcher server will run on the first node, before we launch the worker
 # tasks.
 export DISPATCHER_SERVER=$(hostname)
 export DISPATCHER_PORT=9999
-python -m dispatcher.server \
-    --infile $INPUT_FILE \
-    --outfile $OUTPUT_FILE \
-    --work-timeout $WORK_TIMEOUT \
-    --host 0.0.0.0 \
-    --port ${DISPATCHER_PORT} &
 
-sleep 10
+###############################################################################
+# Load launcher library - environment is automatically set up when sourced
+###############################################################################
+LAUNCHER_DIR="${SLURM_SUBMIT_DIR:-$PWD}"
+source "$LAUNCHER_DIR/singularity_launcher.sh"
 
-srun -l \
-    bash -c '
-    # Compute the starting GPU index for this task.
-    # SLURM_LOCALID is the index of the task on this node.
-    start_gpu=$(( SLURM_LOCALID * '"$GPUS_PER_TASK"' ))
-    GPU_IDS=""
-    for (( i=0; i < '"$GPUS_PER_TASK"'; i++ )); do
-        if [ -z "$GPU_IDS" ]; then
-            GPU_IDS="$(( start_gpu + i ))"
-        else
-            GPU_IDS="${GPU_IDS},$(( start_gpu + i ))"
-        fi
+# Start dispatcher server in background
+echo "Starting dispatcher server..."
+run_sing_python -m dispatcher.server \
+  --infile "$INPUT_FILE" \
+  --outfile "$OUTPUT_FILE" \
+  --work-timeout "$WORK_TIMEOUT" \
+  --host 0.0.0.0 \
+  --port "$DISPATCHER_PORT" &
+srv_pid=$!
+
+# Wait for server to be ready
+echo "Waiting for dispatcher server on $DISPATCHER_SERVER:$DISPATCHER_PORT..."
+for i in $(seq 1 120); do
+  (echo >/dev/tcp/$DISPATCHER_SERVER/${DISPATCHER_PORT}) >/dev/null 2>&1 && break || true
+  sleep 1
+done
+(echo >/dev/tcp/$DISPATCHER_SERVER/${DISPATCHER_PORT}) >/dev/null 2>&1 || {
+  echo "[ERROR] dispatcher server did not start"
+  exit 1
+}
+echo "Server is up."
+
+# Launch workers in containers
+# SLURM variables are automatically translated to SINGULARITYENV_* by the launcher
+# Environment is automatically set up by run_sing_bash
+srun -l bash -c "
+  run_sing_bash '
+    set -euxo pipefail
+
+    export HOME=/workspace
+    LOCALID=\${SLURM_LOCALID:-0}
+
+    # Compute GPU allocation (use LOCALID for per-node GPU assignment)
+    start_gpu=\$(( LOCALID * $GPUS_PER_TASK ))
+    GPU_IDS=\"\"
+    for (( i=0; i<$GPUS_PER_TASK; i++ )); do
+      if [ -z \"\$GPU_IDS\" ]; then GPU_IDS=\"\$(( start_gpu + i ))\"; else GPU_IDS=\"\${GPU_IDS},\$(( start_gpu + i ))\"; fi
     done
-    export CUDA_VISIBLE_DEVICES=$GPU_IDS
+    export HIP_VISIBLE_DEVICES=\"\$GPU_IDS\"
 
-    # Set ports uniquely per task (to avoid collisions)
-    export MASTER_PORT=$(( 7000 + SLURM_LOCALID ))
-    export VLLM_PORT=$(( 8000 + SLURM_LOCALID * 100 ))
+    # Use LOCALID for ports to ensure uniqueness across tasks on the same node
+    export MASTER_ADDR=\${MASTER_ADDR:-127.0.0.1}
+    export MASTER_PORT=\$(( 7000 + LOCALID ))
+    export VLLM_PORT=\$(( 8000 + LOCALID * 100 ))
 
-    echo "Launching task $SLURM_LOCALID (global id: $SLURM_PROCID) with GPU $GPU_IDS on $(hostname)"
+    echo \"Launching task LOCALID=\$LOCALID (global id: \$SLURM_PROCID) on GPUs \$HIP_VISIBLE_DEVICES (MASTER_PORT=\$MASTER_PORT, VLLM_PORT=\$VLLM_PORT)\"
 
-    module use /appl/local/csc/modulefiles
-    module load pytorch/2.5
-    export PYTHONUSERBASE=./pythonuserbase
-    PYTHONPATH=. python -m dispatcher.taskmanager.cli \
-        --dispatcher ${DISPATCHER_SERVER}:${DISPATCHER_PORT} \
-        --task '"$TASK"' \
-        --batch-size 1 \
-        --workers '"$WORKERS"' \
-        --max-model-len '"$MAX_MODEL_LEN"' \
-        --tensor-parallel '"$GPUS_PER_TASK"' \
-        --model '"$MODEL"' \
-        --port $VLLM_PORT \
-        --silence-vllm-logs
-'
+    # Run task manager worker
+    echo \"Starting dispatcher task manager...\"
+    run_python -m dispatcher.taskmanager.cli \
+      --dispatcher $DISPATCHER_SERVER:$DISPATCHER_PORT \
+      --task $TASK \
+      --batch-size $BATCH_SIZE \
+      --workers $WORKERS \
+      --max-model-len $MAX_MODEL_LEN \
+      --tensor-parallel $GPUS_PER_TASK \
+      --model $MODEL \
+      --port \$VLLM_PORT \
+      --request-timeout $REQUEST_TIMEOUT
+  '
+"
 
