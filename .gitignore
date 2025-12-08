@@ -10,4 +10,3 @@ pythonuserbase/
 .config
 .triton
 stage_aiter.py
-container_entrypoint.sh
