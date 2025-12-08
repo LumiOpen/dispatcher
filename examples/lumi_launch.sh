@@ -92,7 +92,6 @@ srun -l bash -c "
   run_sing_bash '
     set -euxo pipefail
 
-    export HOME=/workspace
     LOCALID=\${SLURM_LOCALID:-0}
 
     # Compute GPU allocation (use LOCALID for per-node GPU assignment)
