@@ -84,11 +84,8 @@ echo "Server is up."
 
 # Launch workers in containers
 # SLURM variables are automatically translated to SINGULARITYENV_* by the launcher
-# Environment is automatically set up when sourcing the launcher
+# Environment is automatically set up by run_sing_bash
 srun -l bash -c "
-  # Source launcher - setup singularity environment inside the worker automatically
-  source \"${LAUNCHER_DIR}/singularity_launcher.sh\"
-  
   run_sing_bash '
     set -euxo pipefail
 
@@ -109,9 +106,6 @@ srun -l bash -c "
     export VLLM_PORT=\$(( 8000 + LOCALID * 100 ))
 
     echo \"Launching task LOCALID=\$LOCALID (global id: \$SLURM_PROCID) on GPUs \$HIP_VISIBLE_DEVICES (MASTER_PORT=\$MASTER_PORT, VLLM_PORT=\$VLLM_PORT)\"
-
-    # Worker environment is automatically set up when sourcing inside container
-    source \"\$HOME/singularity_launcher.sh\"
 
     # Run task manager worker
     echo \"Starting dispatcher task manager...\"
