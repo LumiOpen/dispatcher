@@ -56,6 +56,7 @@ class VLLMServerManager:
         disable_log_requests: bool = True,
         disable_output: bool = False,
         enforce_eager: bool = False,
+        extra_vllm_args: Optional[List[str]] = None,
     ) -> 'VLLMServerManager':
         """
         Launches the vLLM OpenAI API server and waits for it to become healthy.
@@ -71,6 +72,7 @@ class VLLMServerManager:
             max_model_len: Optional max model length override.
             startup_timeout: Max seconds to wait for the server to pass health check.
             disable_log_requests: Whether to add --disable-log-requests flag.
+            extra_vllm_args: Optional list of additional command-line arguments to pass to vLLM server.
 
         Returns:
             An instance of VLLMServerManager managing the launched process.
@@ -88,6 +90,25 @@ class VLLMServerManager:
             "--gpu-memory-utilization", str(gpu_memory_utilization),
         ]
         
+        # #region agent log
+        import json
+        debug_log_path = "/shared_silo/scratch/adamhrin@amd.com/dispatcher/.cursor/debug.log"
+        try:
+            with open(debug_log_path, "a") as f:
+                log_entry = {
+                    "sessionId": "debug-session",
+                    "runId": "pre-fix",
+                    "hypothesisId": "A",
+                    "location": "vllm.py:83",
+                    "message": "vLLM command before quantization check",
+                    "data": {"cmd": cmd, "extra_vllm_args": extra_vllm_args, "model_name": model_name},
+                    "timestamp": int(time.time() * 1000)
+                }
+                f.write(json.dumps(log_entry) + "\n")
+        except Exception:
+            pass
+        # #endregion agent log
+        
         if disable_log_requests:
             cmd.append("--disable-log-requests")
         if api_key:
@@ -101,6 +122,55 @@ class VLLMServerManager:
 
         if enforce_eager:
             cmd.extend(["--enforce-eager"])
+
+        # Check if quantization is explicitly set in extra_vllm_args
+        quantization_set = False
+        if extra_vllm_args:
+            for i, arg in enumerate(extra_vllm_args):
+                if arg == "--quantization" or (i > 0 and extra_vllm_args[i-1] == "--quantization"):
+                    quantization_set = True
+                    break
+        
+        # #region agent log
+        try:
+            with open(debug_log_path, "a") as f:
+                log_entry = {
+                    "sessionId": "debug-session",
+                    "runId": "pre-fix",
+                    "hypothesisId": "B",
+                    "location": "vllm.py:120",
+                    "message": "Checking if quantization is set",
+                    "data": {"quantization_set": quantization_set, "extra_vllm_args": extra_vllm_args},
+                    "timestamp": int(time.time() * 1000)
+                }
+                f.write(json.dumps(log_entry) + "\n")
+        except Exception:
+            pass
+        # #endregion agent log
+        
+        # Explicitly disable FP8 quantization if not already set
+        if not quantization_set:
+            cmd.extend(["--quantization", "none"])
+            # #region agent log
+            try:
+                with open(debug_log_path, "a") as f:
+                    log_entry = {
+                        "sessionId": "debug-session",
+                        "runId": "pre-fix",
+                        "hypothesisId": "C",
+                        "location": "vllm.py:130",
+                        "message": "Added --quantization none to disable FP8",
+                        "data": {"cmd_after": cmd},
+                        "timestamp": int(time.time() * 1000)
+                    }
+                    f.write(json.dumps(log_entry) + "\n")
+            except Exception:
+                pass
+            # #endregion agent log
+
+        # Append any extra vLLM arguments
+        if extra_vllm_args:
+            cmd.extend(extra_vllm_args)
 
         stdout, stderr = subprocess.DEVNULL, subprocess.DEVNULL
         if not disable_output:
@@ -181,7 +251,8 @@ class VLLMBackendManager(BackendManager):
                  request_timeout: int = 300,
                  health_check_interval: int = 60,
                  disable_output: bool = False,
-                 enforce_eager: bool = False):
+                 enforce_eager: bool = False,
+                 extra_vllm_args: Optional[List[str]] = None):
         """
         Initialize a VLLM backend manager.
         
@@ -200,6 +271,7 @@ class VLLMBackendManager(BackendManager):
             health_check_interval: How often to perform health checks (in seconds)
             disable_output: Redirect vllm output to /dev/null
             enforce_eager: run vllm in eager mode
+            extra_vllm_args: Optional list of additional command-line arguments to pass to vLLM server
         """
         self.model_name = model_name
         self.host = host
@@ -230,6 +302,7 @@ class VLLMBackendManager(BackendManager):
                     disable_log_requests=True,
                     disable_output=disable_output,
                     enforce_eager=enforce_eager,
+                    extra_vllm_args=extra_vllm_args,
                 )
                 self.logger.info(f"Launched vLLM server for model {model_name}")
             except Exception as e:
