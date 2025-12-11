@@ -90,6 +90,25 @@ class VLLMServerManager:
             "--gpu-memory-utilization", str(gpu_memory_utilization),
         ]
         
+        # #region agent log
+        import json
+        debug_log_path = "/shared_silo/scratch/adamhrin@amd.com/dispatcher/.cursor/debug.log"
+        try:
+            with open(debug_log_path, "a") as f:
+                log_entry = {
+                    "sessionId": "debug-session",
+                    "runId": "pre-fix",
+                    "hypothesisId": "A",
+                    "location": "vllm.py:83",
+                    "message": "vLLM command before quantization check",
+                    "data": {"cmd": cmd, "extra_vllm_args": extra_vllm_args, "model_name": model_name},
+                    "timestamp": int(time.time() * 1000)
+                }
+                f.write(json.dumps(log_entry) + "\n")
+        except Exception:
+            pass
+        # #endregion agent log
+        
         if disable_log_requests:
             cmd.append("--disable-log-requests")
         if api_key:
