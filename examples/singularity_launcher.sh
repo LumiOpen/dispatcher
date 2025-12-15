@@ -7,7 +7,7 @@
 ###############################################################################
 
 # Default container and cache paths
-: "${LAUNCHER_IMG:=/shared_silo/scratch/containers/rocm_vllm_rocm7.0.0_vllm_0.11.1_20251103.sif}"
+: "${LAUNCHER_IMG:=/shared_silo/scratch/containers/7.x-preview_rocm7.2_preview_ubuntu_22.04_vlm_0.10.1_instinct_20251029.sif}"
 : "${LAUNCHER_PYEXEC_IN_IMG:=python3}"
 : "${LAUNCHER_PYTHON_VERSION:=3.12}"
 
@@ -27,7 +27,6 @@ setup_singularity_environment() {
   export HF_HOME="/shared_silo/scratch/adamhrin@amd.com/hf_cache"
   export TRANSFORMERS_CACHE="$HF_HOME"
   export TORCHINDUCTOR_CACHE="/shared_silo/scratch/adamhrin@amd.com/torch_inductor_cache"
-  export TRITON_DISABLE_CACHE=1
   mkdir -p "$HF_HOME" "$TORCHINDUCTOR_CACHE"
 
   # Set offline mode flags if configured
@@ -69,7 +68,6 @@ setup_singularity_environment() {
   export SINGULARITYENV_HF_HOME="$HF_HOME"
   export SINGULARITYENV_TRANSFORMERS_CACHE="$TRANSFORMERS_CACHE"
   export SINGULARITYENV_TORCHINDUCTOR_CACHE="$TORCHINDUCTOR_CACHE"
-  export SINGULARITYENV_TRITON_DISABLE_CACHE=1
   export SINGULARITYENV_PYTHONUSERBASE="$PYUSERBASE"
   export SINGULARITYENV_PYTHONPATH="$PYUSERPKG:\${PYTHONPATH-}"
   export SINGULARITYENV_PYEXEC_IN_IMG="$PYEXEC_IN_IMG"
@@ -84,9 +82,9 @@ setup_singularity_environment() {
   fi
 
   # vLLM/ROCm flags
-  export SINGULARITYENV_SAFETENSORS_FAST_GPU=1
-  export SINGULARITYENV_VLLM_ROCM_USE_AITER=1
-  export SINGULARITYENV_VLLM_USE_V1=1
+  # based on https://rocm.docs.amd.com/en/docs-7.0-docker/benchmark-docker/inference-vllm-deepseek-r1-fp8.html
+  # Note: this flag VLLM_ROCM_QUICK_REDUCE_QUANTIZATION may not be compatible with MI325X GPUs
+  # export SINGULARITYENV_VLLM_ROCM_QUICK_REDUCE_QUANTIZATION=INT4
   export SINGULARITYENV_VLLM_TARGET_DEVICE=rocm
   export SINGULARITYENV_VLLM_WORKER_MULTIPROC_METHOD=spawn
   export SINGULARITYENV_HIP_ARCHITECTURES=gfx942
@@ -132,19 +130,6 @@ install_dispatcher_packages() {
 ###############################################################################
 setup_cleanup_trap() {
   trap 'kill "${srv_pid:-0}" 2>/dev/null || true' EXIT
-}
-
-###############################################################################
-# run_python
-# Helper function to run Python commands when inside a container
-# Usage: run_python -m module.name args...  or  run_python script.py args...
-###############################################################################
-run_python() {
-  is_inside_container || {
-    echo "[singularity_launcher] ERROR: run_python called outside container" >&2
-    return 1
-  }
-  "${PYEXEC_IN_IMG:-python3}" "$@"
 }
 
 ###############################################################################
@@ -204,24 +189,24 @@ run_sing_bash() {
     export CC=\"\${CC:-}\"
     export CXX=\"\${CXX:-}\"
     export PYEXEC_IN_IMG=\"\${PYEXEC_IN_IMG:-}\"
-    export TRITON_DISABLE_CACHE=\"\${TRITON_DISABLE_CACHE:-1}\"
     
     # Setup Python environment
-    export PYTHONUSERBASE=\"/workspace/pythonuserbase\"
+    export PYTHONUSERBASE=\"\${PYTHONUSERBASE:-/workspace/pythonuserbase}\"
     export PATH=\"\$PYTHONUSERBASE/bin:\$PATH\"
     export PYTHONPATH=\"\$PYTHONUSERBASE/lib/python${LAUNCHER_PYTHON_VERSION}/site-packages:\${PYTHONPATH-}\"
     export PYTHONNOUSERSITE=
     
     # vLLM/ROCm flags
-    export SAFETENSORS_FAST_GPU=\${SAFETENSORS_FAST_GPU:-1}
-    export VLLM_ROCM_USE_AITER=\${VLLM_ROCM_USE_AITER:-1}
-    export VLLM_USE_V1=\${VLLM_USE_V1:-1}
     export VLLM_TARGET_DEVICE=\${VLLM_TARGET_DEVICE:-rocm}
     export VLLM_WORKER_MULTIPROC_METHOD=\${VLLM_WORKER_MULTIPROC_METHOD:-spawn}
     export HIP_ARCHITECTURES=\${HIP_ARCHITECTURES:-gfx942}
+
+    # from https://rocm.docs.amd.com/en/docs-7.0-docker/benchmark-docker/inference-vllm-deepseek-r1-fp8.html
+    # Note: this flag may not be compatible with MI325X GPUs
+    # export VLLM_ROCM_QUICK_REDUCE_QUANTIZATION=\"\${VLLM_ROCM_QUICK_REDUCE_QUANTIZATION:-INT4}\"
     
     # Create necessary directories
-    export TORCH_EXTENSIONS_DIR=/dev/shm/torch_ext
+    export TORCH_EXTENSIONS_DIR=\"\${TORCH_EXTENSIONS_DIR:-/dev/shm/torch_ext}\"
     mkdir -p \"\$TORCH_EXTENSIONS_DIR\" 2>/dev/null || true
     
     # Define run_python helper function
