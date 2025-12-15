@@ -39,9 +39,13 @@ WORK_TIMEOUT=7200   # time for dispatcher to give up on a work item and reissue 
 # Typically on Lumi 70B = 4 GPUs, 34B = 2 GPUs, 8B = 1 GPU
 # --ntasks-per-node should be int(8 / GPUS_PER_TASK)
 #
-MODEL=/shared_silo/scratch/models/DeepSeek-R1
+MODEL=/shared_silo/scratch/models/DeepSeek-R1-0528
 GPUS_PER_TASK=8     # enough for the model and large batch size
-MAX_MODEL_LEN=65536 # for efficiency, only as much as you think you need for efficiency
+# based on https://rocm.docs.amd.com/en/docs-7.0-docker/benchmark-docker/inference-vllm-deepseek-r1-fp8.html
+MAX_MODEL_LEN=32768 # Must be >= the input + the output lengths.
+MAX_SEQ_LEN_TO_CAPTURE=32768  # Beneficial to set this to max_model_len.
+MAX_NUM_SEQS=1024
+MAX_NUM_BATCHED_TOKENS=131072 # Smaller values may result in better TTFT but worse TPOT / throughput.
 
 # end configuration
 ###################
@@ -105,6 +109,8 @@ srun -l bash -c "
     echo \"Launching task LOCALID=\$LOCALID (global id: \$SLURM_PROCID) on GPUs \$HIP_VISIBLE_DEVICES (MASTER_PORT=\$MASTER_PORT, VLLM_PORT=\$VLLM_PORT)\"
 
     # Run task manager worker
+    # Based on https://rocm.docs.amd.com/en/docs-7.0-docker/benchmark-docker/inference-vllm-deepseek-r1-fp8.html
+    # Note: Using `--kv-cache-dtype fp8` with DeepSeek may cause accuracy issues
     echo \"Starting dispatcher task manager...\"
     run_python -m dispatcher.taskmanager.cli \
       --dispatcher $DISPATCHER_SERVER:$DISPATCHER_PORT \
@@ -116,7 +122,7 @@ srun -l bash -c "
       --model $MODEL \
       --port \$VLLM_PORT \
       --request-timeout $REQUEST_TIMEOUT \
-      --vllm-extra-args \"--block-size 1 --quantization fp8\"
+      --vllm-extra-args \"--swap-space 64 --max-num-seqs ${MAX_NUM_SEQS} --no-enable-prefix-caching --max-num-batched-tokens ${MAX_NUM_BATCHED_TOKENS} --block-size 1 --gpu-memory-utilization 0.95 --async-scheduling --quantization fp8\"
   '
 "
 
