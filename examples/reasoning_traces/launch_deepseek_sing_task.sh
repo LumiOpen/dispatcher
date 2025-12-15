@@ -110,7 +110,7 @@ srun -l bash -c "
 
     # Run task manager worker
     # Based on https://rocm.docs.amd.com/en/docs-7.0-docker/benchmark-docker/inference-vllm-deepseek-r1-fp8.html
-    # Note: Using `--kv-cache-dtype fp8` with DeepSeek may cause accuracy issues
+    # Note: Using --kv-cache-dtype fp8 with DeepSeek may cause accuracy issues
     echo \"Starting dispatcher task manager...\"
     run_python -m dispatcher.taskmanager.cli \
       --dispatcher $DISPATCHER_SERVER:$DISPATCHER_PORT \
