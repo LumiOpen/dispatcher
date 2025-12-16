@@ -1,14 +1,14 @@
 #!/bin/bash
-#SBATCH --job-name=task_inference
-#SBATCH --nodes=1
+#SBATCH --job-name=reasoning
+#SBATCH --nodes=2
 #SBATCH --partition=amd-tw-verification
-#SBATCH --time=00-01:00:00
+#SBATCH --time=00-05:00:00
 #SBATCH --ntasks-per-node=1
 #SBATCH --mem=480G
 #SBATCH --cpus-per-task=7
 #SBATCH --exclusive=user
 #SBATCH --hint=nomultithread
-#SBATCH --gpus=8
+#SBATCH --gpus-per-node=8
 #SBATCH --output=logs/%j.out
 #SBATCH --error=logs/%j.err
 
@@ -16,8 +16,8 @@
 ###
 # configure the following.
 
-INPUT_FILE=/shared_silo/scratch/adamhrin@amd.com/dispatcher/examples/reasoning_traces/data/default-train-sample-100_translations_DeepSeek-V3_fi.jsonl
-OUTPUT_FILE=/shared_silo/scratch/adamhrin@amd.com/dispatcher/examples/reasoning_traces/data/default-train-sample-100_translations_DeepSeek-V3_fi_answers_DeepSeek-R1_fi.jsonl
+INPUT_FILE=/shared_silo/scratch/adamhrin@amd.com/dispatcher/examples/reasoning_traces/data/default-train-sample-1k_translations_DeepSeek-V3_fi.jsonl
+OUTPUT_FILE=/shared_silo/scratch/adamhrin@amd.com/dispatcher/examples/reasoning_traces/data/default-train-sample-1k_translations_DeepSeek-V3_fi_answers_DeepSeek-R1_fi.jsonl
 TASK=tasks.reasoning_answer_task.ReasoningAnswerTask
 
 # generation parameters
