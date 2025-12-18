@@ -87,7 +87,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--gold_path", 
         type=str, 
-        default="/scratch/project_462000353/posttraining_data/DeepScaleR-Preview-Dataset/default-train-sample-100.jsonl",
+        default="/scratch/project_462000963/posttraining_data/DeepScaleR-Preview-Dataset/default-train-sample-100.jsonl",
         help="Path to the file containing reference answers (default: /scratch/project_462000353/posttraining_data/DeepScaleR-Preview-Dataset/default-train-sample-100.jsonl)"
     )
     parser.add_argument(
