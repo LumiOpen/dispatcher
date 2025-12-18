@@ -60,7 +60,7 @@ export DISPATCHER_PORT=9999
 ###############################################################################
 # Load launcher library - environment is automatically set up when sourced
 ###############################################################################
-source /shared_silo/scratch/adamhrin@amd.com/dispatcher/examples/singularity_launcher.sh
+source /shared_silo/scratch/adamhrin@amd.com/dispatcher/examples/reasoning_traces/singularity_launcher.sh
 
 # Start dispatcher server in background
 echo "Starting dispatcher server..."

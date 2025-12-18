@@ -10,7 +10,7 @@ from dispatcher.taskmanager.task import TaskFailed
 import os
 import logging
 
-__all__ = ["TracesTranslationTask"]
+__all__ = ["ReasoningTranslationTask"]
 
 LANGUAGE = os.environ.get("LANGUAGE")
 
@@ -66,10 +66,17 @@ Text to translate:
 """
 
 
-class TracesTranslationTask(GeneratorTask):
-    """Reasoning traces line-by-line translation."""
-    
-    TRANSLATION_GEN_PARAMS: Dict[str, Any] = {
+class ReasoningTranslationTask(GeneratorTask):
+    """Translation of prompts + reasoning traces."""
+
+
+    PROMPT_TRANSLATION_GEN_PARAMS: Dict[str, Any] = {
+        "temperature": 0.0,
+        "top_p": 1.0,
+        "max_tokens": 8192,
+    }
+
+    TRACES_TRANSLATION_GEN_PARAMS: Dict[str, Any] = {
         "temperature": 0.0,
         "top_p": 1.0,
         "max_tokens": 32768,
@@ -85,26 +92,55 @@ class TracesTranslationTask(GeneratorTask):
         self.logger.info(f"Processing sample id: {self.data.get('id')}")
         return_dict = self.data.copy()
 
-        translated_traces = []
-        generated_answer = self.data.get("generated_reasoning_answer", [])
-        for answer in generated_answer:
-            # Split by </think> tag and take only the first part (reasoning traces)
-            traces_part = answer.split("</think>")[0]
-            # Create translation request for the entire traces text
-            input_messages = [
-                {
-                    "role": "user", 
-                    "content": DEEPSEEK_TRANSLATION_PROMPT.format(
-                        language=LANGUAGE_NAMES.get(LANGUAGE, ["Finnish"])[0], 
-                        text=traces_part
-                    )
-                }
-            ]
-            # Request translation
-            resp: Response = yield Request({"messages": input_messages, **self.TRANSLATION_GEN_PARAMS})
-            translated_traces.append(resp.get_text().strip())
+        # read prompt from input.content with "role"=="user"
+        prompt = next((item for item in self.data.get("input", []) if item.get("role") == "user"), {}).get("content", "")
+
+        # create the first translation request for the prompt
+        input_messages = [
+            {
+                "role": "user", 
+                "content": DEEPSEEK_TRANSLATION_PROMPT.format(
+                    language=LANGUAGE_NAMES.get(LANGUAGE, ["Finnish"])[0], 
+                    text=prompt
+                )
+            }
+        ]
+        # Request translation
+        try:
+            resp: Response = yield Request({"messages": input_messages, **self.PROMPT_TRANSLATION_GEN_PARAMS})
+        except Exception as e:
+            raise TaskFailed(
+                message=f"Error translating prompt: {e}", 
+                error_type="prompt_translation_error"
+            )
+        translated_prompt = resp.get_text().strip()
+
+        # read traces from output
+        traces = self.data.get("output", {})
+        # Split by </think> tag and take only the first part (reasoning traces)
+        traces_part = traces.split("</think>")[0]
+        # create the second translation request for the traces
+        input_messages = [
+            {
+                "role": "user", 
+                "content": DEEPSEEK_TRANSLATION_PROMPT.format(
+                    language=LANGUAGE_NAMES.get(LANGUAGE, ["Finnish"])[0], 
+                    text=traces_part
+                )
+            }
+        ]
+        # Request translation
+        try:
+            resp: Response = yield Request({"messages": input_messages, **self.TRACES_TRANSLATION_GEN_PARAMS})
+        except Exception as e:
+            raise TaskFailed(
+                message=f"Error translating traces: {e}", 
+                error_type="traces_translation_error"
+            )
+        translated_traces = resp.get_text().strip()
         
         # Add to return dict
+        return_dict["translated_prompt"] = translated_prompt
         return_dict["translated_traces"] = translated_traces
         return return_dict
 
