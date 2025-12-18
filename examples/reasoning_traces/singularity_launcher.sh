@@ -7,9 +7,8 @@
 ###############################################################################
 
 # Default container and cache paths
-: "${LAUNCHER_IMG:=/scratch/project_462000353/containers/vllm_v10.1.1.sif}"
-: "${LAUNCHER_HF_CACHE_PROJECT:=project_462000963}"
-: "${LAUNCHER_PYEXEC_IN_IMG:=/opt/miniconda3/envs/pytorch/bin/python}"
+: "${LAUNCHER_IMG:=/shared_silo/scratch/containers/7.x-preview_rocm7.2_preview_ubuntu_22.04_vlm_0.10.1_instinct_20251029.sif}"
+: "${LAUNCHER_PYEXEC_IN_IMG:=python3}"
 : "${LAUNCHER_PYTHON_VERSION:=3.12}"
 
 # Offline mode flags (set to empty string to disable)
@@ -25,9 +24,9 @@ setup_singularity_environment() {
   mkdir -p logs pythonuserbase
 
   # Caches MUST be on a writable, bound path
-  export HF_HOME="/scratch/${LAUNCHER_HF_CACHE_PROJECT}/hf_cache"
+  export HF_HOME="/shared_silo/scratch/adamhrin@amd.com/hf_cache"
   export TRANSFORMERS_CACHE="$HF_HOME"
-  export TORCHINDUCTOR_CACHE="/scratch/${LAUNCHER_HF_CACHE_PROJECT}/torch_inductor_cache"
+  export TORCHINDUCTOR_CACHE="/shared_silo/scratch/adamhrin@amd.com/torch_inductor_cache"
   mkdir -p "$HF_HOME" "$TORCHINDUCTOR_CACHE"
 
   # Set offline mode flags if configured
@@ -55,7 +54,6 @@ setup_singularity_environment() {
   # Paths inside the container
   export PYUSERBASE="/workspace/pythonuserbase"
   export PYUSERPKG="$PYUSERBASE/lib/python${LAUNCHER_PYTHON_VERSION}/site-packages"
-  export AITER_INSTALL="/workspace/.aiter/jit/install"
 
   # --- Define a 100% clean PATH for the container ---
   # This stops inheriting host paths that can cause issues
@@ -71,7 +69,7 @@ setup_singularity_environment() {
   export SINGULARITYENV_TRANSFORMERS_CACHE="$TRANSFORMERS_CACHE"
   export SINGULARITYENV_TORCHINDUCTOR_CACHE="$TORCHINDUCTOR_CACHE"
   export SINGULARITYENV_PYTHONUSERBASE="$PYUSERBASE"
-  export SINGULARITYENV_PYTHONPATH="$PYUSERPKG:$AITER_INSTALL:\${PYTHONPATH-}"
+  export SINGULARITYENV_PYTHONPATH="$PYUSERPKG:\${PYTHONPATH-}"
   export SINGULARITYENV_PYEXEC_IN_IMG="$PYEXEC_IN_IMG"
   export SINGULARITYENV_DISPATCHER_SERVER="${DISPATCHER_SERVER}"
   export SINGULARITYENV_DISPATCHER_PORT="${DISPATCHER_PORT}"
@@ -84,17 +82,20 @@ setup_singularity_environment() {
   fi
 
   # vLLM/ROCm flags
-  export SINGULARITYENV_VLLM_USE_V1=1
+  # based on https://rocm.docs.amd.com/en/docs-7.0-docker/benchmark-docker/inference-vllm-deepseek-r1-fp8.html
+  # Note: this flag VLLM_ROCM_QUICK_REDUCE_QUANTIZATION may not be compatible with MI325X GPUs
+  # export SINGULARITYENV_VLLM_ROCM_QUICK_REDUCE_QUANTIZATION=INT4
   export SINGULARITYENV_VLLM_TARGET_DEVICE=rocm
   export SINGULARITYENV_VLLM_WORKER_MULTIPROC_METHOD=spawn
-  export SINGULARITYENV_HIP_ARCHITECTURES=gfx90a
+  export SINGULARITYENV_HIP_ARCHITECTURES=gfx942
+  # Work around missing AIter fused GEMM config JSONs in some container builds.
+  # Disables the Triton fused shared-experts path that tries to open
+  # `.../aiter/ops/triton/configs/gemm/MI300X-FUSED-GEMM-A8W8_BLOCKSCALE-A16W16.json`.
+  export SINGULARITYENV_VLLM_ROCM_USE_AITER_TRITON_FUSED_SHARED_EXPERTS=0
   
   # Worker environment variables (for use inside container)
   export SINGULARITYENV_TORCH_EXTENSIONS_DIR=/dev/shm/torch_ext
   export SINGULARITYENV_PYTHONNOUSERSITE=
-
-  # Create stage_aiter.py script so it's available in the container
-  get_aiter_staging_script > "${PWD:-$(pwd)}/stage_aiter.py"
 }
 
 ###############################################################################
@@ -104,11 +105,9 @@ setup_singularity_environment() {
 ###############################################################################
 get_binds() {
   local binds=(
-    -B /scratch/project_462000353
-    -B /flash/project_462000353
-    -B /scratch/project_462000394/containers/for-turkunlp-team
-    -B /pfs/lustrep3/scratch/project_462000394/containers/for-turkunlp-team
-    -B /scratch/project_462000963:/scratch/project_462000963:rw
+    -B /shared_silo/scratch/adamhrin@amd.com:/shared_silo/scratch/adamhrin@amd.com:rw
+    -B /shared_silo/scratch/models:/shared_silo/scratch/models:ro
+    -B /shared_silo/scratch/datasets:/shared_silo/scratch/datasets:ro
     -B "${PWD:-$(pwd)}:/workspace"
   )
   if [ -f /usr/share/libdrm/amdgpu.ids ]; then
@@ -127,139 +126,7 @@ install_dispatcher_packages() {
   local binds_array
   mapfile -t binds_array < <(get_binds)
   singularity exec --rocm --cleanenv "${binds_array[@]}" "$IMG" bash --noprofile --norc -c \
-    "$PIP_IN_IMG install --user --upgrade 'git+https://github.com/LumiOpen/dispatcher.git' ninja"
-}
-
-###############################################################################
-# get_aiter_staging_script
-# Returns the Python script for staging AIter module
-# This script must be run inside the container on each worker node
-###############################################################################
-get_aiter_staging_script() {
-  cat <<'AITER_SCRIPT'
-import os, sys, glob, shutil, importlib, subprocess, pathlib
-
-try:
-    import ninja
-    print(f"[stage_aiter] Ninja import OK: {ninja.__file__}")
-except ImportError as e:
-    print(f"[stage_aiter] FATAL: Ninja import failed, though it should be on PATH. {e!r}")
-    sys.exit(1)
-
-home=os.path.expanduser("~") # This will now be /workspace
-print(f"[stage_aiter] Using HOME={home}")
-jit_root=os.path.join(home,".aiter","jit")
-build_root=os.path.join(jit_root,"build")
-inst_root=os.path.join(home,".aiter","jit","install") # Must match PYTHONPATH
-pkg_root=os.path.join(inst_root,"private_aiter")
-pkg_jit=os.path.join(pkg_root,"jit")
-os.makedirs(pkg_jit, exist_ok=True)
-pathlib.Path(os.path.join(pkg_root,"__init__.py")).write_text("")
-pathlib.Path(os.path.join(pkg_jit,"__init__.py")).write_text("")
-try:
-    import aiter
-    from aiter.ops import enum
-    print("[stage_aiter] AIter prewarm build triggered.")
-except Exception as e:
-    print(f"[stage_aiter] AIter prewarm raised: {e!r}")
-# This is where the build process runs
-hits=glob.glob(os.path.join(build_root,"**","module_aiter_enum*.so"), recursive=True)
-if not hits:
-    raise SystemExit("[stage_aiter] FATAL: No compiled module_aiter_enum*.so found in " + build_root)
-so_src=max(hits, key=os.path.getmtime)
-dst=os.path.join(pkg_jit,"module_aiter_enum.so")
-
-# Check if destination already exists and points to the correct source
-need_update = True
-if os.path.lexists(dst):
-    try:
-        if os.path.islink(dst):
-            # Check if symlink points to the correct source
-            actual_target = os.readlink(dst)
-            # Resolve relative symlinks
-            if not os.path.isabs(actual_target):
-                actual_target = os.path.normpath(os.path.join(os.path.dirname(dst), actual_target))
-            # Check if the resolved target is the same as our source
-            if os.path.exists(actual_target) and os.path.exists(so_src):
-                try:
-                    if os.path.samefile(actual_target, so_src):
-                        print(f"[stage_aiter] Symlink already exists and points to correct source: {dst} -> {so_src}")
-                        need_update = False
-                    else:
-                        print(f"[stage_aiter] Symlink exists but points to different source. Removing old symlink.")
-                        os.remove(dst)
-                except OSError:
-                    # samefile can fail in some cases, just remove and recreate
-                    print(f"[stage_aiter] Could not verify symlink target, removing and recreating.")
-                    os.remove(dst)
-            else:
-                print(f"[stage_aiter] Symlink target or source missing, removing old symlink.")
-                os.remove(dst)
-        elif os.path.exists(dst):
-            # It's a regular file, check if it's the same file or needs updating
-            try:
-                if os.path.samefile(dst, so_src):
-                    print(f"[stage_aiter] Destination is already the same file as source: {dst}")
-                    need_update = False
-                else:
-                    print(f"[stage_aiter] Destination exists but is different. Removing old file.")
-                    os.remove(dst)
-            except OSError:
-                # samefile can fail, just remove and recreate
-                print(f"[stage_aiter] Could not verify file, removing and recreating.")
-                os.remove(dst)
-    except Exception as e:
-        # If anything goes wrong checking, just remove and recreate
-        print(f"[stage_aiter] Error checking existing destination: {e}, removing and recreating.")
-        try:
-            os.remove(dst)
-        except:
-            pass
-
-if need_update:
-    try:
-        os.symlink(so_src,dst)
-        print(f"[stage_aiter] Symlinked: {dst} -> {so_src}")
-    except OSError as e:
-        # If symlink fails (e.g., cross-filesystem or file exists), try copy
-        # But first check if they're the same file
-        try:
-            if os.path.exists(dst) and os.path.samefile(so_src, dst):
-                print(f"[stage_aiter] Source and destination are the same file, skipping copy")
-            else:
-                shutil.copy2(so_src,dst)
-                print(f"[stage_aiter] Copied: {so_src} -> {dst}")
-        except (OSError, shutil.SameFileError) as copy_err:
-            # If copy also fails because they're the same file, that's actually OK
-            if "same file" in str(copy_err).lower() or isinstance(copy_err, shutil.SameFileError):
-                print(f"[stage_aiter] Source and destination are the same file, no action needed")
-            else:
-                raise
-
-# Ensure the file exists and is readable
-if not os.path.exists(dst):
-    raise SystemExit(f"[stage_aiter] FATAL: Destination file {dst} does not exist after symlink/copy")
-if not os.access(dst, os.R_OK):
-    raise SystemExit(f"[stage_aiter] FATAL: Destination file {dst} is not readable")
-
-# Ensure inst_root is in sys.path (it should already be via PYTHONPATH, but be explicit)
-if inst_root not in sys.path:
-    sys.path.insert(0, inst_root)
-
-# Clear any cached imports for this module to force a fresh import
-module_name = "private_aiter.jit.module_aiter_enum"
-if module_name in sys.modules:
-    del sys.modules[module_name]
-# Also clear parent modules if they exist
-for mod in list(sys.modules.keys()):
-    if mod.startswith("private_aiter"):
-        del sys.modules[mod]
-
-# Now import the module
-m=importlib.import_module(module_name)
-print(f"[stage_aiter] Successfully imported {module_name} from {m.__file__}")
-print("[stage_aiter] Staging complete.")
-AITER_SCRIPT
+    "$PIP_IN_IMG install --user --upgrade -e /shared_silo/scratch/adamhrin@amd.com/dispatcher ninja"
 }
 
 ###############################################################################
@@ -268,44 +135,6 @@ AITER_SCRIPT
 ###############################################################################
 setup_cleanup_trap() {
   trap 'kill "${srv_pid:-0}" 2>/dev/null || true' EXIT
-}
-
-###############################################################################
-# import_container_config
-# Imports container configuration from parent environment into worker context
-# Variables are already available via SINGULARITYENV_* from host, just ensure they're exported
-###############################################################################
-import_container_config() {
-  # These variables are passed via SINGULARITYENV_* and available in container
-  # Just ensure they're exported (they should already be set by Singularity)
-  export HF_HOME="${HF_HOME:-}"
-  export TRANSFORMERS_CACHE="${TRANSFORMERS_CACHE:-}"
-  export TORCHINDUCTOR_CACHE="${TORCHINDUCTOR_CACHE:-}"
-  export CC="${CC:-}"
-  export CXX="${CXX:-}"
-  export PYEXEC_IN_IMG="${PYEXEC_IN_IMG:-}"
-}
-
-###############################################################################
-# run_aiter_staging
-# Runs the AIter staging script inside a container
-###############################################################################
-run_aiter_staging() {
-  get_aiter_staging_script > /workspace/stage_aiter.py
-  run_python /workspace/stage_aiter.py
-}
-
-###############################################################################
-# run_python
-# Helper function to run Python commands when inside a container
-# Usage: run_python -m module.name args...  or  run_python script.py args...
-###############################################################################
-run_python() {
-  is_inside_container || {
-    echo "[singularity_launcher] ERROR: run_python called outside container" >&2
-    return 1
-  }
-  "${PYEXEC_IN_IMG:-python3}" "$@"
 }
 
 ###############################################################################
@@ -367,31 +196,138 @@ run_sing_bash() {
     export PYEXEC_IN_IMG=\"\${PYEXEC_IN_IMG:-}\"
     
     # Setup Python environment
-    export PYTHONUSERBASE=\"/workspace/pythonuserbase\"
+    export PYTHONUSERBASE=\"\${PYTHONUSERBASE:-/workspace/pythonuserbase}\"
     export PATH=\"\$PYTHONUSERBASE/bin:\$PATH\"
+    # AIter JIT writes importable artifacts into a writable install root.
+    # Without this, it may attempt to write into system site-packages and later fail imports like:
+    #   No module named 'aiter.jit.module_gemm_common'
     export AITER_INSTALL=\"\$HOME/.aiter/jit/install\"
+    mkdir -p \"\$AITER_INSTALL\" \"\$AITER_INSTALL/aiter/jit\" \"\$AITER_INSTALL/private_aiter/jit\" 2>/dev/null || true
     export PYTHONPATH=\"\$PYTHONUSERBASE/lib/python${LAUNCHER_PYTHON_VERSION}/site-packages:\$AITER_INSTALL:\${PYTHONPATH-}\"
     export PYTHONNOUSERSITE=
+    # Enable AIter import diagnostics by default (can be disabled by setting AITER_IMPORT_DEBUG=0).
+    export AITER_IMPORT_DEBUG=\"\${AITER_IMPORT_DEBUG:-1}\"
+
+    # Ensure Python can import AIter-built extension modules (e.g. module_gemm_common.so).
+    # Root issue: `aiter.jit.core` builds modules under `~/.aiter/jit/` but imports them as
+    # `aiter.jit.<module>` from the installed package path (dist-packages/aiter/jit), which
+    # doesn't include `~/.aiter/jit` on `aiter.jit.__path__`.
+    #
+    # Using a `.pth` file in the *user site-packages* is the most reliable way to run early,
+    # for every Python process (including vLLM multiprocess workers).
+    user_site=\"\$PYTHONUSERBASE/lib/python${LAUNCHER_PYTHON_VERSION}/site-packages\"
+    mkdir -p \"\$user_site\" 2>/dev/null || true
+    cat >\"\$user_site/aiter_jit_pathfix.pth\" <<'PTH'
+import os,sys,importlib; aj=importlib.import_module('aiter.jit'); p=os.path.join(os.path.expanduser('~'),'.aiter','jit'); (aj.__path__.append(p) if (os.path.isdir(p) and p not in list(getattr(aj,'__path__',[]))) else None); dbg=os.environ.get('AITER_IMPORT_DEBUG','0'); (sys.stderr.write('[aiter_import_debug] aiter.jit.__path__ extended with '+p+'\\n') if dbg not in ('0','','false','False','no','No') else None)
+PTH
+
+    # Make AIter's build output importable as `aiter.jit.*`.
+    # AIter often writes compiled extension modules (e.g. module_gemm_common.so) under:
+    #   \$HOME/.aiter/jit/
+    # but the Python package `aiter.jit` lives under system site-packages.
+    # We bridge that gap by extending `aiter.jit.__path__` at interpreter startup.
+    cat >\"\$AITER_INSTALL/sitecustomize.py\" <<'PY'
+import os
+import sys
+import glob
+import importlib
+import importlib.util
+
+def _dbg(msg: str) -> None:
+    # NOTE: avoid double quotes in this file because it's embedded inside a bash
+    # double-quoted string in the launcher.
+    if os.environ.get('AITER_IMPORT_DEBUG', '0') not in ('0', '', 'false', 'False', 'no', 'No'):
+        try:
+            sys.stderr.write(f'[aiter_import_debug] {msg}\n')
+            sys.stderr.flush()
+        except Exception:
+            pass
+
+def _maybe_extend_aiter_jit_path() -> None:
+    _dbg(f'sitecustomize loaded: sys.executable={sys.executable}')
+    _dbg('env HOME={} AITER_INSTALL={} PYTHONPATH={}'.format(
+        os.environ.get('HOME'),
+        os.environ.get('AITER_INSTALL'),
+        os.environ.get('PYTHONPATH'),
+    ))
+    _dbg('env SLURM_PROCID={} SLURM_LOCALID={} SLURM_JOB_ID={}'.format(
+        os.environ.get('SLURM_PROCID'),
+        os.environ.get('SLURM_LOCALID'),
+        os.environ.get('SLURM_JOB_ID'),
+    ))
+    try:
+        _dbg(f'sys.path[0:8]={sys.path[0:8]}')
+    except Exception:
+        pass
+    try:
+        import aiter
+        _dbg('aiter imported from: {}'.format(getattr(aiter, '__file__', None)))
+        _dbg('aiter version: {}'.format(getattr(aiter, '__version__', None)))
+    except Exception:
+        _dbg('import aiter failed (skipping aiter.jit path extension)')
+        return
+
+    try:
+        import aiter.jit as aiter_jit
+        extra = os.path.join(os.path.expanduser('~'), '.aiter', 'jit')
+        if os.path.isdir(extra) and extra not in list(getattr(aiter_jit, '__path__', [])):
+            aiter_jit.__path__.append(extra)  # type: ignore[attr-defined]
+            _dbg(f'extended aiter.jit.__path__ with: {extra}')
+        _dbg('aiter.jit imported from: {}'.format(getattr(aiter_jit, '__file__', None)))
+        _dbg('aiter.jit.__path__={}'.format(list(getattr(aiter_jit, '__path__', []))))
+
+        target = 'aiter.jit.module_gemm_common'
+        try:
+            spec = importlib.util.find_spec(target)
+            _dbg(f'find_spec({target}) -> {spec}')
+        except Exception as e:
+            _dbg(f'find_spec({target}) raised: {e!r}')
+
+        try:
+            for p in list(getattr(aiter_jit, '__path__', [])):
+                hits = sorted(glob.glob(os.path.join(p, 'module_gemm_common*')))
+                if hits:
+                    _dbg(f'candidate files in {p}: {hits[:20]}')
+        except Exception as e:
+            _dbg(f'globbing for module_gemm_common artifacts raised: {e!r}')
+
+        try:
+            m = importlib.import_module(target)
+            _dbg('imported {} from: {}'.format(target, getattr(m, '__file__', None)))
+        except Exception as e:
+            _dbg(f'import {target} failed: {e!r}')
+    except Exception:
+        _dbg('unexpected exception while extending aiter.jit.__path__ (suppressed)')
+        pass
+
+_maybe_extend_aiter_jit_path()
+PY
     
     # vLLM/ROCm flags
-    export VLLM_USE_V1=\${VLLM_USE_V1:-1}
     export VLLM_TARGET_DEVICE=\${VLLM_TARGET_DEVICE:-rocm}
     export VLLM_WORKER_MULTIPROC_METHOD=\${VLLM_WORKER_MULTIPROC_METHOD:-spawn}
-    export HIP_ARCHITECTURES=\${HIP_ARCHITECTURES:-gfx90a}
+    export HIP_ARCHITECTURES=\${HIP_ARCHITECTURES:-gfx942}
+    # Disable AIter Triton fused shared-experts path (avoids missing MI300X fused GEMM config JSONs).
+    export VLLM_ROCM_USE_AITER_TRITON_FUSED_SHARED_EXPERTS=\${VLLM_ROCM_USE_AITER_TRITON_FUSED_SHARED_EXPERTS:-0}
+
+    # from https://rocm.docs.amd.com/en/docs-7.0-docker/benchmark-docker/inference-vllm-deepseek-r1-fp8.html
+    # Note: this flag may not be compatible with MI325X GPUs
+    # export VLLM_ROCM_QUICK_REDUCE_QUANTIZATION=\"\${VLLM_ROCM_QUICK_REDUCE_QUANTIZATION:-INT4}\"
     
+    # Triton cache isolation (avoid multi-rank races on shared filesystems)
+    # Use per-rank cache dirs on node-local /tmp.
+    export TRITON_CACHE_DIR=\"/tmp/triton_cache/\${SLURM_JOB_ID:-nojob}/\${SLURM_PROCID:-\${SLURM_LOCALID:-0}}\"
+    export XDG_CACHE_HOME=\"/tmp/xdg_cache/\${SLURM_JOB_ID:-nojob}/\${SLURM_PROCID:-\${SLURM_LOCALID:-0}}\"
+    mkdir -p \"\$TRITON_CACHE_DIR\" \"\$XDG_CACHE_HOME\" 2>/dev/null || true
+
     # Create necessary directories
-    export TORCH_EXTENSIONS_DIR=/dev/shm/torch_ext
-    mkdir -p \"\$TORCH_EXTENSIONS_DIR\" \"\$AITER_INSTALL/private_aiter/jit\" 2>/dev/null || true
+    export TORCH_EXTENSIONS_DIR=\"\${TORCH_EXTENSIONS_DIR:-/dev/shm/torch_ext}\"
+    mkdir -p \"\$TORCH_EXTENSIONS_DIR\" 2>/dev/null || true
     
     # Define run_python helper function
     run_python() {
       \"\${PYEXEC_IN_IMG:-python3}\" \"\$@\"
     }
-    
-    # Run AIter staging automatically if script exists
-    if [ -f /workspace/stage_aiter.py ]; then
-      run_python /workspace/stage_aiter.py >&2 || true
-    fi
   "
   # Execute command with inline environment setup
   # Ensure we have at least one argument

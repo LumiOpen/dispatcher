@@ -16,16 +16,18 @@
 ###
 # configure the following.
 
-INPUT_FILE=/shared_silo/scratch/adamhrin@amd.com/dispatcher/examples/reasoning_traces/data/default-train-sample-1k_translations_DeepSeek-V3_fi_answers_DeepSeek-R1_fi.jsonl
-OUTPUT_FILE=/shared_silo/scratch/adamhrin@amd.com/dispatcher/examples/reasoning_traces/data/default-train-sample-1k_translations_DeepSeek-V3_fi_answers_DeepSeek-R1_fi_translated_traces_DeepSeek-V3_fi.jsonl
-TASK=tasks.traces_translation_task.TracesTranslationTask
+INPUT_FILE=/shared_silo/scratch/datasets/Llama-Nemotron-SFT-math-100k.jsonl
+OUTPUT_FILE=/shared_silo/scratch/adamhrin@amd.com/dispatcher/examples/reasoning_traces/data/Llama-Nemotron-SFT-math-100k_translated_DeepSeek-V3_fi.jsonl
+TASK=tasks.reasoning_translation_task.ReasoningTranslationTask
+export LANGUAGE=fi
 
 # generation parameters
 # These should be tuned so that you do not overload your backend vllm server,
 # or run into any timeouts.  timeouts greatly affect the efficiency of the
 # workflow.
-WORKERS=64          # number of simultaneous backend requests
-BATCH_SIZE=1        # amount of work to request from dispatcher. 1 is usually fine.
+# Allow environment overrides for easy sweeps via: sbatch --export=ALL,WORKERS=160,MAX_NUM_SEQS=192,...
+WORKERS=${WORKERS:-64}          # number of simultaneous backend requests (per vLLM server)
+BATCH_SIZE=${BATCH_SIZE:-1}      # amount of work to request from dispatcher. 1 is usually fine.
 
 # Timeouts are safety valves and you should not hit them in the normal course
 # of your workflow.  if you do, it suggests you need to change something about
@@ -42,10 +44,12 @@ WORK_TIMEOUT=7200   # time for dispatcher to give up on a work item and reissue 
 MODEL=/shared_silo/scratch/models/DeepSeek-V3
 GPUS_PER_TASK=8     # enough for the model and large batch size
 # based on https://rocm.docs.amd.com/en/docs-7.0-docker/benchmark-docker/inference-vllm-deepseek-r1-fp8.html
-MAX_MODEL_LEN=65536 # Must be >= the input + the output lengths.
-MAX_SEQ_LEN_TO_CAPTURE=65536  # Beneficial to set this to max_model_len.
-MAX_NUM_SEQS=1024
-MAX_NUM_BATCHED_TOKENS=131072 # Smaller values may result in better TTFT but worse TPOT / throughput.
+MAX_MODEL_LEN=${MAX_MODEL_LEN:-65536} # Must be >= the input + the output lengths.
+MAX_SEQ_LEN_TO_CAPTURE=${MAX_SEQ_LEN_TO_CAPTURE:-65536}  # Beneficial to set this to max_model_len.
+# Keep max-num-seqs close to WORKERS (or slightly above) to avoid surprising KV pressure.
+MAX_NUM_SEQS=${MAX_NUM_SEQS:-128}
+# Offline throughput: try a larger token budget (chunked prefill is enabled in your vLLM build).
+MAX_NUM_BATCHED_TOKENS=${MAX_NUM_BATCHED_TOKENS:-262144} # Smaller values may result in better TTFT but worse TPOT / throughput.
 
 # end configuration
 ###################
@@ -60,7 +64,7 @@ export DISPATCHER_PORT=9999
 ###############################################################################
 # Load launcher library - environment is automatically set up when sourced
 ###############################################################################
-source /shared_silo/scratch/adamhrin@amd.com/dispatcher/examples/singularity_launcher.sh
+source /shared_silo/scratch/adamhrin@amd.com/dispatcher/examples/reasoning_traces/singularity_launcher.sh
 
 # Start dispatcher server in background
 echo "Starting dispatcher server..."
@@ -122,7 +126,7 @@ srun -l bash -c "
       --model $MODEL \
       --port \$VLLM_PORT \
       --request-timeout $REQUEST_TIMEOUT \
-      --vllm-extra-args \"--swap-space 64 --max-num-seqs ${MAX_NUM_SEQS} --no-enable-prefix-caching --max-num-batched-tokens ${MAX_NUM_BATCHED_TOKENS} --block-size 1 --gpu-memory-utilization 0.95 --async-scheduling --quantization fp8\"
+      --vllm-extra-args \"--swap-space 0 --max-num-seqs ${MAX_NUM_SEQS} --no-enable-prefix-caching --max-num-batched-tokens ${MAX_NUM_BATCHED_TOKENS} --block-size 1 --gpu-memory-utilization 0.95 --async-scheduling --quantization fp8\"
   '
 "
 

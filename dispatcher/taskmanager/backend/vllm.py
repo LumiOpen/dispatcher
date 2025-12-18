@@ -90,25 +90,6 @@ class VLLMServerManager:
             "--gpu-memory-utilization", str(gpu_memory_utilization),
         ]
         
-        # #region agent log
-        import json
-        debug_log_path = "/shared_silo/scratch/adamhrin@amd.com/dispatcher/.cursor/debug.log"
-        try:
-            with open(debug_log_path, "a") as f:
-                log_entry = {
-                    "sessionId": "debug-session",
-                    "runId": "pre-fix",
-                    "hypothesisId": "A",
-                    "location": "vllm.py:83",
-                    "message": "vLLM command before quantization check",
-                    "data": {"cmd": cmd, "extra_vllm_args": extra_vllm_args, "model_name": model_name},
-                    "timestamp": int(time.time() * 1000)
-                }
-                f.write(json.dumps(log_entry) + "\n")
-        except Exception:
-            pass
-        # #endregion agent log
-        
         if disable_log_requests:
             cmd.append("--disable-log-requests")
         if api_key:
@@ -123,52 +104,6 @@ class VLLMServerManager:
         if enforce_eager:
             cmd.extend(["--enforce-eager"])
 
-        # Check if quantization is explicitly set in extra_vllm_args
-        quantization_set = False
-        if extra_vllm_args:
-            for i, arg in enumerate(extra_vllm_args):
-                if arg == "--quantization" or (i > 0 and extra_vllm_args[i-1] == "--quantization"):
-                    quantization_set = True
-                    break
-        
-        # #region agent log
-        try:
-            with open(debug_log_path, "a") as f:
-                log_entry = {
-                    "sessionId": "debug-session",
-                    "runId": "pre-fix",
-                    "hypothesisId": "B",
-                    "location": "vllm.py:120",
-                    "message": "Checking if quantization is set",
-                    "data": {"quantization_set": quantization_set, "extra_vllm_args": extra_vllm_args},
-                    "timestamp": int(time.time() * 1000)
-                }
-                f.write(json.dumps(log_entry) + "\n")
-        except Exception:
-            pass
-        # #endregion agent log
-        
-        # Explicitly disable FP8 quantization if not already set
-        if not quantization_set:
-            cmd.extend(["--quantization", "none"])
-            # #region agent log
-            try:
-                with open(debug_log_path, "a") as f:
-                    log_entry = {
-                        "sessionId": "debug-session",
-                        "runId": "pre-fix",
-                        "hypothesisId": "C",
-                        "location": "vllm.py:130",
-                        "message": "Added --quantization none to disable FP8",
-                        "data": {"cmd_after": cmd},
-                        "timestamp": int(time.time() * 1000)
-                    }
-                    f.write(json.dumps(log_entry) + "\n")
-            except Exception:
-                pass
-            # #endregion agent log
-
-        # Append any extra vLLM arguments
         if extra_vllm_args:
             cmd.extend(extra_vllm_args)
 
