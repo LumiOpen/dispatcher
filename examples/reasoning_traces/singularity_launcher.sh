@@ -7,7 +7,7 @@
 ###############################################################################
 
 # Default container and cache paths
-: "${LAUNCHER_IMG:=/shared_silo/scratch/containers/7.x-preview_rocm7.2_preview_ubuntu_22.04_vlm_0.10.1_instinct_20251029.sif}"
+: "${LAUNCHER_IMG:=/shared_silo/scratch/containers/rocm_vllm_rocm7.0.0_vllm_0.11.1_20251103.sif}"
 : "${LAUNCHER_PYEXEC_IN_IMG:=python3}"
 : "${LAUNCHER_PYTHON_VERSION:=3.12}"
 
@@ -88,10 +88,6 @@ setup_singularity_environment() {
   export SINGULARITYENV_VLLM_TARGET_DEVICE=rocm
   export SINGULARITYENV_VLLM_WORKER_MULTIPROC_METHOD=spawn
   export SINGULARITYENV_HIP_ARCHITECTURES=gfx942
-  # Work around missing AIter fused GEMM config JSONs in some container builds.
-  # Disables the Triton fused shared-experts path that tries to open
-  # `.../aiter/ops/triton/configs/gemm/MI300X-FUSED-GEMM-A8W8_BLOCKSCALE-A16W16.json`.
-  export SINGULARITYENV_VLLM_ROCM_USE_AITER_TRITON_FUSED_SHARED_EXPERTS=0
   
   # Worker environment variables (for use inside container)
   export SINGULARITYENV_TORCH_EXTENSIONS_DIR=/dev/shm/torch_ext
@@ -307,8 +303,6 @@ PY
     export VLLM_TARGET_DEVICE=\${VLLM_TARGET_DEVICE:-rocm}
     export VLLM_WORKER_MULTIPROC_METHOD=\${VLLM_WORKER_MULTIPROC_METHOD:-spawn}
     export HIP_ARCHITECTURES=\${HIP_ARCHITECTURES:-gfx942}
-    # Disable AIter Triton fused shared-experts path (avoids missing MI300X fused GEMM config JSONs).
-    export VLLM_ROCM_USE_AITER_TRITON_FUSED_SHARED_EXPERTS=\${VLLM_ROCM_USE_AITER_TRITON_FUSED_SHARED_EXPERTS:-0}
 
     # from https://rocm.docs.amd.com/en/docs-7.0-docker/benchmark-docker/inference-vllm-deepseek-r1-fp8.html
     # Note: this flag may not be compatible with MI325X GPUs
