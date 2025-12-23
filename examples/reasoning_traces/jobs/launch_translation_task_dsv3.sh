@@ -1,8 +1,8 @@
 #!/bin/bash
 #SBATCH --job-name=translation
-#SBATCH --nodes=2
+#SBATCH --nodes=8
 #SBATCH --partition=amd-tw-verification
-#SBATCH --time=00-10:00:00
+#SBATCH --time=02-00:00:00
 #SBATCH --ntasks-per-node=1
 #SBATCH --mem=480G
 #SBATCH --cpus-per-task=7
@@ -26,7 +26,7 @@ export LANGUAGE=fi
 # or run into any timeouts.  timeouts greatly affect the efficiency of the
 # workflow.
 # Allow environment overrides for easy sweeps via: sbatch --export=ALL,WORKERS=160,MAX_NUM_SEQS=192,...
-WORKERS=${WORKERS:-64}          # number of simultaneous backend requests (per vLLM server)
+WORKERS=${WORKERS:-96}          # number of simultaneous backend requests (per vLLM server)
 BATCH_SIZE=${BATCH_SIZE:-1}      # amount of work to request from dispatcher. 1 is usually fine.
 
 # Timeouts are safety valves and you should not hit them in the normal course
@@ -34,6 +34,7 @@ BATCH_SIZE=${BATCH_SIZE:-1}      # amount of work to request from dispatcher. 1 
 # your configuration--tasks are usually written to expect success.
 REQUEST_TIMEOUT=4800 # adjust as needed for your task so that you do not hit
 WORK_TIMEOUT=7200   # time for dispatcher to give up on a work item and reissue it.  ideally this should never be hit.
+STARTUP_TIMEOUT=7200 # time for dispatcher to give up on a startup and reissue it.  ideally this should never be hit.
 
 #
 # If you are changing the model, be sure to update GPUS_PER_TASK and the
@@ -41,7 +42,7 @@ WORK_TIMEOUT=7200   # time for dispatcher to give up on a work item and reissue 
 # Typically on Lumi 70B = 4 GPUs, 34B = 2 GPUs, 8B = 1 GPU
 # --ntasks-per-node should be int(8 / GPUS_PER_TASK)
 #
-MODEL=/shared_silo/scratch/models/DeepSeek-V3
+export MODEL=/shared_silo/scratch/models/DeepSeek-V3
 GPUS_PER_TASK=8     # enough for the model and large batch size
 # based on https://rocm.docs.amd.com/en/docs-7.0-docker/benchmark-docker/inference-vllm-deepseek-r1-fp8.html
 MAX_MODEL_LEN=${MAX_MODEL_LEN:-65536} # Must be >= the input + the output lengths.
@@ -110,6 +111,9 @@ srun -l bash -c "
     export MASTER_PORT=\$(( 7000 + LOCALID ))
     export VLLM_PORT=\$(( 8000 + LOCALID * 100 ))
 
+    export LANGUAGE=$LANGUAGE
+    export MODEL=$MODEL
+
     echo \"Launching task LOCALID=\$LOCALID (global id: \$SLURM_PROCID) on GPUs \$HIP_VISIBLE_DEVICES (MASTER_PORT=\$MASTER_PORT, VLLM_PORT=\$VLLM_PORT)\"
 
     # Run task manager worker
@@ -126,6 +130,8 @@ srun -l bash -c "
       --model $MODEL \
       --port \$VLLM_PORT \
       --request-timeout $REQUEST_TIMEOUT \
+      --startup-timeout $STARTUP_TIMEOUT \
+      --silence-vllm-logs \
       --vllm-extra-args \"--swap-space 0 --max-num-seqs ${MAX_NUM_SEQS} --no-enable-prefix-caching --max-num-batched-tokens ${MAX_NUM_BATCHED_TOKENS} --block-size 1 --gpu-memory-utilization 0.95 --async-scheduling --quantization fp8\"
   '
 "
