@@ -56,6 +56,7 @@ class VLLMServerManager:
         disable_log_requests: bool = True,
         disable_output: bool = False,
         enforce_eager: bool = False,
+        extra_vllm_args: Optional[List[str]] = None,
     ) -> 'VLLMServerManager':
         """
         Launches the vLLM OpenAI API server and waits for it to become healthy.
@@ -71,6 +72,7 @@ class VLLMServerManager:
             max_model_len: Optional max model length override.
             startup_timeout: Max seconds to wait for the server to pass health check.
             disable_log_requests: Whether to add --disable-log-requests flag.
+            extra_vllm_args: Optional list of additional command-line arguments to pass to vLLM server.
 
         Returns:
             An instance of VLLMServerManager managing the launched process.
@@ -101,6 +103,9 @@ class VLLMServerManager:
 
         if enforce_eager:
             cmd.extend(["--enforce-eager"])
+
+        if extra_vllm_args:
+            cmd.extend(extra_vllm_args)
 
         stdout, stderr = subprocess.DEVNULL, subprocess.DEVNULL
         if not disable_output:
@@ -181,7 +186,8 @@ class VLLMBackendManager(BackendManager):
                  request_timeout: int = 300,
                  health_check_interval: int = 60,
                  disable_output: bool = False,
-                 enforce_eager: bool = False):
+                 enforce_eager: bool = False,
+                 extra_vllm_args: Optional[List[str]] = None):
         """
         Initialize a VLLM backend manager.
         
@@ -200,6 +206,7 @@ class VLLMBackendManager(BackendManager):
             health_check_interval: How often to perform health checks (in seconds)
             disable_output: Redirect vllm output to /dev/null
             enforce_eager: run vllm in eager mode
+            extra_vllm_args: Optional list of additional command-line arguments to pass to vLLM server
         """
         self.model_name = model_name
         self.host = host
@@ -230,6 +237,7 @@ class VLLMBackendManager(BackendManager):
                     disable_log_requests=True,
                     disable_output=disable_output,
                     enforce_eager=enforce_eager,
+                    extra_vllm_args=extra_vllm_args,
                 )
                 self.logger.info(f"Launched vLLM server for model {model_name}")
             except Exception as e:
