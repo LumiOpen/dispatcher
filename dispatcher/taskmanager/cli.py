@@ -32,6 +32,7 @@ import argparse
 import importlib
 import json
 import logging
+import shlex
 import signal
 import sys
 from pathlib import Path
@@ -186,7 +187,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     # vllm tuning
     p.add_argument("--enforce-eager", action="store_true", help="Force vLLM to run in eager mode")
-    p.add_argument("--vllm-extra-args", type=str, default=None, help="Space-separated additional vLLM command-line arguments (e.g., '--block-size 1 --trust-remote-code')")
+    p.add_argument("--vllm-extra-args", type=str, default=None, help="Space-separated additional vLLM command-line arguments (e.g., '--block-size 1 --trust-remote-code') Supports shell-like quoting.")
 
     # manager & batches
     p.add_argument("--workers", type=int, default=16)
@@ -204,7 +205,7 @@ def main(argv: Optional[list[str]] = None):
     # Parse extra vLLM args from space-separated string
     extra_vllm_args = None
     if args.vllm_extra_args:
-        extra_vllm_args = args.vllm_extra_args.split()
+        extra_vllm_args = shlex.split(args.vllm_extra_args)
 
     run(
         task_cls=task_cls,
