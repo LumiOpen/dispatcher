@@ -5,6 +5,8 @@ import os
 import random
 from typing import List, Tuple, Optional
 import logging
+import re
+from enum import Enum
 
 from language_names import LANGUAGE_NAMES
 
@@ -12,6 +14,27 @@ logger = logging.getLogger(__name__)
 
 # Base path for FLORES-200 dataset for building few-shot samples
 FLORES_200_BASE_PATH = "/scratch/project_462000353/posttraining_data/FLORES-200"
+
+PATTERNS = {
+    'code_block': re.compile(r'^(\s*)(```|~~~)'),  # Markdown code blocks
+    'inline_code': re.compile(r'`[^`]+`'),  # Inline code
+    'url': re.compile(r'https?://[^\s]+|www\.[^\s]+'),  # URLs
+    'email': re.compile(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'),
+    'xml_tag': re.compile(r'<[^>]+>'),  # XML/HTML tags
+    'html_comment': re.compile(r'<!--.*?-->'),  # HTML comments
+    'latex_inline': re.compile(r'\$[^\$]+\$'),  # Inline math with $ like $N$
+    'latex_escaped': re.compile(r'\\\([^\)]*\\\)'),  # LaTeX escaped notation like \( ...  \)
+    'latex_bracket': re.compile(r'\\\[[^\]]*\\\]'),  # LaTeX double bracket notation like \[ ... \]
+    'latex_command': re.compile(r'\\[a-zA-Z]+\{[^}]*\}'),  # LaTeX commands like \boxed{C}
+}
+
+class ContentType(Enum):
+    TRANSLATABLE = "translatable"
+    CODE_BLOCK = "code_block"
+    TAG = "tag"
+    URL = "url"
+    EMAIL = "email"
+    EMPTY = "empty"
 
 def load_flores_data(lang_code: str, split: str = "dev") -> List[str]:
     """
@@ -228,3 +251,64 @@ def preprocess_for_few_shot_translation(
     logger.info(f"Preprocessed {len(lines)} lines for few-shot translation")
     return line_prompts, structure
 
+def is_empty_or_whitespace(self, line: str) -> bool:
+    """Check if a line is empty or contains only whitespace."""
+    return not line.strip()
+
+def detect_code_block_start(line: str) -> Tuple[bool, str]:
+    """Detect if a line starts a code block and return delimiter."""
+    match = PATTERNS['code_block'].search(line)
+    if match:
+        return True, match.group(2)
+    return False, None
+
+def classify_line(line: str) -> ContentType:
+    """Classify a line's content type."""
+    if detect_code_block_start(line):
+        return ContentType.CODE_BLOCK
+    if is_empty_or_whitespace(line):
+        return ContentType.EMPTY
+    # Check for code block markers
+    if PATTERNS['code_block'].match(line):
+        return ContentType.CODE_BLOCK
+    # Check if entire line is a URL
+    if PATTERNS['url'].match(line.strip()):
+        return ContentType.URL
+    # Check if entire line is an email
+    if PATTERNS['email'].match(line.strip()):
+        return ContentType.EMAIL
+    return ContentType.TRANSLATABLE
+
+def extract_preservable_parts(line: str) -> List[Tuple[str, ContentType]]:
+    """
+    Extract parts of a line, identifying translatable vs non-translatable content.
+    
+    Returns a list of tuples:  (text, content_type)
+    """
+    parts = []
+    last_end = 0
+    
+    # Find all non-translatable patterns
+    all_matches = []
+    for pattern_name, pattern in PATTERNS.items():
+        for match in pattern.finditer(line):
+            all_matches.append((match.start(), match.end(), pattern_name))
+    
+    # Sort matches by start position
+    all_matches.sort(key=lambda x: x[0])
+    
+    # Build parts list, avoiding overlaps
+    for start, end, pattern_name in all_matches: 
+        if start >= last_end:
+            # Add translatable part before this match
+            if start > last_end:
+                parts.append((line[last_end:start], ContentType. TRANSLATABLE))
+            # Add non-translatable part
+            parts.append((line[start:end], ContentType.TAG))
+            last_end = end
+    
+    # Add remaining translatable part
+    if last_end < len(line):
+        parts.append((line[last_end:], ContentType.TRANSLATABLE))
+    
+    return parts
