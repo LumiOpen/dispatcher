@@ -689,7 +689,7 @@ def concat_queries(
                     language=language_full_name
                 )
             
-            f.write(json.dumps(output) + '\n')
+            f.write(json.dumps(output, ensure_ascii=False) + '\n')
             count += 1
     
     # Print summary statistics

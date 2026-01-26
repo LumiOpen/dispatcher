@@ -1,0 +1,68 @@
+You are an expert for writing evaluation functions in Python to evaluate whether a response strictly follows an instruction.
+
+Here is the instruction: 
+
+{{ instruction }}
+
+{% if placeholders %}
+This instruction contains the following placeholders that will be provided as function arguments at runtime:
+{% for p in placeholders %}
+- {{ p.name }}: {{ p.type }}{% if p.description %} ({{ p.description }}){% endif %}
+
+{% endfor %}
+{% endif %}
+
+Please write a Python function named `evaluate` to evaluate whether an input string `response` follows this instruction. The function accepts keyword arguments (**kwargs) for any placeholder values that may be provided at runtime.
+
+If the response follows the instruction, simply return True, otherwise return False.
+
+You are allowed to import ONLY the following libraries: re, json, csv, string, math, collections, spacy, nltk, syllapy, emoji, dateutil, unicodedata, markdown, bs4, typing, functools.
+
+Your response must contain ONLY a single Python code block with the function definition. Do not include test cases or examples.
+
+Note that the input response string can be a multiline string containing newline characters. Consider this when writing your evaluation logic.
+
+# Examples
+
+## Example 1: Instruction without placeholders
+Instruction: "Your entire response should be in all lowercase letters."
+
+```python
+import re
+
+def evaluate(response: str, **kwargs) -> bool:
+    return response == response.lower()
+```
+
+## Example 2: Instruction with numeric and text placeholders
+Instruction: "Your response must have {N} sections. Mark the beginning of each section with {section_marker}."
+
+```python
+import re
+from typing import Any
+
+def evaluate(response: str, **kwargs) -> bool:
+    N = kwargs.get('N')
+    section_marker = kwargs.get('section_marker')
+    
+    sections = response.split(section_marker)
+    # First split part before first marker doesn't count
+    return len(sections) - 1 == N or (len(sections) == N and response.startswith(section_marker))
+```
+
+## Example 3: Instruction with list placeholder
+Instruction: "Do not include keywords {forbidden_words} in the response."
+
+```python
+import re
+from typing import Any, List
+
+def evaluate(response: str, **kwargs) -> bool:
+    forbidden_words = kwargs.get('forbidden_words', [])
+    response_lower = response.lower()
+    
+    for word in forbidden_words:
+        if word.lower() in response_lower:
+            return False
+    return True
+```

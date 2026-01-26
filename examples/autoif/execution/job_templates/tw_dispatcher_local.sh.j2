@@ -1,0 +1,113 @@
+#!/bin/bash
+set -euo pipefail
+
+echo "======================================="
+echo "{{ job_name }} (TensorWave Dispatcher Job)"
+echo "======================================="
+echo "Started: $(date)"
+echo "Connecting to vLLM server: {{ vllm_server.host }}:{{ vllm_server.port }}"
+echo ""
+
+cd /shared_silo/scratch/adamhrin@amd.com/dispatcher/examples/autoif
+
+# ============================================================
+# Environment Setup
+# ============================================================
+source /shared_silo/scratch/adamhrin@amd.com/dispatcher/examples/autoif/execution/environments/singularity_launcher.sh
+
+{% if exports is defined %}
+# ============================================================
+# Set Environment Variables
+# ============================================================
+{% for key, value in exports.items() %}
+export {{ key }}="{{ value }}"
+{% endfor %}
+{% endif %}
+
+# ============================================================
+# Job Configuration
+# ============================================================
+TASK="{{ task }}"
+INPUT_FILE="{{ input_file }}"
+OUTPUT_FILE="{{ output_file }}"
+MODEL="{{ model }}"
+VLLM_HOST="{{ vllm_server.host }}"
+VLLM_PORT="{{ vllm_server.port }}"
+WORKERS="{{ workers }}"
+BATCH_SIZE="{{ batch_size|default(1) }}"
+WORK_TIMEOUT="{{ work_timeout|default(3600) }}"
+MAX_MODEL_LEN="{{ max_model_len }}"
+
+echo "Running {{ job_name }}..."
+echo "  Model: $MODEL"
+echo "  vLLM Server: $VLLM_HOST:$VLLM_PORT"
+echo "  Input: $INPUT_FILE"
+echo "  Output: $OUTPUT_FILE"
+echo "  Workers: $WORKERS"
+echo ""
+
+# ============================================================
+# Dispatcher Server (random port to avoid conflicts)
+# ============================================================
+export DISPATCHER_SERVER="127.0.0.1"
+# Generate random port between 10000-60000 to avoid conflicts with other jobs
+export DISPATCHER_PORT=$((10000 + RANDOM % 50000))
+
+# Check if port is available, retry if not
+for attempt in 1 2 3 4 5; do
+    if ! (echo >/dev/tcp/$DISPATCHER_SERVER/$DISPATCHER_PORT) 2>/dev/null; then
+        break
+    fi
+    echo "Port $DISPATCHER_PORT in use, trying another..."
+    export DISPATCHER_PORT=$((10000 + RANDOM % 50000))
+done
+
+echo "Starting dispatcher server on port $DISPATCHER_PORT..."
+run_sing_python -m dispatcher.server \
+    --infile "$INPUT_FILE" \
+    --outfile "$OUTPUT_FILE" \
+    --work-timeout "$WORK_TIMEOUT" \
+    --host "$DISPATCHER_SERVER" \
+    --port ${DISPATCHER_PORT} &
+srv_pid=$!
+
+# Ensure server is killed on exit
+trap "kill $srv_pid 2>/dev/null || true" EXIT
+
+# Wait for server to be ready
+echo "Waiting for dispatcher server on $DISPATCHER_SERVER:$DISPATCHER_PORT..."
+for i in $(seq 1 120); do
+  (echo >/dev/tcp/$DISPATCHER_SERVER/${DISPATCHER_PORT}) >/dev/null 2>&1 && break || true
+  sleep 1
+done
+(echo >/dev/tcp/$DISPATCHER_SERVER/${DISPATCHER_PORT}) >/dev/null 2>&1 || {
+  echo "[ERROR] dispatcher server did not start"
+  exit 1
+}
+echo "Server is up."
+
+# ============================================================
+# Dispatcher Worker
+# ============================================================
+run_sing_bash "
+  set -euxo pipefail
+{% if exports is defined %}
+{% for key, value in exports.items() %}
+  export {{ key }}=\"{{ value }}\"
+{% endfor %}
+{% endif %}
+
+  run_python -m dispatcher.taskmanager.cli \
+    --dispatcher $DISPATCHER_SERVER:$DISPATCHER_PORT \
+    --task $TASK \
+    --model $MODEL \
+    --host $VLLM_HOST \
+    --port $VLLM_PORT \
+    --workers $WORKERS \
+    --batch-size $BATCH_SIZE \
+    --max-model-len $MAX_MODEL_LEN \
+    --no-launch
+"
+
+echo ""
+echo "Completed: $(date)"

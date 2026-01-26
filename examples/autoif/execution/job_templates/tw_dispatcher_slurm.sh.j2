@@ -1,0 +1,140 @@
+#!/bin/bash
+#SBATCH --job-name={{ job_name }}
+#SBATCH --partition={{ slurm.partition | default('amd-tw-verification') }}
+#SBATCH --time={{ slurm.time | default('02:00:00') }}
+#SBATCH --nodes={{ slurm.nodes | default(1) }}
+#SBATCH --ntasks-per-node={{ slurm.ntasks_per_node | default(1) }}
+#SBATCH --cpus-per-task={{ slurm.cpus_per_task | default(32) }}
+#SBATCH --mem={{ slurm.mem | default('480G') }}
+#SBATCH --gpus-per-node={{ slurm.gpus_per_node | default(8) }}
+#SBATCH --exclusive=user
+#SBATCH --hint=nomultithread
+#SBATCH --output={{ slurm.output | default('logs/%j.out') }}
+#SBATCH --error={{ slurm.error | default('logs/%j.err') }}
+
+set -euxo pipefail
+
+echo "======================================="
+echo "{{ job_name }} (TensorWave Dispatcher Job - sbatch)"
+echo "======================================="
+echo "Started: $(date)"
+echo ""
+
+cd /shared_silo/scratch/adamhrin@amd.com/dispatcher/examples/autoif
+
+# ============================================================
+# Job Configuration
+# ============================================================
+TASK="{{ task }}"
+INPUT_FILE="{{ input_file }}"
+OUTPUT_FILE="{{ output_file }}"
+MODEL="{{ model }}"
+WORKERS="{{ workers | default(4) }}"
+BATCH_SIZE="{{ batch_size | default(1) }}"
+WORK_TIMEOUT="{{ work_timeout | default(3600) }}"
+GPUS_PER_TASK="{{ tensor_parallel | default(4) }}"
+MAX_MODEL_LEN="{{ max_model_len | default(32768) }}"
+STARTUP_TIMEOUT="{{ startup_timeout | default(1800) }}"
+REQUEST_TIMEOUT="{{ request_timeout | default(1800) }}"
+
+echo "Running {{ job_name }}..."
+echo "  Model: $MODEL"
+echo "  Input: $INPUT_FILE"
+echo "  Output: $OUTPUT_FILE"
+echo "  Workers: $WORKERS"
+echo "  Tensor Parallel: $GPUS_PER_TASK"
+echo ""
+
+# ============================================================
+# Environment Setup
+# ============================================================
+source /shared_silo/scratch/adamhrin@amd.com/dispatcher/examples/autoif/execution/environments/singularity_launcher.sh
+
+# Install dispatcher package
+echo "Installing dispatcher package..."
+run_sing_python -m pip install --user --upgrade \
+    -e /shared_silo/scratch/adamhrin@amd.com/dispatcher
+echo "Dispatcher installation complete."
+
+# ============================================================
+# Dispatcher Server
+# ============================================================
+export DISPATCHER_SERVER=$(hostname)
+export DISPATCHER_PORT=9999
+
+echo "Starting dispatcher server on $DISPATCHER_SERVER:$DISPATCHER_PORT..."
+run_sing_python -m dispatcher.server \
+    --infile "$INPUT_FILE" \
+    --outfile "$OUTPUT_FILE" \
+    --work-timeout "$WORK_TIMEOUT" \
+    --host 0.0.0.0 \
+    --port $DISPATCHER_PORT &
+srv_pid=$!
+
+# Wait for server to be ready
+echo "Waiting for dispatcher server..."
+for i in $(seq 1 120); do
+    (echo >/dev/tcp/$DISPATCHER_SERVER/$DISPATCHER_PORT) >/dev/null 2>&1 && break || true
+    sleep 1
+done
+(echo >/dev/tcp/$DISPATCHER_SERVER/$DISPATCHER_PORT) >/dev/null 2>&1 || {
+    echo "[ERROR] dispatcher server did not start"
+    exit 1
+}
+echo "Server is up."
+
+# ============================================================
+# Dispatcher Workers (with vLLM launch)
+# ============================================================
+srun -l bash -c '
+    source {{ environment_setup }}
+    
+    run_sing_bash '\''
+        set -euxo pipefail
+        
+        LOCALID=${SLURM_LOCALID:-0}
+        
+        # Compute GPU allocation
+        start_gpu=$(( LOCALID * '"'$GPUS_PER_TASK'"' ))
+        GPU_IDS=""
+        for (( i=0; i<'"'$GPUS_PER_TASK'"'; i++ )); do
+            if [ -z "$GPU_IDS" ]; then
+                GPU_IDS="$(( start_gpu + i ))"
+            else
+                GPU_IDS="${GPU_IDS},$(( start_gpu + i ))"
+            fi
+        done
+        export HIP_VISIBLE_DEVICES="$GPU_IDS"
+        
+        # Ports
+        export MASTER_ADDR=${MASTER_ADDR:-127.0.0.1}
+        export MASTER_PORT=$(( 7000 + LOCALID ))
+        export VLLM_PORT=$(( 8000 + LOCALID * 100 ))
+        
+{% if exports is defined %}
+        # Task-specific environment variables
+{% for key, value in exports.items() %}
+        export {{ key }}="{{ value }}"
+{% endfor %}
+{% endif %}
+        
+        echo "Launching task LOCALID=$LOCALID on GPUs $HIP_VISIBLE_DEVICES (VLLM_PORT=$VLLM_PORT)"
+        
+        # Run task manager worker (launches vLLM)
+        run_python -m dispatcher.taskmanager.cli \
+            --dispatcher '"'$DISPATCHER_SERVER'"':'"'$DISPATCHER_PORT'"' \
+            --task '"'$TASK'"' \
+            --batch-size '"'$BATCH_SIZE'"' \
+            --workers '"'$WORKERS'"' \
+            --max-model-len '"'$MAX_MODEL_LEN'"' \
+            --tensor-parallel '"'$GPUS_PER_TASK'"' \
+            --model '"'$MODEL'"' \
+            --port $VLLM_PORT \
+            --request-timeout '"'$REQUEST_TIMEOUT'"' \
+            --startup-timeout '"'$STARTUP_TIMEOUT'"' \
+            --silence-vllm-logs
+    '\''
+'
+
+echo ""
+echo "Completed: $(date)"

@@ -1,0 +1,54 @@
+# SLURM Configuration for AutoIF Pipeline - TensorWave
+# TensorWave has only GPU partition, CPU jobs use --gpus=0
+
+# Global SLURM defaults
+slurm:
+  partition: amd-tw-verification
+  time: "01:00:00"
+  output: "logs/%j.out"
+  error: "logs/%j.err"
+
+# Job type defaults
+job_type_defaults:
+  dispatcher_task:
+    nodes: 1
+    ntasks_per_node: 2
+    mem: "480G"
+    cpus_per_task: 32
+    gpus_per_node: 8
+    exclusive: user
+    hint: nomultithread
+    time: "04:00:00"
+
+  cpu_script:
+    # Use same GPU partition but with --gpus=0 (set in template)
+    partition: amd-tw-verification
+    nodes: 1
+    ntasks_per_node: 1
+    mem: "64G"
+    cpus_per_task: 8
+    time: "00:30:00"
+
+# Per-job SLURM overrides (SLURM settings only)
+jobs:
+  augmentation_generation:
+    time: "02:00:00"
+
+  verifiers_generation:
+    time: "04:00:00"
+
+  responses_generation:
+    time: "08:00:00"
+
+  augmentation_preprocessing:
+    time: "00:15:00"
+
+  augmentation_postprocessing:
+    time: "00:15:00"
+
+  verifiers_preprocessing:
+    time: "00:15:00"
+
+  concatenation_job:
+    mem: "128G"
+    time: "00:30:00"

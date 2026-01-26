@@ -1,0 +1,49 @@
+{"instruction": "At the end of your response, please explicitly add a postscript starting with {postscript_marker}", "category": "Content", "placeholders": {"postscript_marker": {"type": "static", "values": ["P.S.", "Note:", "PS:", "N.B.", "Postscript:"]}}}
+{"instruction": "The response must contain at least {N} placeholders represented by square brackets, such as [address].", "category": "Content", "placeholders": {"N": {"type": "numeric", "min": 2, "max": 6}}}
+{"instruction": "Your answer must contain a title, wrapped in double angular brackets, such as <<poem of joy>>.", "category": "Content", "placeholders": {}}
+{"instruction": "Your entire response should be in capital letters only.", "category": "Content", "placeholders": {}}
+{"instruction": "Your entire response should be in all lowercase letters. No capital letters are allowed.", "category": "Content", "placeholders": {}}
+{"instruction": "Finish your response with this exact phrase {end_phrase}. No other words should follow this phrase.", "category": "Content", "placeholders": {"end_phrase": {"type": "dynamic"}}}
+{"instruction": "In your entire response, refrain from the use of any commas.", "category": "Content", "placeholders": {}}
+{"instruction": "Use at least {N} different coordinating conjunctions in the response.", "category": "Content", "placeholders": {"N": {"type": "numeric", "min": 3, "max": 7}}}
+{"instruction": "Please use an emoji at the end of every sentence.", "category": "Content", "placeholders": {}}
+{"instruction": "Maintain a {N}:{M} ratio of declarative to interrogative sentences in your response.", "category": "Content", "placeholders": {"N": {"type": "numeric", "min": 1, "max": 3}, "M": {"type": "numeric", "min": 1, "max": 2}}}
+{"instruction": "In your response, the last word of each sentence must become the first word of the next sentence.", "category": "Content", "placeholders": {}}
+{"instruction": "No two consecutive words can share the same first letter.", "category": "Content", "placeholders": {}}
+{"instruction": "The response must start with a verb.", "category": "Content", "placeholders": {}}
+{"instruction": "Every sentence must contain at least one adjective and one adverb.", "category": "Content", "placeholders": {}}
+{"instruction": "Include keywords {keywords} at least {N} times in your response.", "category": "Content", "placeholders": {"keywords": {"type": "dynamic"}, "N": {"type": "numeric", "min": 1, "max": 3}}}
+{"instruction": "Do not include keywords {forbidden_words} in the response.", "category": "Content", "placeholders": {"forbidden_words": {"type": "dynamic"}}}
+{"instruction": "The response must include keyword {keyword} in the {position} sentence.", "category": "Content", "placeholders": {"keyword": {"type": "dynamic"}, "position": {"type": "static", "values": ["first", "second", "third", "last", "opening", "closing"]}}}
+{"instruction": "Your response must contain the word {word} exactly {N} times.", "category": "Content", "placeholders": {"word": {"type": "dynamic"}, "N": {"type": "numeric", "min": 2, "max": 5}}}
+{"instruction": "Each paragraph must contain at least one instance of the phrase {phrase}.", "category": "Content", "placeholders": {"phrase": {"type": "dynamic"}}}
+{"instruction": "In your response, the letter {letter} should appear at least {N} times.", "category": "Length", "placeholders": {"letter": {"type": "static", "values": ["a", "e", "i", "o", "u", "s", "t", "r", "n"]}, "N": {"type": "numeric", "min": 10, "max": 30}}}
+{"instruction": "Your response should contain {N} paragraphs. You separate paragraphs using the markdown divider: * * *", "category": "Length", "placeholders": {"N": {"type": "numeric", "min": 2, "max": 5}}}
+{"instruction": "Answer with at least {N} words.", "category": "Length", "placeholders": {"N": {"type": "numeric", "min": 50, "max": 200}}}
+{"instruction": "Answer with exactly {N} words.", "category": "Length", "placeholders": {"N": {"type": "numeric", "min": 50, "max": 150}}}
+{"instruction": "Answer with at most {N} words.", "category": "Length", "placeholders": {"N": {"type": "numeric", "min": 100, "max": 300}}}
+{"instruction": "Answer with at least {N} sentences.", "category": "Length", "placeholders": {"N": {"type": "numeric", "min": 3, "max": 10}}}
+{"instruction": "Answer with exactly {N} sentences.", "category": "Length", "placeholders": {"N": {"type": "numeric", "min": 3, "max": 8}}}
+{"instruction": "There should be {N} paragraphs. Paragraphs and only paragraphs are separated with each other by two line breaks.", "category": "Length", "placeholders": {"N": {"type": "numeric", "min": 2, "max": 5}}}
+{"instruction": "Give {N} different responses. Responses and only responses should be separated by 6 asterisk symbols: ******.", "category": "Length", "placeholders": {"N": {"type": "numeric", "min": 2, "max": 4}}}
+{"instruction": "In your response, words with all capital letters should appear at least {N} times.", "category": "Length", "placeholders": {"N": {"type": "numeric", "min": 2, "max": 6}}}
+{"instruction": "The response must contain between {min_count} and {max_count} words.", "category": "Length", "placeholders": {"min_count": {"type": "numeric", "min": 50, "max": 100}, "max_count": {"type": "numeric", "min": 150, "max": 300}}}
+{"instruction": "Use at least {N} unique words in the response.", "category": "Length", "placeholders": {"N": {"type": "numeric", "min": 30, "max": 80}}}
+{"instruction": "The response should not repeat any word more than {N} times.", "category": "Length", "placeholders": {"N": {"type": "numeric", "min": 2, "max": 5}}}
+{"instruction": "Your answer must contain exactly {N} bullet points. Use the markdown bullet points such as: * This is a point.", "category": "Length", "placeholders": {"N": {"type": "numeric", "min": 3, "max": 7}}}
+{"instruction": "Your response must have {N} sections. Mark the beginning of each section with {section_marker}.", "category": "Length", "placeholders": {"N": {"type": "numeric", "min": 2, "max": 5}, "section_marker": {"type": "static", "values": ["## ", "### ", "--- ", "*** ", "[Section] ", "Section: ", "Part "]}}}
+{"instruction": "Wrap your entire response with double quotation marks.", "category": "Format", "placeholders": {}}
+{"instruction": "Entire output should be wrapped in JSON format.", "category": "Format", "placeholders": {}}
+{"instruction": "Answer with a list of items, instead of bullet points use {separator}.", "category": "Format", "placeholders": {"separator": {"type": "static", "values": ["->", "|", ":", ";", ">>", "•", "—", "=>", "~"]}}}
+{"instruction": "Write each word on a new line.", "category": "Format", "placeholders": {}}
+{"instruction": "Nest parentheses (and [brackets {and braces}]) at least {N} levels deep.", "category": "Format", "placeholders": {"N": {"type": "numeric", "min": 2, "max": 4}}}
+{"instruction": "Include quotes within quotes within quotes, at least {N} levels deep, alternating between double quotes and single quotes, starting with double quotes.", "category": "Format", "placeholders": {"N": {"type": "numeric", "min": 2, "max": 4}}}
+{"instruction": "Your response must include bullet points denoted by * and at least one sub-bullet point denoted by - for each bullet point.", "category": "Format", "placeholders": {}}
+{"instruction": "Each paragraph must begin with a sentence in italics, use HTML to indicate the italics.", "category": "Format", "placeholders": {}}
+{"instruction": "Highlight at least {N} sections in your answer with markdown, i.e. *highlighted section*", "category": "Format", "placeholders": {"N": {"type": "numeric", "min": 2, "max": 5}}}
+{"instruction": "The response must be in CSV format with {N} rows.", "category": "Format", "placeholders": {"N": {"type": "numeric", "min": 3, "max": 8}}}
+{"instruction": "The response must contain a markdown table with {N} rows and {M} columns.", "category": "Format", "placeholders": {"N": {"type": "numeric", "min": 2, "max": 5}, "M": {"type": "numeric", "min": 2, "max": 4}}}
+{"instruction": "The response must be in XML format with at least {N} nested levels.", "category": "Format", "placeholders": {"N": {"type": "numeric", "min": 2, "max": 4}}}
+{"instruction": "Dates must be in the format: YYYY-MM-DD.", "category": "Format", "placeholders": {}}
+{"instruction": "Structure your response as a numbered list with exactly {N} items.", "category": "Format", "placeholders": {"N": {"type": "numeric", "min": 3, "max": 8}}}
+{"instruction": "Each item in your list must be prefixed with {prefix}.", "category": "Format", "placeholders": {"prefix": {"type": "static", "values": ["[*]", "(i)", ">>", "→", "•", "Step:", "Item:"]}}}

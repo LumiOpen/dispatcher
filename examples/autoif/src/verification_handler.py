@@ -6,7 +6,7 @@ import json
 from typing import List, Optional, Dict, Any
 import numpy as np
 from dataclasses import dataclass
-from .keyword_handler import KeywordHandler
+from .placeholder_handler import PlaceholderHandler
 from .utils.lang_id import detect_language
 from .utils.function_executor import FunctionExecutor
 from .utils.error_utils import format_error_type_with_turn
@@ -27,7 +27,7 @@ class VerificationHandler:
     """Handler class for performing response verification in autoif generator task.
 
     This class encapsulates all the data and logic needed for response verification,
-    including instructions, evaluation functions, language checking, and keyword handling.
+    including instructions, evaluation functions, language checking, and placeholder handling.
     """
 
     def __init__(self,
@@ -36,7 +36,7 @@ class VerificationHandler:
                  instructions: List[List],
                  eval_funcs: List[List],
                  instruction_categories: List[List],
-                 keyword_handler: Optional[KeywordHandler] = None):
+                 placeholder_handler: Optional[PlaceholderHandler] = None):
         """Initialize VerificationHandler.
 
         Args:
@@ -45,10 +45,10 @@ class VerificationHandler:
             instructions: Instructions per turn
             eval_funcs: Evaluation functions per turn
             instruction_categories: Categories per turn
-            keyword_handler: Optional keyword handler for keyword modifications
+            placeholder_handler: Optional placeholder handler for value generation
         """
         self.turn_idx = turn_idx
-        self.keyword_handler = keyword_handler
+        self.placeholder_handler = placeholder_handler
 
         # Get target language from environment
         self.target_language = os.environ.get("LANGUAGE")
@@ -59,12 +59,12 @@ class VerificationHandler:
             instructions=instructions[turn_idx] if turn_idx < len(instructions) else [],
             eval_funcs=eval_funcs[turn_idx] if turn_idx < len(eval_funcs) else [],
             instruction_categories=instruction_categories[turn_idx] if turn_idx < len(instruction_categories) else [],
-            kwargs=[]  # Will be populated by keyword handler if needed
+            kwargs=[]  # Will be populated by placeholder handler if needed
         )
 
-        # Add keyword generation data if available for this turn
-        if self.keyword_handler and self.keyword_handler.has_keyword_instructions():
-            self.data.kwargs = self.keyword_handler.get_execution_kwargs()
+        # Add placeholder kwargs if available for this turn
+        if self.placeholder_handler and self.placeholder_handler.has_placeholders():
+            self.data.kwargs = self.placeholder_handler.get_execution_kwargs()
 
     def verify_response(self, response_text: str) -> None:
         """Verify the response using all validation checks.
@@ -111,7 +111,6 @@ class VerificationHandler:
                     pass
 
             # If no markdown blocks found, try to find JSON object in the text
-            # Look for curly braces that might contain JSON
             brace_pattern = r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}'
             matches = re.findall(brace_pattern, text, re.DOTALL)
 
@@ -139,7 +138,6 @@ class VerificationHandler:
         if response_data and 'error' in response_data:
             error_value = response_data['error']
 
-            # If a specific error_code is provided, check if it matches
             if error_code is not None:
                 if error_value == error_code:
                     raise TaskFailed(
@@ -147,7 +145,6 @@ class VerificationHandler:
                         error_type=format_error_type_with_turn(error_code, turn)
                     )
             else:
-                # If no specific error_code is provided, raise for any error
                 raise TaskFailed(
                     message=f"Error found in response: {error_value}",
                     error_type=format_error_type_with_turn("error_in_response", turn)
@@ -156,9 +153,8 @@ class VerificationHandler:
     def _check_language(self, response: str) -> None:
         """Check if the response is in the target language."""
         if not self.target_language:
-            return  # Skip language check if no target language is set
+            return
 
-        # Get language prediction
         try:
             lang_code1, lang_code2 = detect_language(response)
         except Exception as e:
@@ -176,22 +172,17 @@ class VerificationHandler:
 
     def _run_evaluation_functions(self, response: str) -> None:
         """Run evaluation functions and check accuracy."""
-        # Check if evaluation functions exist
         if not self.data.eval_funcs:
             raise TaskFailed(
                 message=f"No evaluation functions found",
                 error_type=format_error_type_with_turn("no_eval_functions", self.turn_idx)
             )
 
-        # Use FunctionExecutor for safe function execution
         executor = FunctionExecutor()
-
-        # Use instruction_ids or create enumerated indices
         instruction_ids = self.data.instruction_ids or list(range(len(self.data.eval_funcs)))
 
-        # Process each instruction group
         instruction_results = []
-        accuracy_threshold = 0  # Threshold for instruction to pass
+        accuracy_threshold = 0
 
         for idx, instruction_funcs in enumerate(self.data.eval_funcs):
             instruction_id = instruction_ids[idx] if idx < len(instruction_ids) else idx
@@ -207,11 +198,10 @@ class VerificationHandler:
             if idx < len(self.data.kwargs):
                 instruction_kwargs = self.data.kwargs[idx] if self.data.kwargs[idx] else {}
 
-            # Run all functions for this instruction and collect results
+            # Run all functions for this instruction
             instruction_acc = []
             for func in instruction_funcs:
                 try:
-                    # Execute function with timeout protection
                     result = executor.execute_with_response(func, response, **instruction_kwargs)
                     if result is not None:
                         instruction_acc.append(result)
@@ -221,11 +211,10 @@ class VerificationHandler:
                         error_type=format_error_type_with_turn("function_execution_failed", self.turn_idx)
                     )
 
-            # For this instruction, calculate accuracy
             instruction_accuracy = np.mean(instruction_acc) if instruction_acc else 0
             instruction_results.append(instruction_accuracy)
 
-        # Check if ALL instructions pass the threshold (all instructions must be followed)
+        # Check if all instructions pass
         failed_instructions = []
         for idx, accuracy in enumerate(instruction_results):
             instruction_id = instruction_ids[idx] if idx < len(instruction_ids) else idx
@@ -233,7 +222,6 @@ class VerificationHandler:
                 failed_instructions.append((instruction_id, accuracy))
 
         if failed_instructions:
-            # Format error message based on number of failed instructions
             if len(failed_instructions) == 1:
                 instruction_id, accuracy = failed_instructions[0]
                 raise TaskFailed(

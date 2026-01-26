@@ -1,0 +1,56 @@
+#!/bin/bash
+set -euo pipefail
+
+echo "======================================="
+echo "{{ job_name }} (TensorWave CPU Job)"
+echo "======================================="
+echo "Started: $(date)"
+echo ""
+
+cd /shared_silo/scratch/adamhrin@amd.com/dispatcher/examples/autoif
+
+# Run in subshell to isolate trap from parent pipeline process
+(
+    # ============================================================
+    # Environment Setup
+    # ============================================================
+    source /shared_silo/scratch/adamhrin@amd.com/dispatcher/examples/autoif/execution/environments/singularity_launcher.sh
+    
+    # Reset the EXIT trap to prevent killing parent pipeline
+    trap - EXIT
+
+{% if exports is defined %}
+    # ============================================================
+    # Set Environment Variables
+    # ============================================================
+{% for key, value in exports.items() %}
+    export {{ key }}="{{ value }}"
+{% endfor %}
+{% endif %}
+
+    # ============================================================
+    # Execute Python Script
+    # ============================================================
+    echo "Running: python {{ script }}"
+    echo ""
+
+    run_sing_python {{ script }} \
+{%- for key, value in args.items() if value is not none %}
+{%- if value is sameas true %}
+        --{{ key }}{% if not loop.last %} \{% endif %}
+{%- elif value is sameas false %}
+{%- else %}
+        --{{ key }} "{{ value }}"{% if not loop.last %} \{% endif %}
+{%- endif %}
+{%- endfor %}
+
+)
+
+exit_code=$?
+if [ $exit_code -ne 0 ]; then
+    echo "ERROR: Script failed with exit code $exit_code"
+    exit $exit_code
+fi
+
+echo ""
+echo "Completed: $(date)"

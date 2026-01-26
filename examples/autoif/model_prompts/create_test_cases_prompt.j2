@@ -1,0 +1,135 @@
+You are an expert at creating realistic test cases for evaluating whether AI assistant responses follow specific formatting instructions.
+
+# Task
+
+Given an instruction and a user query, generate test cases that can be used to validate an evaluation function. You must generate:
+- {{ num_positive }} **POSITIVE** test cases: responses that correctly follow the instruction
+- {{ num_negative }} **NEGATIVE** test cases: responses that subtly fail to follow the instruction
+
+# Instruction
+
+{{ instruction }}
+
+{% if placeholders %}
+This instruction has the following placeholders with specific values for this test:
+{% for name, value in placeholder_values.items() %}
+- {{ name }}: {{ value }}
+{% endfor %}
+{% endif %}
+
+# User Query
+
+The AI assistant was asked:
+"{{ user_query }}"
+
+# Requirements
+
+## For POSITIVE cases:
+- The response must be a realistic, helpful answer to the user query
+- The response MUST correctly follow the instruction in every detail
+- Vary the style, length, and approach across different positive cases
+
+## For NEGATIVE cases:
+- The response should still be a realistic, helpful answer to the user query
+- The response MUST fail the instruction, but only **subtly**
+- The failure should be easy to miss on casual reading but clear upon careful inspection
+- Examples of subtle failures:
+  - Off-by-one errors (e.g., 2 sections instead of 3)
+  - Almost correct formatting (e.g., "##" instead of "### ")
+  - Missing the constraint in just one place
+  - Edge case violations (e.g., marker at wrong position)
+
+**IMPORTANT**: Make the negative cases challenging. Obvious failures (like completely ignoring the instruction) are not useful for testing.
+
+# Output Format
+
+Return a JSON object with two arrays: `positive` and `negative`. Each test case is an object with:
+- `response`: the full response text (can be multiline)
+{% if placeholders %}- Any placeholder values used in this test case{% endif %}
+
+```json
+{
+    "positive": [
+        {
+            "response": "...",
+{% if placeholders %}{% for name, value in placeholder_values.items() %}            "{{ name }}": {{ value | tojson }}{% if not loop.last %},{% endif %}
+{% endfor %}{% endif %}
+        }
+    ],
+    "negative": [
+        {
+            "response": "...",
+{% if placeholders %}{% for name, value in placeholder_values.items() %}            "{{ name }}": {{ value | tojson }}{% if not loop.last %},{% endif %}
+{% endfor %}{% endif %}
+        }
+    ]
+}
+```
+
+# Examples
+
+## Example 1: Section formatting instruction
+
+Instruction: "Your response must have 3 sections. Mark the beginning of each section with ### "
+User Query: "Explain photosynthesis"
+
+```json
+{
+    "positive": [
+        {
+            "response": "### Introduction\nPhotosynthesis is the process by which plants convert sunlight into energy.\n\n### Process\nDuring photosynthesis, plants absorb carbon dioxide and water, using sunlight to transform them into glucose and oxygen.\n\n### Importance\nThis process is essential for life on Earth as it produces the oxygen we breathe.",
+            "N": 3,
+            "section_marker": "### "
+        },
+        {
+            "response": "### What is Photosynthesis?\nPhotosynthesis is a biochemical process that occurs in plants.\n\n### How Does It Work?\nPlants use chlorophyll in their leaves to capture light energy. This energy drives the reaction: 6CO2 + 6H2O → C6H12O6 + 6O2\n\n### Why Does It Matter?\nWithout photosynthesis, there would be no food chain and no breathable atmosphere.",
+            "N": 3,
+            "section_marker": "### "
+        }
+    ],
+    "negative": [
+        {
+            "response": "### Overview\nPhotosynthesis is how plants make food.\n\n### Details\nThey use sunlight, water, and CO2 to produce glucose and oxygen.",
+            "N": 3,
+            "section_marker": "### "
+        },
+        {
+            "response": "## Introduction\nPhotosynthesis is vital for plants.\n\n## Process\nIt converts light to chemical energy.\n\n## Conclusion\nThis sustains most life on Earth.",
+            "N": 3,
+            "section_marker": "### "
+        }
+    ]
+}
+```
+
+Note: First negative case has only 2 sections (off-by-one). Second negative case uses "## " instead of "### " (wrong marker format).
+
+## Example 2: Lowercase instruction
+
+Instruction: "Your entire response should be in all lowercase letters."
+User Query: "What is the capital of France?"
+
+```json
+{
+    "positive": [
+        {
+            "response": "the capital of france is paris. it is known as the city of lights and is famous for the eiffel tower, the louvre museum, and its rich cultural heritage."
+        },
+        {
+            "response": "paris is the capital and largest city of france. located on the seine river, it has been a major european city for centuries."
+        }
+    ],
+    "negative": [
+        {
+            "response": "the capital of france is Paris. it's a beautiful city known for art and culture."
+        },
+        {
+            "response": "paris is the capital of france. The city is famous worldwide for its landmarks."
+        }
+    ]
+}
+```
+
+Note: First negative has "Paris" capitalized (proper noun slip). Second negative has "The" capitalized mid-sentence.
+
+Now generate {{ num_positive }} positive and {{ num_negative }} negative test cases for the instruction and user query provided above.

@@ -1,0 +1,118 @@
+# AutoIF Pipeline Configuration - TensorWave (sbatch mode)
+#
+# This config runs in sbatch mode (no vllm_server) - jobs are submitted to SLURM
+# and dispatcher tasks launch their own vLLM instances
+
+# ==============================================================================
+# Experiment Metadata
+# ==============================================================================
+experiment:
+  name: "tw_sbatch"
+  description: "TensorWave sbatch mode with auto-launched vLLM"
+
+# ==============================================================================
+# Environment Setup
+# ==============================================================================
+# Note: No vllm_server section = sbatch mode (auto-detected by pipeline.py)
+environment_setup: "execution/environments/singularity_launcher.sh"
+
+# ==============================================================================
+# Pipeline Sequence
+# ==============================================================================
+pipeline:
+  - augmentation_preprocessing: true
+  - augmentation_generation: true
+  - augmentation_postprocessing: true
+  - verifiers_preprocessing: true
+  - verifiers_generation: true
+
+# ==============================================================================
+# Global Configuration
+# ==============================================================================
+model: "/shared_silo/scratch/models/Qwen3-30B-A3B"
+max_model_len: 32768
+tensor_parallel: 4
+
+language: "fi"
+function_timeout: 10
+workers: 4
+batch_size: 1
+
+base_dir: "/shared_silo/scratch/adamhrin@amd.com/dispatcher/examples/autoif"
+
+# Test case generation settings
+num_test_cases: 3
+
+# ==============================================================================
+# Jobs Configuration
+# ==============================================================================
+jobs:
+  # --------------------------------------------------------------------------
+  # Augmentation
+  # --------------------------------------------------------------------------
+  augmentation_preprocessing:
+    type: cpu_script
+    template: "tw_cpu_slurm.sh.j2"
+    script: src/create_instructions_input.py
+    args:
+      seed-file: "${base_dir}/data/seed_instructions_fi.jsonl"
+      output-file: "aug_input.jsonl"
+      num-instructions-per-category: 100
+      language: "${language}"
+
+  augmentation_generation:
+    type: dispatcher_task
+    template: "tw_dispatcher_slurm.sh.j2"
+    task: tasks.augmentation_task.AugmentInstructionsTask
+    input_file: "aug_input.jsonl"
+    output_file: "aug_output.jsonl"
+    workers: 4
+    work_timeout: 3600
+    exports:
+      HF_HUB_OFFLINE: "0"
+      VLLM_USE_TRITON_FLASH_ATTN: "0"
+      VLLM_ROCM_USE_AITER: "0"
+
+  augmentation_postprocessing:
+    type: cpu_script
+    template: "tw_cpu_slurm.sh.j2"
+    script: src/process_instructions_output.py
+    args:
+      input-file: "aug_output.jsonl"
+      output-file: "augmented_instructions.jsonl"
+      placeholder-lookup-file: "placeholder_lookup.json"
+      language: "${language}"
+      max-instructions: 300
+      seed-file: "${base_dir}/data/seed_instructions_fi.jsonl"
+
+  # --------------------------------------------------------------------------
+  # Verifiers
+  # --------------------------------------------------------------------------
+  verifiers_preprocessing:
+    type: cpu_script
+    template: "tw_cpu_slurm.sh.j2"
+    script: src/create_verifiers_input.py
+    args:
+      instructions-file: "augmented_instructions.jsonl"
+      queries-file: "${base_dir}/data/lmsys-chat-fi-500.jsonl"
+      output-file: "verifiers_input.jsonl"
+      num-queries: "${num_test_cases}"
+
+  verifiers_generation:
+    type: dispatcher_task
+    template: "tw_dispatcher_slurm.sh.j2"
+    task: tasks.verifiers_task.GenerateVerifiersTask
+    input_file: "verifiers_input.jsonl"
+    output_file: "verifiers_output.jsonl"
+    workers: 4
+    work_timeout: 3600
+    exports:
+      HF_HUB_OFFLINE: "0"
+      VLLM_USE_TRITON_FLASH_ATTN: "0"
+      VLLM_ROCM_USE_AITER: "0"
+      NUM_FUNC_GENERATIONS: "3"
+      NUM_TEST_CASES: "${num_test_cases}"
+      MIN_FUNCTIONS: "1"
+      MIN_TEST_CASES: "1"
+      FUNCTION_PASS_RATE: "0.8"
+      FUNCTION_TIMEOUT: "${function_timeout}"

@@ -5,18 +5,6 @@ import os
 import random
 
 
-def count_valid_entries(input_file, score_threshold):
-    """Count total number of valid entries in the input file."""
-    count = 0
-    with open(input_file, 'r') as f:
-        for line in f:
-            data = json.loads(line.strip())
-            scores = data.get('scores')
-            if scores is not None and isinstance(scores, list) and all(s >= score_threshold for s in scores):
-                count += 1
-    return count
-
-
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--input-file", required=True, help="Input JSONL file with scored responses")
@@ -30,24 +18,6 @@ def main():
     # Create output directory if it doesn't exist
     os.makedirs(args.output_dir, exist_ok=True)
     
-    # Count total valid entries first
-    print("Counting valid entries...")
-    total_valid = count_valid_entries(args.input_file, args.score_threshold)
-    print(f"Found {total_valid} valid entries")
-    
-    if total_valid == 0:
-        print("No valid entries found. Exiting.")
-        return
-    
-    # Determine sampling strategy
-    train_target = min(args.max_train_outrows, total_valid)
-    test_target = min(args.max_test_outrows, max(0, total_valid - args.max_train_outrows)) if args.test else 0
-
-    print(f"Target: {train_target} train entries (args.max_train_outrows = {args.max_train_outrows}), {test_target} test entries (args.max_test_outrows = {args.max_test_outrows})")
-
-    # Calculate sampling probabilities
-    train_prob = train_target / total_valid
-    
     # Prepare output file paths
     train_file = os.path.join(args.output_dir, "train.jsonl")
     test_file = os.path.join(args.output_dir, "test.jsonl") if args.test else None
@@ -56,53 +26,59 @@ def main():
     train_written = 0
     test_written = 0
     valid_seen = 0
+    turn_counts = {}  # Track count of samples by number of turns
     
     with open(args.input_file, 'r') as f_in, \
-         open(train_file, 'w') as f_train, \
-         (open(test_file, 'w') if test_file else None) as f_test:
+         open(train_file, 'w') as f_train:
         
-        for line in f_in:
-            data = json.loads(line.strip())
-            scores = data.get('scores')
+        if test_file:
+            f_test = open(test_file, 'w')
+        else:
+            f_test = None
+        
+        try:
+            for line in f_in:
+                data = json.loads(line.strip())
+                scores = data.get('scores')
 
-            if scores is not None and isinstance(scores, list) and all(s >= args.score_threshold for s in scores):
-                output = {
-                    'messages': data['messages'], 
-                    'query_source': data['query_metadata']['source'] if 'query_metadata' in data and 'source' in data['query_metadata'] else ''
-                }
-                valid_seen += 1
-                
-                # Simple deterministic split: first train_target go to train, rest to test
-                if train_written < train_target:
-                    # Use random sampling to get exactly train_target entries
-                    # Probability of selecting this entry for train
-                    remaining_valid = total_valid - valid_seen + 1
-                    remaining_train_needed = train_target - train_written
+                if scores is not None and isinstance(scores, list) and all(s >= args.score_threshold for s in scores):
+                    # Count number of turns (user messages)
+                    messages = data.get('messages', [])
+                    num_turns = sum(1 for msg in messages if msg.get('role') == 'user')
                     
-                    if remaining_train_needed >= remaining_valid:
-                        # Must take this entry for train
-                        f_train.write(json.dumps(output) + '\n')
+                    # Track turn count
+                    turn_counts[num_turns] = turn_counts.get(num_turns, 0) + 1
+                    
+                    output = {
+                        'messages': messages, 
+                        'query_source': data['query_metadata']['source'] if 'query_metadata' in data and 'source' in data['query_metadata'] else ''
+                    }
+                    valid_seen += 1
+                    
+                    # Simple sequential assignment: first max_train_outrows go to train, rest to test
+                    if train_written < args.max_train_outrows:
+                        f_train.write(json.dumps(output, ensure_ascii=False) + '\n')
                         train_written += 1
                     else:
-                        # Random selection
-                        prob = remaining_train_needed / remaining_valid
-                        if random.random() < prob:
-                            f_train.write(json.dumps(output) + '\n')
-                            train_written += 1
-                        elif f_test and test_written < test_target:
-                            f_test.write(json.dumps(output) + '\n')
+                        # Train quota filled, everything goes to test
+                        if f_test and test_written < args.max_test_outrows:
+                            f_test.write(json.dumps(output, ensure_ascii=False) + '\n')
                             test_written += 1
-                else:
-                    # Train quota filled, everything goes to test
-                    if f_test and test_written < test_target:
-                        f_test.write(json.dumps(output) + '\n')
-                        test_written += 1
+        finally:
+            if f_test:
+                f_test.close()
     
     # Print summary
     print(f"Written {train_written} entries to {train_file}")
     if args.test:
         print(f"Written {test_written} entries to {test_file}")
     print(f"Total valid entries processed: {valid_seen}")
+    
+    # Report turn count statistics
+    print("\nTurn count statistics:")
+    for num_turns in sorted(turn_counts.keys()):
+        count = turn_counts[num_turns]
+        print(f"  {num_turns} turn(s): {count} samples")
 
 
 if __name__ == "__main__":

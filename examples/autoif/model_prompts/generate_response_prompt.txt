@@ -21,7 +21,13 @@ In case there are multiple constraints: if you are unable to satisfy all the con
 
 If you are able to satisfy all constraints, provide your response in a clear and concise manner, ensuring that it is relevant to the query and adheres to the specified constraints.
 
-Your response should be in {language} language.
+Your response should be in {language} language. Do not include any extra text around the response or any text in a different language than {language}. Simply output the response to the query following the constraints.
 
-Query: {query}
-Constraints: {instructions}
+INPUT DATA:
+<query>
+{query}
+</query>
+
+<constraints>
+{instructions}
+</constraints>

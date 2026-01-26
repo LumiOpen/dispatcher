@@ -110,27 +110,6 @@ class KeywordHandler:
                     error_type=format_error_type_with_turn("keyword_generation_failed", self.turn_idx)
                 )
 
-    def apply_keyword_modifications_to_prompt(self, prompt: str) -> str:
-        """Apply keyword-generated instruction modifications to the prompt.
-
-        Args:
-            prompt: Original prompt to modify
-
-        Returns:
-            Modified prompt with keyword replacements
-        """
-        modified_prompt = prompt
-
-        # Replace all keyword instructions in this turn with the newly generated ones
-        for instruction_idx, keyword_data in self.keyword_generation_data.items():
-            original_instruction = self.data.original_instructions[instruction_idx]
-            new_instruction = keyword_data['new_instruction']
-
-            # Replace the original instruction with the new one in the prompt
-            modified_prompt = modified_prompt.replace(original_instruction, new_instruction)
-
-        return modified_prompt
-
     def get_final_instructions(self) -> List[str]:
         """Get the final instructions for this turn with keyword replacements applied.
 

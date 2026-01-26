@@ -3,7 +3,13 @@ Your task is to generate a response that correctly answers the query while stric
 
 Note: Remember that you have to follow all the constraints from the previous turns as well as the new ones provided in this turn.
 
-Your response should be in {language} language.
+Your response should be in {language} language. Do not include any extra text around the response or any text in a different language than {language}. Simply output the response to the query following the constraints.
 
-Query: {query}
-Constraints: {instructions}
+INPUT DATA:
+<query>
+{query}
+</query>
+
+<constraints>
+{instructions}
+</constraints>

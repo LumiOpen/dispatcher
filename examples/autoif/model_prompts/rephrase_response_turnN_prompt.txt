@@ -1,5 +1,10 @@
-Rephrase your response following the constraints from the previous turns as well as additional constraints. Here is the full list of constraints you need to follow:
+Rephrase your response following the constraints from the previous turns as well as additional constraints.
 
-Your response should be in {language} language.
+Your response should be in {language} language. Do not include any extra text around the response or any text in a different language than {language}. Simply output the response to the query following the constraints.
 
-Constraints: {instructions}
+Here is the full list of constraints you need to follow:
+
+INPUT DATA:
+<constraints>
+{instructions}
+</constraints>

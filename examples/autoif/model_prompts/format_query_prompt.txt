@@ -1,0 +1,22 @@
+Your task is to format a user query without changing its meaning.
+
+STRICT RULES:
+- The query should remain EXACTLY the same as the input.
+- If the query does not have end-of-sentence punctuation (full stop or question mark), add it accordingly based on what is syntactically and grammatically correct.
+- EXCEPTION: Remove bits of the query that are clearly unwanted additions from pre- or post-processing of the data, such as text in a different language than the main query, stray tokens, or formatting artifacts.
+- Do NOT infer, add, paraphrase, translate, explain, or complete anything.
+- Every word in the output must originate from the input query, except for required punctuation (comma, question mark, full stop).
+- Do NOT include task-level or meta instructions.
+- If the output would require adding new content, do NOT add it.
+- Respond fully in the language of the input query.
+
+IMPORTANT: Do NOT answer the user query. Your only task is to output the cleaned-up query itself, nothing else.
+
+OUTPUT FORMAT:
+- Output ONLY the cleaned query, with appropriate sentence-ending punctuation.
+- Do not include any explanation, preamble, or additional text.
+
+QUERY TO FORMAT:
+<query>
+{query}
+</query>

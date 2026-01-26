@@ -73,7 +73,7 @@ def save_status(out_dir: Path, status: dict):
     status['last_updated'] = datetime.now().isoformat()
     status_file = out_dir / 'status.json'
     with open(status_file, 'w') as f:
-        json.dump(status, f, indent=2)
+        json.dump(status, f, ensure_ascii=False, indent=2)
 
 
 def get_job_status(job_id: str) -> str:
@@ -720,8 +720,6 @@ def main():
                        help='Path to task config.yaml')
     parser.add_argument('--slurm-config', type=Path, default=Path('configs/slurm.default.yaml'),
                        help='Path to slurm.yaml (default: configs/slurm.default.yaml)')
-    parser.add_argument('--out-dir', type=Path, default=Path('data'),
-                       help='Output directory (default: data)')
     parser.add_argument('--force', action='store_true',
                        help='Cancel all jobs and rerun entire pipeline')
     parser.add_argument('--rerun-failed', action='store_true',
@@ -741,8 +739,16 @@ def main():
 
     slurm_config = load_yaml_file(args.slurm_config)
 
+    # Determine output directory
+    # Get output directory from config
+    experiment = config.get("experiment", {})
+    experiment_name = experiment.get("name", "default")
+    # Use output_dir from config, default to data/{experiment.name}
+    output_dir = experiment.get("output_dir", f"data/{experiment_name}")
+    out_dir = Path(output_dir)
+    
     # Create output directory
-    args.out_dir.mkdir(parents=True, exist_ok=True)
+    out_dir.mkdir(parents=True, exist_ok=True)
 
     # Detect execution mode
     execution_mode = detect_execution_mode(config)
@@ -750,22 +756,22 @@ def main():
     print(f"\nAutoIF Pipeline")
     print(f"Experiment: {config.get('experiment', {}).get('name', 'N/A')}")
     print(f"Execution Mode: {execution_mode.upper()}")
-    print(f"Output: {args.out_dir}")
+    print(f"Output: {out_dir}")
 
     # Handle different modes
     if args.status:
-        status = load_status(args.out_dir)
+        status = load_status(out_dir)
         print_status(status, execution_mode)
         sys.exit(0)
     elif args.force:
-        handle_force(config, slurm_config, args.out_dir, execution_mode)
+        handle_force(config, slurm_config, out_dir, execution_mode)
     elif args.rerun_failed:
-        handle_rerun_failed(config, slurm_config, args.out_dir, execution_mode)
+        handle_rerun_failed(config, slurm_config, out_dir, execution_mode)
     elif args.continue_pipeline:
-        handle_continue(config, slurm_config, args.out_dir, execution_mode)
+        handle_continue(config, slurm_config, out_dir, execution_mode)
     else:
         # Check for existing jobs
-        status = load_status(args.out_dir)
+        status = load_status(out_dir)
 
         if execution_mode == 'sbatch' and status.get('sbatch'):
             print_status(status, execution_mode)
@@ -783,7 +789,7 @@ def main():
                 sys.exit(0)
 
         # Fresh submission
-        submit_pipeline(config, slurm_config, args.out_dir, execution_mode)
+        submit_pipeline(config, slurm_config, out_dir, execution_mode)
 
 
 if __name__ == "__main__":

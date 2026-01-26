@@ -1,140 +1,211 @@
 import argparse
 import json
 import re
-from utils.lang_id import detect_language
+from collections import defaultdict
+from src.utils.lang_id import detect_language
 
 
-def process_output(input_file: str, output_file: str, language: str = 'en', max_instructions: int = 100, seed_file: str = None) -> None:
+def process_output(input_file: str, output_file: str, placeholder_lookup_file: str, 
+                   language: str = 'en', max_instructions: int = 100, seed_file: str = None) -> None:
     """
-    De-duplicate instructions and filter by language. Do not include seed instructions in the output
+    Process augmented instructions output:
+    1. Parse JSON output from LLM
+    2. De-duplicate instructions and filter by language
+    3. Build placeholder lookup table from all static placeholders
+    4. Include seed instructions in the output
     """
-
+    
     seen_instructions = set()
     instruction_count = 0
-
-    # Load keyword instructions from seed file if provided
-    keyword_instructions = []
+    all_instructions = []
+    
+    # Aggregate placeholder values across all instructions
+    # Structure: {placeholder_name: {"type": "static", "values": set()}}
+    placeholder_lookup = defaultdict(lambda: {"type": None, "values": set(), "min": float('inf'), "max": float('-inf')})
+    
+    # Load seed instructions if provided (they serve as both examples and actual data)
     if seed_file:
         try:
-            with open(seed_file, 'r') as f:
-                seed_data = json.load(f)
-
-            # Extract keyword instructions from the new JSON format
-            if "keyword_instructions" in seed_data:
-                keyword_instructions = [
-                    {'instruction': instruction, 'category': 'keyword'}
-                    for instruction in seed_data["keyword_instructions"]
-                ]
-                print(f"Loaded {len(keyword_instructions)} keyword instructions from {seed_file}")
-            else:
-                print(f"Warning: No keyword_instructions found in {seed_file}")
+            with open(seed_file, 'r', encoding='utf-8') as f:
+                for line in f:
+                    line = line.strip()
+                    if line:
+                        seed_instr = json.loads(line)
+                        all_instructions.append(seed_instr)
+                        seen_instructions.add(seed_instr['instruction'])
+                        # Add placeholders to lookup
+                        _update_placeholder_lookup(placeholder_lookup, seed_instr.get('placeholders', {}))
+            print(f"Loaded {len(all_instructions)} seed instructions from {seed_file}")
         except FileNotFoundError:
-            print(f"Warning: Seed file {seed_file} not found, continuing without keyword instructions")
-        except json.JSONDecodeError:
-            print(f"Warning: Invalid JSON in seed file {seed_file}, continuing without keyword instructions")
-
-    # Process instructions from model output
+            print(f"Warning: Seed file {seed_file} not found")
+        except json.JSONDecodeError as e:
+            print(f"Warning: Invalid JSON in seed file: {e}")
+    
+    # Process LLM output
     try:
-        with open(input_file, 'r') as f:
-            results = [json.loads(line) for line in f]
+        with open(input_file, 'r', encoding='utf-8') as f:
+            results = [json.loads(line) for line in f if line.strip()]
     except FileNotFoundError:
         print(f"Error: Input file {input_file} not found")
         exit(1)
-    except json.JSONDecodeError:
-        print(f"Error: Input file {input_file} contains invalid JSON")
+    except json.JSONDecodeError as e:
+        print(f"Error: Input file contains invalid JSON: {e}")
         exit(1)
-
-    # Open JSONL file for writing
-    with open(output_file, 'w', encoding='utf-8') as outfile:
-
-        # First, add keyword instructions to the output
-        for keyword_data in keyword_instructions:
-            if instruction_count >= int(max_instructions):
-                break
-
-            keyword_instruction = keyword_data['instruction']
-            keyword_category = keyword_data['category']
-
-            # Skip duplicates
-            if keyword_instruction in seen_instructions:
-                print(f"Skipping duplicate keyword instruction: <instruction>{keyword_instruction}</instruction>")
-                continue
-
-            seen_instructions.add(keyword_instruction)
-            entry = {
-                'instruction_id': str(instruction_count),
-                'instruction': keyword_instruction,
-                'instruction_category': keyword_category
-            }
-            outfile.write(json.dumps(entry) + '\n')
-            instruction_count += 1
-            print(f"Added keyword instruction {instruction_count}: {keyword_instruction}")
-        
-        # Calculate remaining instructions and per-category limit
-        remaining_instructions = int(max_instructions) - instruction_count
-        instructions_per_category = remaining_instructions // len(results) if len(results) > 0 else 0
-        print(f"Added {instruction_count} keyword instructions. Remaining: {remaining_instructions}")
-        print(f"Will add up to {instructions_per_category} instructions per category across {len(results)} categories")
-        
-        # Then process regular augmented instructions
-        for result in results:
-            # Get category from original data if it exists
-            category = result.get('original', {}).get('category', None)
-            cat_instr_count = 0
-            for response in result.get('responses', []):
-                # Extract instructions
-                instructions = re.findall(r'^\d+\.?\s+(.*)', response, re.MULTILINE)
-                
-                # If no numbered instructions found, try line-by-line
-                if not instructions:
-                    instructions = [line.strip() for line in response.split('\n') 
-                                    if line.strip() and not line.strip().startswith('#')]
-
-                print(f"Processing {len(instructions)} raw instructions from response {'for category ' + category if category else ''}")
-                
-                for instruction in instructions:
-                    instruction = instruction.strip()
-
-                    if cat_instr_count >= instructions_per_category:
-                        print(f"Reached maximum of {instructions_per_category} instructions for category {category}, moving to next category")
-                        break
-
-                    # Break if we reach the maximum number of instructions
-                    if instruction_count >= int(max_instructions):
-                        print(f"Reached maximum number of instructions: {max_instructions}. Output {instruction_count} {language} instructions")
-                        return
-
-                    # Skip empty or very short instructions
-                    if len(instruction) < 5:
-                        print(f"Skipping: len(instruction) < 5: <instruction>{instruction}</instruction>")
-                        continue
-                    
-                    # Skip duplicates
-                    if instruction in seen_instructions:
-                        print(f"Skipping: instruction already seen: <instruction>{instruction}</instruction>")
-                        continue
-                    
-                    # Check language
-                    try:
-                        lang_code1, lang_code2 = detect_language(instruction)
-                        # lang_cde1 is the three-letter code, lang_code2 is the two-letter code
-                        if lang_code1 == language or (lang_code2 is not None and lang_code2 == language):
-                            print(f"OK. Response language is {lang_code1} ({lang_code2}). Expected {language}.")
-                            # Add to set to track duplicates
-                            seen_instructions.add(instruction)
-                            # Write to JSONL with category
-                            entry = {
-                                'instruction_id': str(instruction_count),
-                                'instruction': instruction,
-                                'instruction_category': category if category else ''
-                            }
-                            outfile.write(json.dumps(entry) + '\n')
-                            cat_instr_count += 1
-                            instruction_count += 1
-                    except Exception as e:
-                        print(f'Language detection error: {e}')
     
-    print(f'Output {instruction_count} {language} instructions (including {len([inst for inst in keyword_instructions if inst["instruction"] in seen_instructions])} keyword instructions)')
+    # Process each category's results
+    for result in results:
+        category = result.get('original', {}).get('category', 'Unknown')
+        
+        for response in result.get('responses', []):
+            # Parse JSON objects from the response
+            parsed_instructions = _parse_json_instructions(response)
+            
+            print(f"Parsed {len(parsed_instructions)} instructions from response for category {category}")
+            
+            for instr_data in parsed_instructions:
+                instruction = instr_data.get('instruction', '').strip()
+                placeholders = instr_data.get('placeholders', {})
+                
+                if not instruction or len(instruction) < 10:
+                    print(f"Skipping: instruction too short: {instruction[:50]}")
+                    continue
+                
+                if instruction in seen_instructions:
+                    print(f"Skipping: duplicate instruction")
+                    continue
+                
+                # Check language
+                try:
+                    lang_code1, lang_code2 = detect_language(instruction)
+                    if lang_code1 != language and (lang_code2 is None or lang_code2 != language):
+                        print(f"Skipping: wrong language {lang_code1}/{lang_code2}, expected {language}")
+                        continue
+                except Exception as e:
+                    print(f"Language detection error: {e}")
+                    continue
+                
+                seen_instructions.add(instruction)
+                all_instructions.append({
+                    'instruction': instruction,
+                    'category': category,
+                    'placeholders': placeholders
+                })
+                
+                # Update placeholder lookup
+                _update_placeholder_lookup(placeholder_lookup, placeholders)
+    
+    # Limit total instructions
+    if len(all_instructions) > int(max_instructions):
+        # Distribute evenly across categories
+        by_category = defaultdict(list)
+        for instr in all_instructions:
+            by_category[instr['category']].append(instr)
+        
+        per_category = int(max_instructions) // len(by_category)
+        all_instructions = []
+        for cat, instrs in by_category.items():
+            all_instructions.extend(instrs[:per_category])
+        print(f"Limited to {len(all_instructions)} instructions ({per_category} per category)")
+    
+    # Write output JSONL
+    with open(output_file, 'w', encoding='utf-8') as f:
+        for idx, instr in enumerate(all_instructions):
+            instr['instruction_id'] = str(idx)
+            f.write(json.dumps(instr, ensure_ascii=False) + '\n')
+    
+    print(f"\nOutput {len(all_instructions)} instructions to {output_file}")
+    
+    # Write placeholder lookup table
+    lookup_output = {}
+    for name, data in placeholder_lookup.items():
+        if data['type'] == 'static':
+            lookup_output[name] = {
+                'type': 'static',
+                'values': sorted(list(data['values']))
+            }
+        elif data['type'] == 'numeric':
+            lookup_output[name] = {
+                'type': 'numeric',
+                'min': data['min'] if data['min'] != float('inf') else 1,
+                'max': data['max'] if data['max'] != float('-inf') else 10
+            }
+        elif data['type'] == 'dynamic':
+            lookup_output[name] = {'type': 'dynamic'}
+    
+    with open(placeholder_lookup_file, 'w', encoding='utf-8') as f:
+        json.dump(lookup_output, f, ensure_ascii=False, indent=2)
+    
+    print(f"Created placeholder lookup table with {len(lookup_output)} placeholders at {placeholder_lookup_file}")
+    for name, data in lookup_output.items():
+        if data['type'] == 'static':
+            print(f"  {name}: static ({len(data['values'])} values)")
+        elif data['type'] == 'numeric':
+            print(f"  {name}: numeric (min={data['min']}, max={data['max']})")
+        else:
+            print(f"  {name}: dynamic")
+
+
+def _parse_json_instructions(response: str) -> list:
+    """Parse JSON instruction objects from LLM response."""
+    instructions = []
+    
+    # Try to find JSON objects line by line
+    for line in response.split('\n'):
+        line = line.strip()
+        if not line or not line.startswith('{'):
+            continue
+        
+        try:
+            data = json.loads(line)
+            if 'instruction' in data:
+                instructions.append(data)
+        except json.JSONDecodeError:
+            # Try to extract JSON from the line
+            match = re.search(r'\{.*\}', line)
+            if match:
+                try:
+                    data = json.loads(match.group())
+                    if 'instruction' in data:
+                        instructions.append(data)
+                except json.JSONDecodeError:
+                    pass
+    
+    # If no line-by-line matches, try to find all JSON objects in the response
+    if not instructions:
+        for match in re.finditer(r'\{[^{}]*"instruction"[^{}]*\}', response):
+            try:
+                data = json.loads(match.group())
+                instructions.append(data)
+            except json.JSONDecodeError:
+                pass
+    
+    return instructions
+
+
+def _update_placeholder_lookup(lookup: dict, placeholders: dict) -> None:
+    """Update the placeholder lookup table with values from an instruction."""
+    for name, data in placeholders.items():
+        if not isinstance(data, dict):
+            continue
+        
+        ptype = data.get('type')
+        
+        if ptype == 'static':
+            lookup[name]['type'] = 'static'
+            values = data.get('values', [])
+            if isinstance(values, list):
+                lookup[name]['values'].update(values)
+        
+        elif ptype == 'numeric':
+            lookup[name]['type'] = 'numeric'
+            if 'min' in data:
+                lookup[name]['min'] = min(lookup[name]['min'], data['min'])
+            if 'max' in data:
+                lookup[name]['max'] = max(lookup[name]['max'], data['max'])
+        
+        elif ptype == 'dynamic':
+            lookup[name]['type'] = 'dynamic'
+
 
 def main():
     parser = argparse.ArgumentParser(description='Process and filter generated instructions')
@@ -143,23 +214,26 @@ def main():
                         help='Input file with model-generated instructions (JSONL)')
     parser.add_argument('--output-file', type=str, required=True,
                         help='Output file for filtered instructions (JSONL)')
-    parser.add_argument('--language', type=str, default='fi',
-                        help='Language code for filtering (e.g., "fi" for Finnish)')
-    parser.add_argument('--max-instructions', type=str, default=100,
-                        help='Maximum number of instructions to output, default is 100.')
+    parser.add_argument('--placeholder-lookup-file', type=str, required=True,
+                        help='Output JSON file for placeholder lookup table')
+    parser.add_argument('--language', type=str, default='en',
+                        help='Language code for filtering (e.g., "en" for English)')
+    parser.add_argument('--max-instructions', type=int, default=100,
+                        help='Maximum number of instructions to output')
     parser.add_argument('--seed-file', type=str, default=None,
-                        help='Optional seed file (categorised_instructions.json) containing keyword instructions to include in output')
+                        help='Seed instructions JSONL file to include in output')
 
     args = parser.parse_args()
 
-    # Convert hyphenated args to underscores for function call
     process_output(
         input_file=args.input_file,
         output_file=args.output_file,
+        placeholder_lookup_file=args.placeholder_lookup_file,
         language=args.language,
         max_instructions=args.max_instructions,
         seed_file=args.seed_file
     )
+
 
 if __name__ == "__main__":
     main()

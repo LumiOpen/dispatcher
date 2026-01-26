@@ -385,12 +385,12 @@ def write_results(all_results: List[CrossValidationResult], filtered_results: Li
     # Write all results with raw parsed data (no filtering applied to eval_func and cases)
     with open(output_all_file, 'w') as f:
         for result in all_results:
-            f.write(json.dumps(result.to_dict()) + '\n')
+            f.write(json.dumps(result.to_dict(), ensure_ascii=False) + '\n')
     
     # Write only passed verifiers with filtered/validated data
     with open(output_filtered_file, 'w') as f:
         for result in filtered_results:
-            f.write(json.dumps(result.to_filtered_dict()) + '\n')
+            f.write(json.dumps(result.to_filtered_dict(), ensure_ascii=False) + '\n')
 
 
 def cross_validate_verifiers(verifiers_file: str, output_all_file: str, output_filtered_file: str, logfile: str):
