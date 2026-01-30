@@ -35,7 +35,7 @@ jobs:
     time: "02:00:00"
 
   verifiers_generation:
-    time: "04:00:00"
+    time: "10:00:00"
 
   responses_generation:
     time: "08:00:00"

@@ -4,6 +4,9 @@ import os
 import json
 import random
 
+import logging
+logger = logging.getLogger(__name__)
+
 import jinja2
 
 from dispatcher.taskmanager.backend.request import Request, Response
@@ -25,6 +28,7 @@ NUM_TEST_CASES = int(os.getenv("NUM_TEST_CASES", 3))
 MIN_FUNCTIONS = int(os.getenv('MIN_FUNCTIONS', 1))
 MIN_TEST_CASES = int(os.getenv('MIN_TEST_CASES', 1))
 FUNCTION_PASS_RATE = float(os.getenv('FUNCTION_PASS_RATE', 0.8))
+LANGUAGE = os.getenv('LANGUAGE', 'en')
 
 # Prompt templates
 FUNC_PROMPT_PATH = "model_prompts/create_eval_function_prompt.j2"
@@ -37,8 +41,8 @@ class GenerateVerifiersTask(GeneratorTask):
 
     Flow:
     1. Generate NUM_FUNC_GENERATIONS evaluation functions
-    2. Pick a random user query from the provided dataset
-    3. Generate NUM_TEST_CASES positive and negative test cases
+    2. Sample NUM_TEST_CASES random user queries from the provided dataset
+    3. Generate 1 positive and 1 negative test case per query (all in one LLM call)
     4. Cross-validate functions against test cases
     5. Raise TaskFailed for verifiers that don't pass validation
 
@@ -57,12 +61,14 @@ class GenerateVerifiersTask(GeneratorTask):
         "top_p": 0.95,
         "max_tokens": 8192,
         "n": NUM_FUNC_GENERATIONS,
+        "extra_body": {"chat_template_kwargs": {"enable_thinking": False}},
     }
 
     TEST_CASES_GEN_PARAMS: Dict[str, Any] = {
         "temperature": 0.7,
         "top_p": 0.95,
-        "max_tokens": 8192,
+        "max_tokens": 16384,
+        "extra_body": {"chat_template_kwargs": {"enable_thinking": False}},
     }
 
     def __init__(self, *args, **kwargs):
@@ -140,8 +146,10 @@ class GenerateVerifiersTask(GeneratorTask):
         func_prompt = self._render_template(
             FUNC_PROMPT_PATH,
             instruction=instruction,
-            placeholders=placeholder_info
+            placeholders=placeholder_info,
+            language=LANGUAGE
         )
+        logger.info(f"[GenerateVerifiersTask] IID:{instruction_id} function generation prompt: {func_prompt}")
 
         response: Response = yield Request({
             "messages": [{"role": "user", "content": func_prompt}],
@@ -153,33 +161,39 @@ class GenerateVerifiersTask(GeneratorTask):
         response_texts = response.get_text(n=NUM_FUNC_GENERATIONS)
         if response_texts:
             for text in response_texts:
+                logger.info(f"[GenerateVerifiersTask] IID:{instruction_id} function generation response: {text}")
                 func_str, error = self.parser.parse_function(text, instruction_id)
+                logger.info(f"[GenerateVerifiersTask] IID:{instruction_id} function generation error: {error}")
+                logger.info(f"[GenerateVerifiersTask] IID:{instruction_id} function generation func_str: {func_str}")
                 if func_str:
                     all_functions.append(func_str)
+        self.data['eval_funcs'] = all_functions
 
         # =====================================================================
-        # Phase 2: Generate test cases with random user query
+        # Phase 2: Generate test cases - one positive and one negative per query
+        # Sample NUM_TEST_CASES queries and generate all test cases in one LLM call
         # =====================================================================
-        user_query = random.choice(user_queries)
-        placeholder_values = self._sample_placeholder_values(placeholders)
+        num_queries_to_sample = min(NUM_TEST_CASES, len(user_queries))
+        sampled_queries = random.sample(user_queries, num_queries_to_sample)
 
         test_cases_prompt = self._render_template(
             TEST_CASES_PROMPT_PATH,
             instruction=instruction,
             placeholders=placeholder_info if placeholders else None,
-            placeholder_values=placeholder_values if placeholders else None,
-            user_query=user_query,
-            num_positive=NUM_TEST_CASES,
-            num_negative=NUM_TEST_CASES
+            user_queries=sampled_queries,
+            language=LANGUAGE
         )
-
+        logger.info(f"[GenerateVerifiersTask] IID:{instruction_id} test cases generation prompt: {test_cases_prompt}")
+        
         response: Response = yield Request({
             "messages": [{"role": "user", "content": test_cases_prompt}],
             **self.TEST_CASES_GEN_PARAMS
         })
-
+        logger.info(f"[GenerateVerifiersTask] IID:{instruction_id} test cases generation response: {response.get_text()}")
         test_cases_data, error = self.parser.parse_test_cases(response.get_text(), instruction_id)
-
+        logger.info(f"[GenerateVerifiersTask] IID:{instruction_id} test cases generation error: {error}")
+        logger.info(f"[GenerateVerifiersTask] IID:{instruction_id} test cases generation test_cases_data: {test_cases_data}")
+        self.data['test_cases_data'] = test_cases_data
         # =====================================================================
         # Phase 3: Cross-validate
         # =====================================================================
@@ -188,7 +202,6 @@ class GenerateVerifiersTask(GeneratorTask):
             instruction=instruction,
             instruction_category=instruction_category,
             placeholders=placeholders,
-            placeholder_values=placeholder_values,
             functions=all_functions,
             test_cases_data=test_cases_data
         )
@@ -201,7 +214,6 @@ class GenerateVerifiersTask(GeneratorTask):
         instruction: str,
         instruction_category: str,
         placeholders: Dict[str, Any],
-        placeholder_values: Dict[str, Any],
         functions: List[str],
         test_cases_data: Optional[Dict[str, List]]
     ) -> Dict[str, Any]:
@@ -249,15 +261,17 @@ class GenerateVerifiersTask(GeneratorTask):
         all_cases = []
         for case in positive_cases:
             test_input = {'response': case['response']}
-            # Add placeholder values from the case or use sampled defaults
-            for key, val in placeholder_values.items():
-                test_input[key] = case.get(key, val)
+            # Add any placeholder values from the case
+            for key, val in case.items():
+                if key != 'response':
+                    test_input[key] = val
             all_cases.append({'input': test_input, 'output': True})
         
         for case in negative_cases:
             test_input = {'response': case['response']}
-            for key, val in placeholder_values.items():
-                test_input[key] = case.get(key, val)
+            for key, val in case.items():
+                if key != 'response':
+                    test_input[key] = val
             all_cases.append({'input': test_input, 'output': False})
 
         # Deduplicate

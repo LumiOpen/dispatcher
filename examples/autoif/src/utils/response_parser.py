@@ -55,17 +55,15 @@ class ResponseParser:
 
     def parse_test_cases(self, response: str, instruction_id: str = None) -> Tuple[Optional[Dict[str, List]], Optional[str]]:
         """
-        Parse positive and negative test cases from a response.
+        Parse test cases from a response in test_cases format.
 
         Expected format:
         {
-            "positive": [{"response": "...", ...kwargs}, ...],
-            "negative": [{"response": "...", ...kwargs}, ...]
+            "test_cases": [
+                {"query_index": 1, "positive": {"response": "..."}, "negative": {"response": "..."}},
+                ...
+            ]
         }
-
-        Args:
-            response: Raw LLM response string
-            instruction_id: Optional instruction ID for logging
 
         Returns:
             Tuple of ({"positive": [...], "negative": [...]}, error_reason)
@@ -96,7 +94,7 @@ class ResponseParser:
             pass
         
         # Try to find JSON object in the response
-        json_match = re.search(r'\{[\s\S]*"positive"[\s\S]*"negative"[\s\S]*\}', response)
+        json_match = re.search(r'\{[\s\S]*"test_cases"[\s\S]*\}', response)
         if json_match:
             try:
                 data = json.loads(json_match.group(0))
@@ -110,23 +108,30 @@ class ResponseParser:
         return None, REASON_CASES_PARSE_ERROR
 
     def _validate_test_cases_structure(self, data: Any) -> Tuple[Optional[Dict], Optional[str]]:
-        """Validate that parsed data has the expected test cases structure."""
+        """Validate and convert test_cases format to positive/negative lists."""
         if not isinstance(data, dict):
             return None, "Not a dictionary"
-        
-        if 'positive' not in data or 'negative' not in data:
-            return None, "Missing positive/negative keys"
-        
-        if not isinstance(data['positive'], list) or not isinstance(data['negative'], list):
-            return None, "positive/negative not lists"
-        
-        # Validate each test case has 'response' field
-        for cases, label in [(data['positive'], 'positive'), (data['negative'], 'negative')]:
-            for i, case in enumerate(cases):
-                if not isinstance(case, dict) or 'response' not in case:
-                    return None, f"{label}[{i}] missing 'response'"
-        
-        return data, None
+
+        if 'test_cases' not in data or not isinstance(data['test_cases'], list):
+            return None, "Missing or invalid test_cases array"
+
+        positive = []
+        negative = []
+        for i, entry in enumerate(data['test_cases']):
+            if not isinstance(entry, dict):
+                return None, f"test_cases[{i}] not a dictionary"
+            if 'positive' not in entry or 'negative' not in entry:
+                return None, f"test_cases[{i}] missing positive/negative"
+            pos_case = entry['positive']
+            neg_case = entry['negative']
+            if not isinstance(pos_case, dict) or 'response' not in pos_case:
+                return None, f"test_cases[{i}].positive missing 'response'"
+            if not isinstance(neg_case, dict) or 'response' not in neg_case:
+                return None, f"test_cases[{i}].negative missing 'response'"
+            positive.append(pos_case)
+            negative.append(neg_case)
+
+        return {'positive': positive, 'negative': negative}, None
 
     def _extract_code_block(self, response: str, language: str) -> Optional[str]:
         """Extract code block content for a given language."""

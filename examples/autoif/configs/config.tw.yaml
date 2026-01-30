@@ -115,4 +115,5 @@ jobs:
       MIN_FUNCTIONS: "1"
       MIN_TEST_CASES: "1"
       FUNCTION_PASS_RATE: "0.8"
+      LANGUAGE: "${language}"
       FUNCTION_TIMEOUT: "${function_timeout}"
