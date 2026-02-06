@@ -41,7 +41,6 @@ request_timeout: 1800
 base_dir: "/shared_silo/scratch/adamhrin@amd.com/dispatcher/examples/autoif"
 language: "fi"
 function_timeout: 10
-num_test_cases: 10
 
 # ==============================================================================
 # Jobs Configuration
@@ -94,7 +93,6 @@ jobs:
       instructions-file: "augmented_instructions.jsonl"
       queries-file: "${base_dir}/data/lmsys-chat-fi-500.jsonl"
       output-file: "verifiers_input.jsonl"
-      num-queries: "${num_test_cases}"
 
   verifiers_generation:
     type: dispatcher_task
@@ -109,7 +107,7 @@ jobs:
       VLLM_USE_TRITON_FLASH_ATTN: "0"
       VLLM_ROCM_USE_AITER: "0"
       NUM_FUNC_GENERATIONS: "5"
-      NUM_TEST_CASES: "${num_test_cases}"
+      NUM_TEST_CASES_PER_FUNC: "2"
       MIN_FUNCTIONS: "1"
       MIN_TEST_CASES: "1"
       FUNCTION_PASS_RATE: "0.8"
