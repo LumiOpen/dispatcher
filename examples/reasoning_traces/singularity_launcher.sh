@@ -104,6 +104,7 @@ get_binds() {
     -B /shared_silo/scratch/adamhrin@amd.com:/shared_silo/scratch/adamhrin@amd.com:rw
     -B /shared_silo/scratch/models:/shared_silo/scratch/models:ro
     -B /shared_silo/scratch/datasets:/shared_silo/scratch/datasets:ro
+    -B /shared_silo/scratch/kahakala:/shared_silo/scratch/kahakala:ro
     -B "${PWD:-$(pwd)}:/workspace"
   )
   if [ -f /usr/share/libdrm/amdgpu.ids ]; then
