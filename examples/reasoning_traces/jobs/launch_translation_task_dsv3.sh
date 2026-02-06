@@ -2,7 +2,7 @@
 #SBATCH --job-name=translation
 #SBATCH --nodes=8
 #SBATCH --partition=amd-tw-verification
-#SBATCH --time=02-00:00:00
+#SBATCH --time=05-00:00:00
 #SBATCH --ntasks-per-node=1
 #SBATCH --mem=480G
 #SBATCH --cpus-per-task=7
@@ -16,8 +16,8 @@
 ###
 # configure the following.
 
-INPUT_FILE=/shared_silo/scratch/datasets/Llama-Nemotron-SFT-math-100k.jsonl
-OUTPUT_FILE=/shared_silo/scratch/adamhrin@amd.com/dispatcher/examples/reasoning_traces/data/Llama-Nemotron-SFT-math-100k_translated_DeepSeek-V3_fi.jsonl
+INPUT_FILE=/shared_silo/scratch/datasets/Llama-Nemotron-Post-Training-Dataset/SFT-math-with-id-filtered.jsonl
+OUTPUT_FILE=/shared_silo/scratch/adamhrin@amd.com/dispatcher/examples/reasoning_traces/data/Llama-Nemotron-SFT-math_translated_DeepSeek-V3_fi.jsonl
 TASK=tasks.reasoning_translation_task.ReasoningTranslationTask
 export LANGUAGE=fi
 
@@ -26,7 +26,7 @@ export LANGUAGE=fi
 # or run into any timeouts.  timeouts greatly affect the efficiency of the
 # workflow.
 # Allow environment overrides for easy sweeps via: sbatch --export=ALL,WORKERS=160,MAX_NUM_SEQS=192,...
-WORKERS=${WORKERS:-96}          # number of simultaneous backend requests (per vLLM server)
+WORKERS=${WORKERS:-128}          # number of simultaneous backend requests (per vLLM server)
 BATCH_SIZE=${BATCH_SIZE:-1}      # amount of work to request from dispatcher. 1 is usually fine.
 
 # Timeouts are safety valves and you should not hit them in the normal course
@@ -48,7 +48,7 @@ GPUS_PER_TASK=8     # enough for the model and large batch size
 MAX_MODEL_LEN=${MAX_MODEL_LEN:-65536} # Must be >= the input + the output lengths.
 MAX_SEQ_LEN_TO_CAPTURE=${MAX_SEQ_LEN_TO_CAPTURE:-65536}  # Beneficial to set this to max_model_len.
 # Keep max-num-seqs close to WORKERS (or slightly above) to avoid surprising KV pressure.
-MAX_NUM_SEQS=${MAX_NUM_SEQS:-128}
+MAX_NUM_SEQS=${MAX_NUM_SEQS:-160}
 # Offline throughput: try a larger token budget (chunked prefill is enabled in your vLLM build).
 MAX_NUM_BATCHED_TOKENS=${MAX_NUM_BATCHED_TOKENS:-262144} # Smaller values may result in better TTFT but worse TPOT / throughput.
 
@@ -131,7 +131,6 @@ srun -l bash -c "
       --port \$VLLM_PORT \
       --request-timeout $REQUEST_TIMEOUT \
       --startup-timeout $STARTUP_TIMEOUT \
-      --silence-vllm-logs \
       --vllm-extra-args \"--swap-space 0 --max-num-seqs ${MAX_NUM_SEQS} --no-enable-prefix-caching --max-num-batched-tokens ${MAX_NUM_BATCHED_TOKENS} --block-size 1 --gpu-memory-utilization 0.95 --async-scheduling --quantization fp8\"
   '
 "
