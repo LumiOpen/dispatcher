@@ -10,7 +10,6 @@ from typing import Any, Dict, Generator, Union, List, Optional, Tuple
 from dataclasses import dataclass, field
 import os
 import json
-import re
 import random
 
 import logging
@@ -129,62 +128,6 @@ class GenerateVerifiersTask(GeneratorTask):
         lang_code = os.environ.get('LANGUAGE', 'en').lower().strip()
         return LANG_MAP.get(lang_code, 'English')
 
-    def _parse_cases_from_response(self, text: str, instruction_id: str) -> List[Dict[str, Any]]:
-        """Parse test cases from a combined function+cases LLM response.
-
-        Expected JSON format in the response:
-        {
-            "cases": [
-                {"input": {"response": "..."}, "output": true},
-                ...
-            ]
-        }
-
-        Returns:
-            List of test case dicts with 'input' and 'output' keys.
-        """
-        # Try JSON code block first
-        json_content = self.parser._extract_code_block(text, 'json')
-        if json_content:
-            try:
-                data = json.loads(json_content)
-                if isinstance(data, dict) and 'cases' in data and isinstance(data['cases'], list):
-                    return self._validate_cases(data['cases'], instruction_id)
-            except json.JSONDecodeError:
-                pass
-
-        # Fallback: search for JSON object with "cases" key
-        json_match = re.search(r'\{[\s\S]*"cases"[\s\S]*\}', text)
-        if json_match:
-            try:
-                data = json.loads(json_match.group(0))
-                if isinstance(data, dict) and 'cases' in data and isinstance(data['cases'], list):
-                    return self._validate_cases(data['cases'], instruction_id)
-            except json.JSONDecodeError:
-                pass
-
-        logger.warning(f"[GenerateVerifiersTask] IID:{instruction_id} Could not parse cases JSON from response")
-        return []
-
-    def _validate_cases(self, cases: List, instruction_id: str) -> List[Dict[str, Any]]:
-        """Validate and normalize parsed test cases."""
-        valid = []
-        for i, case in enumerate(cases):
-            if not isinstance(case, dict):
-                continue
-            if 'input' not in case or 'output' not in case:
-                continue
-            if not isinstance(case['input'], dict) or 'response' not in case['input']:
-                continue
-            # Normalize output to bool
-            output = case['output']
-            if isinstance(output, str):
-                output = output.lower() == 'true'
-            else:
-                output = bool(output)
-            valid.append({"input": case['input'], "output": output})
-        return valid
-
     def task_generator(self) -> Generator[Union[Request, List[Request]], Any, Dict[str, Any]]:
         """Generate evaluation functions and test cases."""
         instruction_id = self.data.get("instruction_id", "unknown")
@@ -230,8 +173,9 @@ class GenerateVerifiersTask(GeneratorTask):
                     all_functions.append(func_str)
 
                 # Parse test cases
-                cases = self._parse_cases_from_response(text, instruction_id)
-                all_cases.extend(cases)
+                cases, error = self.parser.parse_test_cases(text, instruction_id)
+                if cases:
+                    all_cases.extend(cases)
 
         # Deduplicate
         all_cases = self._deduplicate_cases(all_cases)

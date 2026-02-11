@@ -53,20 +53,21 @@ class ResponseParser:
         self._log_error(instruction_id, "Could not find Python function in response")
         return None, REASON_FUNCTION_PARSE_FAILURE
 
-    def parse_test_cases(self, response: str, instruction_id: str = None) -> Tuple[Optional[Dict[str, List]], Optional[str]]:
+    def parse_test_cases(self, response: str, instruction_id: str = None) -> Tuple[Optional[List[Dict[str, Any]]], Optional[str]]:
         """
-        Parse test cases from a response in test_cases format.
+        Parse test cases from a response.
 
         Expected format:
         {
-            "test_cases": [
-                {"query_index": 1, "positive": {"response": "..."}, "negative": {"response": "..."}},
+            "cases": [
+                {"input": {"response": "..."}, "output": true},
+                {"input": {"response": "..."}, "output": false},
                 ...
             ]
         }
 
         Returns:
-            Tuple of ({"positive": [...], "negative": [...]}, error_reason)
+            Tuple of (list_of_cases, error_reason) where each case has 'input' and 'output' keys.
         """
         # Handle None response (e.g., from API connection errors)
         if response is None:
@@ -78,60 +79,67 @@ class ResponseParser:
         if json_content:
             try:
                 data = json.loads(json_content)
-                result, error = self._validate_test_cases_structure(data)
+                result = self._validate_cases_structure(data)
                 if result:
                     return result, None
             except json.JSONDecodeError:
                 pass
-        
+
         # Try parsing the entire response as JSON
         try:
             data = json.loads(response)
-            result, error = self._validate_test_cases_structure(data)
+            result = self._validate_cases_structure(data)
             if result:
                 return result, None
         except json.JSONDecodeError:
             pass
-        
-        # Try to find JSON object in the response
-        json_match = re.search(r'\{[\s\S]*"test_cases"[\s\S]*\}', response)
+
+        # Try to find JSON object with "cases" key in the response
+        json_match = re.search(r'\{[\s\S]*"cases"[\s\S]*\}', response)
         if json_match:
             try:
                 data = json.loads(json_match.group(0))
-                result, error = self._validate_test_cases_structure(data)
+                result = self._validate_cases_structure(data)
                 if result:
                     return result, None
             except json.JSONDecodeError:
                 pass
-        
+
         self._log_error(instruction_id, "Could not parse test cases JSON")
         return None, REASON_CASES_PARSE_ERROR
 
-    def _validate_test_cases_structure(self, data: Any) -> Tuple[Optional[Dict], Optional[str]]:
-        """Validate and convert test_cases format to positive/negative lists."""
+    def _validate_cases_structure(self, data: Any) -> Optional[List[Dict[str, Any]]]:
+        """Validate and normalize cases from parsed JSON.
+
+        Expected input: {"cases": [{"input": {"response": "..."}, "output": true}, ...]}
+
+        Returns:
+            List of validated case dicts, or None if structure is invalid.
+        """
         if not isinstance(data, dict):
-            return None, "Not a dictionary"
+            return None
 
-        if 'test_cases' not in data or not isinstance(data['test_cases'], list):
-            return None, "Missing or invalid test_cases array"
+        cases = data.get('cases')
+        if not isinstance(cases, list) or not cases:
+            return None
 
-        positive = []
-        negative = []
-        for i, entry in enumerate(data['test_cases']):
-            if not isinstance(entry, dict):
-                return None, f"test_cases[{i}] not a dictionary"
-            if 'positive' not in entry or 'negative' not in entry:
-                return None, f"test_cases[{i}] missing positive/negative"
-            pos_case = entry['positive']
-            neg_case = entry['negative']
-            if not isinstance(pos_case, dict) or 'response' not in pos_case:
-                return None, f"test_cases[{i}].positive missing 'response'"
-            if not isinstance(neg_case, dict) or 'response' not in neg_case:
-                return None, f"test_cases[{i}].negative missing 'response'"
-            positive.append(pos_case)
-            negative.append(neg_case)
+        valid = []
+        for case in cases:
+            if not isinstance(case, dict):
+                continue
+            if 'input' not in case or 'output' not in case:
+                continue
+            if not isinstance(case['input'], dict) or 'response' not in case['input']:
+                continue
+            # Normalize output to bool
+            output = case['output']
+            if isinstance(output, str):
+                output = output.lower() == 'true'
+            else:
+                output = bool(output)
+            valid.append({"input": case['input'], "output": output})
 
-        return {'positive': positive, 'negative': negative}, None
+        return valid if valid else None
 
     def _extract_code_block(self, response: str, language: str) -> Optional[str]:
         """Extract code block content for a given language."""
