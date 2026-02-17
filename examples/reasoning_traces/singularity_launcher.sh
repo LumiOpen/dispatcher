@@ -85,6 +85,7 @@ setup_singularity_environment() {
   # based on https://rocm.docs.amd.com/en/docs-7.0-docker/benchmark-docker/inference-vllm-deepseek-r1-fp8.html
   # Note: this flag VLLM_ROCM_QUICK_REDUCE_QUANTIZATION may not be compatible with MI325X GPUs
   # export SINGULARITYENV_VLLM_ROCM_QUICK_REDUCE_QUANTIZATION=INT4
+  export SINGULARITYENV_VLLM_USE_V1=${VLLM_USE_V1:-1}
   export SINGULARITYENV_VLLM_TARGET_DEVICE=rocm
   export SINGULARITYENV_VLLM_WORKER_MULTIPROC_METHOD=spawn
   export SINGULARITYENV_HIP_ARCHITECTURES=gfx942
@@ -116,14 +117,14 @@ get_binds() {
 export -f get_binds
 
 ###############################################################################
-# install_dispatcher_packages
-# Installs dispatcher and ninja in the container
+# install_build_dependencies
+# Installs ninja (parallel build system for JIT-compiled GPU kernels)
 ###############################################################################
-install_dispatcher_packages() {
+install_build_dependencies() {
   local binds_array
   mapfile -t binds_array < <(get_binds)
   singularity exec --rocm --cleanenv "${binds_array[@]}" "$IMG" bash --noprofile --norc -c \
-    "$PIP_IN_IMG install --user --upgrade -e /shared_silo/scratch/adamhrin@amd.com/dispatcher ninja"
+    "$PIP_IN_IMG install --user ninja"
 }
 
 ###############################################################################
@@ -156,7 +157,7 @@ export -f translate_slurm_vars
 setup_launcher_environment() {
   translate_slurm_vars
   setup_singularity_environment
-  install_dispatcher_packages
+  install_build_dependencies
   setup_cleanup_trap
 }
 
@@ -199,105 +200,27 @@ run_sing_bash() {
     # Without this, it may attempt to write into system site-packages and later fail imports like:
     #   No module named 'aiter.jit.module_gemm_common'
     export AITER_INSTALL=\"\$HOME/.aiter/jit/install\"
-    mkdir -p \"\$AITER_INSTALL\" \"\$AITER_INSTALL/aiter/jit\" \"\$AITER_INSTALL/private_aiter/jit\" 2>/dev/null || true
+    mkdir -p \"\$AITER_INSTALL\" 2>/dev/null || true
+    # Clean up stale shadow directories from previous runs that would shadow
+    # the real aiter package (empty aiter/ dir on PYTHONPATH acts as a
+    # namespace package and hides the real one from dist-packages).
+    rm -rf \"\$AITER_INSTALL/aiter\" \"\$AITER_INSTALL/private_aiter\" 2>/dev/null || true
     export PYTHONPATH=\"\$PYTHONUSERBASE/lib/python${LAUNCHER_PYTHON_VERSION}/site-packages:\$AITER_INSTALL:\${PYTHONPATH-}\"
     export PYTHONNOUSERSITE=
-    # Enable AIter import diagnostics by default (can be disabled by setting AITER_IMPORT_DEBUG=0).
-    export AITER_IMPORT_DEBUG=\"\${AITER_IMPORT_DEBUG:-1}\"
 
-    # Ensure Python can import AIter-built extension modules (e.g. module_gemm_common.so).
-    # Root issue: `aiter.jit.core` builds modules under `~/.aiter/jit/` but imports them as
-    # `aiter.jit.<module>` from the installed package path (dist-packages/aiter/jit), which
-    # doesn't include `~/.aiter/jit` on `aiter.jit.__path__`.
-    #
-    # Using a `.pth` file in the *user site-packages* is the most reliable way to run early,
-    # for every Python process (including vLLM multiprocess workers).
-    user_site=\"\$PYTHONUSERBASE/lib/python${LAUNCHER_PYTHON_VERSION}/site-packages\"
-    mkdir -p \"\$user_site\" 2>/dev/null || true
-    cat >\"\$user_site/aiter_jit_pathfix.pth\" <<'PTH'
-import os,sys,importlib; aj=importlib.import_module('aiter.jit'); p=os.path.join(os.path.expanduser('~'),'.aiter','jit'); (aj.__path__.append(p) if (os.path.isdir(p) and p not in list(getattr(aj,'__path__',[]))) else None); dbg=os.environ.get('AITER_IMPORT_DEBUG','0'); (sys.stderr.write('[aiter_import_debug] aiter.jit.__path__ extended with '+p+'\\n') if dbg not in ('0','','false','False','no','No') else None)
-PTH
-
-    # Make AIter's build output importable as `aiter.jit.*`.
-    # AIter often writes compiled extension modules (e.g. module_gemm_common.so) under:
-    #   \$HOME/.aiter/jit/
-    # but the Python package `aiter.jit` lives under system site-packages.
-    # We bridge that gap by extending `aiter.jit.__path__` at interpreter startup.
+    # AIter JIT builds extension modules (e.g. module_gemm_common.so) under
+    # ~/.aiter/jit/ but the Python package aiter.jit lives under system
+    # dist-packages. We bridge that gap via a sitecustomize.py that extends
+    # aiter.jit.__path__ at interpreter startup.
     cat >\"\$AITER_INSTALL/sitecustomize.py\" <<'PY'
 import os
-import sys
-import glob
-import importlib
-import importlib.util
-
-def _dbg(msg: str) -> None:
-    # NOTE: avoid double quotes in this file because it's embedded inside a bash
-    # double-quoted string in the launcher.
-    if os.environ.get('AITER_IMPORT_DEBUG', '0') not in ('0', '', 'false', 'False', 'no', 'No'):
-        try:
-            sys.stderr.write(f'[aiter_import_debug] {msg}\n')
-            sys.stderr.flush()
-        except Exception:
-            pass
-
-def _maybe_extend_aiter_jit_path() -> None:
-    _dbg(f'sitecustomize loaded: sys.executable={sys.executable}')
-    _dbg('env HOME={} AITER_INSTALL={} PYTHONPATH={}'.format(
-        os.environ.get('HOME'),
-        os.environ.get('AITER_INSTALL'),
-        os.environ.get('PYTHONPATH'),
-    ))
-    _dbg('env SLURM_PROCID={} SLURM_LOCALID={} SLURM_JOB_ID={}'.format(
-        os.environ.get('SLURM_PROCID'),
-        os.environ.get('SLURM_LOCALID'),
-        os.environ.get('SLURM_JOB_ID'),
-    ))
-    try:
-        _dbg(f'sys.path[0:8]={sys.path[0:8]}')
-    except Exception:
-        pass
-    try:
-        import aiter
-        _dbg('aiter imported from: {}'.format(getattr(aiter, '__file__', None)))
-        _dbg('aiter version: {}'.format(getattr(aiter, '__version__', None)))
-    except Exception:
-        _dbg('import aiter failed (skipping aiter.jit path extension)')
-        return
-
-    try:
-        import aiter.jit as aiter_jit
-        extra = os.path.join(os.path.expanduser('~'), '.aiter', 'jit')
-        if os.path.isdir(extra) and extra not in list(getattr(aiter_jit, '__path__', [])):
-            aiter_jit.__path__.append(extra)  # type: ignore[attr-defined]
-            _dbg(f'extended aiter.jit.__path__ with: {extra}')
-        _dbg('aiter.jit imported from: {}'.format(getattr(aiter_jit, '__file__', None)))
-        _dbg('aiter.jit.__path__={}'.format(list(getattr(aiter_jit, '__path__', []))))
-
-        target = 'aiter.jit.module_gemm_common'
-        try:
-            spec = importlib.util.find_spec(target)
-            _dbg(f'find_spec({target}) -> {spec}')
-        except Exception as e:
-            _dbg(f'find_spec({target}) raised: {e!r}')
-
-        try:
-            for p in list(getattr(aiter_jit, '__path__', [])):
-                hits = sorted(glob.glob(os.path.join(p, 'module_gemm_common*')))
-                if hits:
-                    _dbg(f'candidate files in {p}: {hits[:20]}')
-        except Exception as e:
-            _dbg(f'globbing for module_gemm_common artifacts raised: {e!r}')
-
-        try:
-            m = importlib.import_module(target)
-            _dbg('imported {} from: {}'.format(target, getattr(m, '__file__', None)))
-        except Exception as e:
-            _dbg(f'import {target} failed: {e!r}')
-    except Exception:
-        _dbg('unexpected exception while extending aiter.jit.__path__ (suppressed)')
-        pass
-
-_maybe_extend_aiter_jit_path()
+try:
+    import aiter.jit as _aj
+    _p = os.path.join(os.path.expanduser('~'), '.aiter', 'jit')
+    if os.path.isdir(_p) and _p not in list(getattr(_aj, '__path__', [])):
+        _aj.__path__.append(_p)
+except Exception:
+    pass
 PY
     
     # vLLM/ROCm flags
