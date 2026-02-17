@@ -66,6 +66,15 @@ Text to translate:
 """
 
 
+class TranslationIssueType:
+    """Standardized issue types for translation validation."""
+    MISSING_OPEN_THINK_TAG = "missing_open_think_tag"
+    INVALID_OPEN_THINK_TAG_COUNT = "invalid_open_think_tag_count"
+    INVALID_CLOSE_THINK_TAG_COUNT = "invalid_close_think_tag_count"
+    NO_CONTENT_AFTER_CLOSE_THINK_TAG = "no_content_after_close_think_tag"
+    TOKEN_COUNT_DELTA_TOO_LARGE = "token_count_delta_too_large"
+
+
 class ReasoningTranslationTask(GeneratorTask):
     """Translation of prompts + reasoning traces."""
 
@@ -97,32 +106,58 @@ class ReasoningTranslationTask(GeneratorTask):
             trust_remote_code=True,
         )
 
-    def _check_redacted_reasoning_tag(self, translation: str) -> bool:
-        """Check if translation starts with <think> tag."""
-        # Check if translation starts with <think> (allowing for whitespace)
+    def _check_redacted_reasoning_tag(self, translation: str, issues: list[dict]) -> bool:
+        """Check if translation starts with <think> tag. Appends issue to list if not. Returns True if pass."""
         pattern = r'^\s*<think>'
-        return bool(re.match(pattern, translation))
+        if not re.match(pattern, translation):
+            issues.append({"type": TranslationIssueType.MISSING_OPEN_THINK_TAG, "params": {}})
+            return False
+        return True
 
-    def _check_token_count(self, original: str, translation: str) -> tuple[bool, int, int, int]:
+    def _check_think_tags_structure(self, translation: str, issues: list[dict]) -> bool:
+        """Check that translation has exactly one <think> and one </think> tag,
+        and that there is non-whitespace content after the closing </think> tag.
+        Appends issues to list for each failed check. Returns True if all pass."""
+        open_count = len(re.findall(r'<think>', translation))
+        close_count = len(re.findall(r'</think>', translation))
+
+        if open_count != 1:
+            issues.append({"type": TranslationIssueType.INVALID_OPEN_THINK_TAG_COUNT, "params": {}})
+            return False
+        if close_count != 1:
+            issues.append({"type": TranslationIssueType.INVALID_CLOSE_THINK_TAG_COUNT, "params": {}})
+            return False
+
+        # Only check content after </think> if exactly one closing tag exists
+        if close_count == 1:
+            after_close = translation.split('</think>', 1)[1]
+            if not after_close.strip():
+                issues.append({"type": TranslationIssueType.NO_CONTENT_AFTER_CLOSE_THINK_TAG, "params": {}})
+                return False
+        return True
+
+    def _check_token_count(self, original: str, translation: str, issues: list[dict]) -> bool:
         """Check if token count delta is acceptable (delta should not be more than 5000).
-        
-        Returns:
-            tuple: (is_valid, original_tokens, translation_tokens, delta)
-        """
+        Appends issue with params to list if delta exceeds threshold. Returns True if pass."""
         tokenizer = self.get_tokenizer()
         original_tokens = len(tokenizer.encode(original))
         translation_tokens = len(tokenizer.encode(translation))
         delta = original_tokens - translation_tokens
-        # Delta should not be more than 5000 (translation should not be significantly shorter)
-        is_valid = delta <= 5000
-        return (is_valid, original_tokens, translation_tokens, delta)
+        if delta > 5000:
+            issues.append({"type": TranslationIssueType.TOKEN_COUNT_DELTA_TOO_LARGE, "params": {
+                "delta": delta,
+                "original_tokens": original_tokens,
+                "translation_tokens": translation_tokens,
+            }})
+            return False
+        return True
 
     
     # --------------- generator ---------------
     def task_generator(self) -> Generator[Union[Request, List[Request]], Any, Dict[str, Any]]:
         # self.data is prepopulated with the data from the jsonl row being processed
         # Get the generated reasoning answer
-        self.logger.info(f"[ReasoningTranslationTask] Processing sample id: {self.data.get('id')}")
+        self.logger.info(f"[ReasoningTranslationTask] ID:{self.data.get('id')} Processing sample")
         return_dict = self.data.copy()
 
         # read prompt from input.content with "role"=="user"
@@ -156,8 +191,11 @@ class ReasoningTranslationTask(GeneratorTask):
         translated_traces = None
         resp = None
         issues = []
+        success = False
+        attempts_made = 0
         
         for attempt in range(max_retries):
+            attempts_made = attempt + 1
             # create the second translation request for the traces
             input_messages = [
                 {
@@ -177,41 +215,27 @@ class ReasoningTranslationTask(GeneratorTask):
                         message=f"Error translating traces after {max_retries} attempts: {e}", 
                         error_type="traces_translation_error"
                     )
-                self.logger.error(f"[ReasoningTranslationTask] Error translating traces (attempt {attempt + 1}/{max_retries}): {e}")
                 continue
             
             translated_traces = resp.get_text().strip()
-            finish_reason = resp.content['choices'][0]["finish_reason"]
-            # Post-process checks:
-            # 1. Check if translation starts with <think> tag
-            # 2. Check if token count delta is acceptable (delta should not be more than 5000)
-            tag_check = self._check_redacted_reasoning_tag(translated_traces)
-            token_check, original_tokens, translation_tokens, delta = self._check_token_count(str(traces), translated_traces)
-            
-            if tag_check and token_check:
-                # Both checks passed, break out of retry loop
+            # Run validation checks — short-circuit on first failure
+            attempt_issues = []
+            if (self._check_redacted_reasoning_tag(translated_traces, attempt_issues)
+                    and self._check_think_tags_structure(translated_traces, attempt_issues)
+                    and self._check_token_count(str(traces), translated_traces, attempt_issues)):
+                success = True
                 break
             else:
-                if not tag_check:
-                    issues.append(f"missing <think> tag at start (finish reason: {finish_reason})")
-                if not token_check:
-                    issues.append(f"token count delta too large (delta: {delta}, original tokens: {original_tokens}, translation tokens: {translation_tokens}) finish reason: {finish_reason}")
-                
-                if attempt < max_retries - 1:
-                    self.logger.warning(
-                        f"[ReasoningTranslationTask] Translation validation failed (attempt {attempt + 1}/{max_retries}): {', '.join(issues)}. Retrying..."
-                    )
-                else:
-                    # Last attempt, log warning but proceed
-                    self.logger.warning(
-                        f"[ReasoningTranslationTask] Translation validation failed after {max_retries} attempts: {', '.join(issues)}. Proceeding with current translation."
-                    )
+                issues.extend(attempt_issues)
         
-        # Add to return dict
+        self.logger.info(
+            f"[ReasoningTranslationTask] ID:{self.data.get('id')} Finished processing sample; "
+            f"translated_traces_success={success}, attempts={attempts_made}/{max_retries}"
+        )
+
         return_dict["translated_prompt"] = translated_prompt
         return_dict["translated_traces"] = translated_traces
-        if issues:
-            return_dict["translation_issues"] = issues
+        return_dict["translated_traces_success"] = success
+        return_dict["translated_traces_issues"] = issues
 
         return return_dict
-
