@@ -82,12 +82,26 @@ done
 }
 echo "Server is up."
 
+###############################################################################
 # Launch workers in containers
-# SLURM variables are automatically translated to SINGULARITYENV_* by the launcher
-# Environment is automatically set up by run_sing_bash
+#
+# Signal handling for preemption:
+# Singularity tears down the container (including network) when it receives
+# SIGTERM directly, which prevents the Python signal handler from POST-ing
+# /release.  We use job control (set -m) to run srun in its own process group
+# so SLURM's SIGTERM only hits the outer bash.  The trap forwards SIGTERM to
+# the srun process group, and the inner bash ignores it so only Python handles
+# the signal while the container is still alive.
+###############################################################################
+
+_CHILD_PID=
+trap '[ -n "$_CHILD_PID" ] && kill -TERM -- -"$_CHILD_PID" 2>/dev/null; wait "$_CHILD_PID" 2>/dev/null' TERM INT
+
+set -m
 srun -l bash -c "
   run_sing_bash '
-    set -euxo pipefail
+    set -uo pipefail
+    trap : TERM HUP
 
     LOCALID=\${SLURM_LOCALID:-0}
 
@@ -119,5 +133,8 @@ srun -l bash -c "
       --port \$VLLM_PORT \
       --request-timeout $REQUEST_TIMEOUT
   '
-"
+" &
+_CHILD_PID=$!
+wait "$_CHILD_PID" 2>/dev/null
+wait "$_CHILD_PID" 2>/dev/null
 
