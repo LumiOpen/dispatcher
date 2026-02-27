@@ -5,7 +5,9 @@ from dispatcher.models import (
     WorkStatus,
     BatchWorkResponse,
     BatchResultSubmission,
-    BatchResultResponse
+    BatchResultResponse,
+    ReleaseWorkRequest,
+    ReleaseWorkResponse,
 )
 
 class WorkClient:
@@ -58,3 +60,20 @@ class WorkClient:
         resp.raise_for_status()
         data = resp.json()
         return BatchResultResponse(**data)
+
+    def release_work(self, work_ids: List[int]) -> ReleaseWorkResponse:
+        """Release in-flight work items back to the server for reissue.
+
+        Best-effort: returns released_count=0 on connection failure.
+        """
+        url = f"{self.server_url}/release"
+        body = ReleaseWorkRequest(work_ids=work_ids)
+
+        try:
+            resp = requests.post(url, json=body.dict(), timeout=5)
+        except (requests.ConnectionError, requests.Timeout):
+            return ReleaseWorkResponse(status=WorkStatus.SERVER_UNAVAILABLE, released_count=0)
+
+        resp.raise_for_status()
+        data = resp.json()
+        return ReleaseWorkResponse(**data)

@@ -30,7 +30,6 @@ from __future__ import annotations
 
 import argparse
 import importlib
-import json
 import logging
 import shlex
 import signal
@@ -66,11 +65,53 @@ def _import_dotted(path: str) -> Type[Task]:
     return getattr(module, cls_name)
 
 
-def _install_signal_handlers(backend: VLLMBackendManager):
+
+def _install_signal_handlers(backend: VLLMBackendManager, task_manager: TaskManager, task_source):
+    """Register SIGTERM/SIGINT handlers that release in-flight work back to the
+    dispatcher server before shutting down.  This allows preempted workers to
+    return work items immediately instead of waiting for work_timeout."""
+
     def _handler(signum, _):
-        logger.info("Signal %s received – shutting down…", signum)
-        backend.close()
-        sys.exit(0)
+        import sys as _sys
+
+        # Block further signals to prevent re-entry during cleanup.
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+
+        logger.info("Signal %d received, releasing in-flight work", signum)
+
+        # Collect in-flight work_ids and release them back to the server.
+        work_ids = []
+        try:
+            for task in task_manager.active_tasks:
+                if hasattr(task, "context") and task.context is not None:
+                    ctx = task.context
+                    if hasattr(ctx, "work_id"):
+                        work_ids.append(ctx.work_id)
+        except Exception:
+            logger.exception(
+                "Error while collecting in-flight work items during signal %d handling",
+                signum,
+            )
+
+        if work_ids and isinstance(task_source, DispatcherTaskSource):
+            try:
+                resp = task_source.client.release_work(work_ids)
+                logger.info("Released %d/%d work items", resp.released_count, len(work_ids))
+            except Exception:
+                logger.exception(
+                    "Error while releasing work items during signal %d handling",
+                    signum,
+                )
+
+        try:
+            backend.close()
+        except Exception:
+            logger.exception(
+                "Error while closing backend during signal %d handling",
+                signum,
+            )
+        _sys.exit(0)
 
     for sig in (signal.SIGINT, signal.SIGTERM):
         try:
@@ -95,7 +136,7 @@ def run(
     port: int = 8000,
     launch_vllm: bool = True,
     tensor_parallel: int = 1,
-    chat_template: Optional[str] = None, 
+    chat_template: Optional[str] = None,
     max_model_len: int = 16_384,
     startup_timeout: int = 1500,
     request_timeout: int = 600,
@@ -143,9 +184,10 @@ def run(
         extra_vllm_args=extra_vllm_args,
     )
 
-    _install_signal_handlers(backend)
-
     manager = TaskManager(num_workers=workers)
+
+    _install_signal_handlers(backend, manager, source)
+
     manager.process_tasks(source, backend)
 
     backend.close()

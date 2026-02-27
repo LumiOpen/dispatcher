@@ -255,5 +255,284 @@ class TestDataTracker(unittest.TestCase):
         self.assertEqual(r5[1], "row_content_3")
         dt2.close()
 
+    def test_release_work_reissues_immediately(self):
+        """Released work should be returned by the next get_work_batch call."""
+        dt = DataTracker(self.infile.name, self.outfile.name, self.checkpoint,
+                         work_timeout=WORK_TIMEOUT, checkpoint_interval=CHECKPOINT_INTERVAL)
+        # Issue two items
+        r0, = dt.get_work_batch()
+        r1, = dt.get_work_batch()
+
+        # Release the first one
+        released = dt.release_work([r0[0]])
+        self.assertEqual(released, 1)
+
+        # Next get_work_batch should return the released item (timestamp 0 = expired)
+        reissued, = dt.get_work_batch()
+        self.assertEqual(reissued[0], r0[0])
+        self.assertEqual(reissued[1], r0[1])
+        dt.close()
+
+    def test_release_work_increments_retry(self):
+        """Released items go through the normal reissue path and increment retry_count."""
+        dt = DataTracker(self.infile.name, self.outfile.name, self.checkpoint,
+                         work_timeout=WORK_TIMEOUT, checkpoint_interval=CHECKPOINT_INTERVAL)
+        r0, = dt.get_work_batch()
+        work_id = r0[0]
+
+        # Check initial retry_count is 0
+        _, _, retry_count, _ = dt.issued[work_id]
+        self.assertEqual(retry_count, 0)
+
+        # Release and reissue
+        dt.release_work([work_id])
+        dt.get_work_batch()
+
+        # retry_count should be 1
+        _, _, retry_count, _ = dt.issued[work_id]
+        self.assertEqual(retry_count, 1)
+        dt.close()
+
+    def test_release_completed_or_unknown_is_noop(self):
+        """Releasing already-completed or unknown work_ids should be a no-op."""
+        dt = DataTracker(self.infile.name, self.outfile.name, self.checkpoint,
+                         work_timeout=WORK_TIMEOUT, checkpoint_interval=CHECKPOINT_INTERVAL)
+        r0, = dt.get_work_batch()
+        dt.complete_work_batch([(r0[0], "result_0")])
+
+        # Release a completed item and a non-existent one
+        released = dt.release_work([r0[0], 9999])
+        self.assertEqual(released, 0)
+        dt.close()
+
+    def test_release_pending_write_is_noop(self):
+        """Releasing an item that is in pending_write (completed but not flushed) should be a no-op."""
+        dt = DataTracker(self.infile.name, self.outfile.name, self.checkpoint,
+                         work_timeout=WORK_TIMEOUT, checkpoint_interval=CHECKPOINT_INTERVAL)
+        # Issue items 0 and 1, complete item 1 out of order so it stays in pending_write
+        r0, = dt.get_work_batch()
+        r1, = dt.get_work_batch()
+        dt.complete_work_batch([(r1[0], "result_1")])
+
+        # Item 1 is in pending_write (blocked by item 0)
+        self.assertIn(r1[0], dt.pending_write)
+
+        released = dt.release_work([r1[0]])
+        self.assertEqual(released, 0)
+        dt.close()
+
+    def test_genuine_timeout_still_increments_retry(self):
+        """Genuine timeouts (not releases) should still increment retry_count."""
+        dt = DataTracker(self.infile.name, self.outfile.name, self.checkpoint,
+                         work_timeout=WORK_TIMEOUT, checkpoint_interval=CHECKPOINT_INTERVAL)
+        r0, = dt.get_work_batch()
+        work_id = r0[0]
+
+        # Wait for timeout
+        time.sleep(WORK_TIMEOUT + 0.5)
+
+        # Reissue via timeout
+        dt.get_work_batch()
+
+        # retry_count should be 1
+        _, _, retry_count, _ = dt.issued[work_id]
+        self.assertEqual(retry_count, 1)
+        dt.close()
+
+    # ---------------------------------------------------------------
+    # Scenario tests for release + timeout interactions
+    # ---------------------------------------------------------------
+
+    def test_release_stale_heap_entry_skipped_in_same_batch(self):
+        """When batch_size is large enough, the released entry and the stale
+        original entry could both be processed in the same get_work_batch call.
+        The stale entry must be skipped."""
+        dt = DataTracker(self.infile.name, self.outfile.name, self.checkpoint,
+                         work_timeout=WORK_TIMEOUT, checkpoint_interval=CHECKPOINT_INTERVAL)
+        r0, = dt.get_work_batch()
+        work_id = r0[0]
+
+        # Release and wait for original entry to also expire
+        dt.release_work([work_id])
+        time.sleep(WORK_TIMEOUT + 0.5)
+
+        # Request a large batch — both (0, id) and (T1, id) are expired
+        batch = dt.get_work_batch(batch_size=5)
+        self.assertIsNotNone(batch)
+        ids_in_batch = [item[0] for item in batch]
+        # work_id should appear at most once
+        self.assertEqual(ids_in_batch.count(work_id), 1,
+                         f"work_id {work_id} appeared {ids_in_batch.count(work_id)} times in batch")
+        dt.close()
+
+    def test_release_then_complete_race(self):
+        """If release happens first and then a result arrives for the same
+        work_id, the result should still be accepted (item is in self.issued).
+        The released heap entry should be lazily deleted."""
+        dt = DataTracker(self.infile.name, self.outfile.name, self.checkpoint,
+                         work_timeout=WORK_TIMEOUT, checkpoint_interval=CHECKPOINT_INTERVAL)
+        # Issue two items so that completing item 1 leaves it in pending_write
+        # (blocked by item 0 which is not yet complete).
+        r0, = dt.get_work_batch()
+        r1, = dt.get_work_batch()
+
+        # Release item 1
+        dt.release_work([r1[0]])
+
+        # Result for item 1 arrives (worker finished just before preemption)
+        dt.complete_work_batch([(r1[0], "result_1")])
+        # Item 1 is in pending_write (blocked by item 0)
+        self.assertIn(r1[0], dt.pending_write)
+
+        # The released (0, id) entry should be lazily deleted since
+        # work_id is now in pending_write — should not be reissued.
+        batch = dt.get_work_batch()
+        if batch:
+            self.assertNotEqual(batch[0][0], r1[0])
+        dt.close()
+
+    def test_complete_then_release_race(self):
+        """If a result is submitted and flushed before the release arrives,
+        the release should be a no-op."""
+        dt = DataTracker(self.infile.name, self.outfile.name, self.checkpoint,
+                         work_timeout=WORK_TIMEOUT, checkpoint_interval=CHECKPOINT_INTERVAL)
+        r0, = dt.get_work_batch()
+        work_id = r0[0]
+
+        # Complete and flush (it's work_id 0, so contiguous → flushed)
+        dt.complete_work_batch([(work_id, "result_0")])
+        self.assertNotIn(work_id, dt.issued)
+
+        # Late release arrives — should be no-op
+        released = dt.release_work([work_id])
+        self.assertEqual(released, 0)
+        dt.close()
+
+    def test_multiple_releases_same_work_id(self):
+        """Releasing the same work_id multiple times should only create one
+        reissue, not multiple."""
+        dt = DataTracker(self.infile.name, self.outfile.name, self.checkpoint,
+                         work_timeout=WORK_TIMEOUT, checkpoint_interval=CHECKPOINT_INTERVAL)
+        r0, = dt.get_work_batch()
+        work_id = r0[0]
+
+        # Release twice
+        dt.release_work([work_id])
+        dt.release_work([work_id])
+
+        # Reissue — should appear once
+        reissued, = dt.get_work_batch()
+        self.assertEqual(reissued[0], work_id)
+
+        # The second (0, id) entry should be detected as stale (issued_at
+        # is now T2 from the reissue, not 0) and skipped.
+        # Wait for any stale entries to expire and verify no double reissue.
+        time.sleep(WORK_TIMEOUT + 0.5)
+        batch = dt.get_work_batch(batch_size=5)
+        if batch:
+            ids = [item[0] for item in batch]
+            # work_id may be reissued via timeout, but should appear at most once
+            self.assertLessEqual(ids.count(work_id), 1)
+        dt.close()
+
+    def test_release_does_not_affect_other_items(self):
+        """Releasing one work_id should not interfere with other issued items."""
+        dt = DataTracker(self.infile.name, self.outfile.name, self.checkpoint,
+                         work_timeout=WORK_TIMEOUT, checkpoint_interval=CHECKPOINT_INTERVAL)
+        r0, = dt.get_work_batch()
+        r1, = dt.get_work_batch()
+        r2, = dt.get_work_batch()
+
+        # Release only item 1
+        dt.release_work([r1[0]])
+
+        # Next batch should reissue item 1
+        reissued, = dt.get_work_batch()
+        self.assertEqual(reissued[0], r1[0])
+
+        # Items 0 and 2 should still be in issued with their original issued_at
+        self.assertIn(r0[0], dt.issued)
+        self.assertIn(r2[0], dt.issued)
+        _, _, retry_count_0, _ = dt.issued[r0[0]]
+        _, _, retry_count_2, _ = dt.issued[r2[0]]
+        self.assertEqual(retry_count_0, 0)
+        self.assertEqual(retry_count_2, 0)
+        dt.close()
+
+    def test_release_max_retries_tombstone(self):
+        """Repeated release+reissue cycles should eventually hit max_retries
+        and write a tombstone.  The max_retries check fires BEFORE the
+        reissue increments retry_count, so with max_retries=1 it takes
+        two cycles: cycle 1 reissues (0→1), cycle 2 tombstones (1>=1)."""
+        dt = DataTracker(self.infile.name, self.outfile.name, self.checkpoint,
+                         work_timeout=WORK_TIMEOUT, checkpoint_interval=CHECKPOINT_INTERVAL,
+                         max_retries=1)
+        r0, = dt.get_work_batch()
+        work_id = r0[0]
+
+        # Release + reissue cycle 1 (retry_count checked at 0 < 1, reissued → 1)
+        dt.release_work([work_id])
+        dt.get_work_batch()
+        _, _, retry_count, _ = dt.issued[work_id]
+        self.assertEqual(retry_count, 1)
+
+        # Release + reissue cycle 2 (retry_count checked at 1 >= 1 → tombstone)
+        dt.release_work([work_id])
+        dt.get_work_batch()
+
+        # work_id=0 is the first item, so the tombstone is contiguous and
+        # gets flushed immediately — removed from both pending_write and issued.
+        self.assertNotIn(work_id, dt.issued)
+        self.assertNotIn(work_id, dt.pending_write)
+
+        # Verify tombstone was written to the output file
+        with open(self.outfile.name, "r") as f:
+            output = f.read()
+        self.assertIn("max_retries_exceeded", output)
+        dt.close()
+
+    def test_issued_at_updated_on_reissue(self):
+        """After reissue (via timeout or release), issued_at should match the
+        new heap entry's timestamp."""
+        dt = DataTracker(self.infile.name, self.outfile.name, self.checkpoint,
+                         work_timeout=WORK_TIMEOUT, checkpoint_interval=CHECKPOINT_INTERVAL)
+        r0, = dt.get_work_batch()
+        work_id = r0[0]
+
+        _, _, _, issued_at_original = dt.issued[work_id]
+        self.assertGreater(issued_at_original, 0)
+
+        # Release sets issued_at to 0
+        dt.release_work([work_id])
+        _, _, _, issued_at_released = dt.issued[work_id]
+        self.assertEqual(issued_at_released, 0)
+
+        # Reissue updates issued_at to a new timestamp
+        dt.get_work_batch()
+        _, _, _, issued_at_reissued = dt.issued[work_id]
+        self.assertGreater(issued_at_reissued, 0)
+        self.assertNotEqual(issued_at_reissued, issued_at_original)
+        dt.close()
+
+    def test_timeout_reissue_no_duplicate_in_batch(self):
+        """In the timeout-only path (no release), a timed-out item should
+        appear exactly once in the reissued batch — never duplicated."""
+        dt = DataTracker(self.infile.name, self.outfile.name, self.checkpoint,
+                         work_timeout=WORK_TIMEOUT, checkpoint_interval=CHECKPOINT_INTERVAL)
+        r0, = dt.get_work_batch()
+        work_id = r0[0]
+
+        # Wait for timeout
+        time.sleep(WORK_TIMEOUT + 0.5)
+
+        # Request a large batch — only one reissue should happen
+        batch = dt.get_work_batch(batch_size=5)
+        self.assertIsNotNone(batch)
+        ids_in_batch = [item[0] for item in batch]
+        self.assertEqual(ids_in_batch.count(work_id), 1,
+                         f"work_id {work_id} appeared {ids_in_batch.count(work_id)} times")
+        dt.close()
+
+
 if __name__ == "__main__":
     unittest.main()

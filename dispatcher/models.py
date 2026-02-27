@@ -29,3 +29,10 @@ class BatchResultSubmission(BaseModel):
 class BatchResultResponse(BaseModel):
     status: WorkStatus
     count: int  # how many items were processed
+
+class ReleaseWorkRequest(BaseModel):
+    work_ids: List[int]
+
+class ReleaseWorkResponse(BaseModel):
+    status: WorkStatus
+    released_count: int

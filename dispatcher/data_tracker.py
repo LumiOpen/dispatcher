@@ -8,6 +8,11 @@ import threading
 logging.basicConfig(level=logging.INFO)
 
 class DataTracker:
+    # Sentinel timestamp used by release_work() to force immediate reissue.
+    # Any heap entry with this timestamp is guaranteed to be expired because
+    # now - work_timeout is always far greater than 0 (epoch).
+    ALWAYS_EXPIRED_TIMESTAMP = 0
+
     def __init__(self, infile_path, outfile_path, checkpoint_path,
                  work_timeout=900, checkpoint_interval=60, max_retries=3):
         """
@@ -33,7 +38,7 @@ class DataTracker:
         self.last_checkpoint_time = time.time()
         self.expired_reissues = 0
 
-        self.issued = {}            # work_id -> (content, input_offset, retry_count)
+        self.issued = {}            # work_id -> (content, input_offset, retry_count, issued_at)
         self.issued_heap = []       # min-heap of (timestamp, work_id); uses lazy deletion
         self.pending_write = {}     # work_id -> result
 
@@ -95,7 +100,7 @@ class DataTracker:
             # check first for expired work needing to be reissued
             while self.issued_heap and len(batch) < batch_size:
                 heap_ts, work_id = self.issued_heap[0]
-                
+
                 # Perform lazy deletion of stale entries from the timeout heap.
                 # An item is stale if it's already been written to disk (and thus
                 # is no longer in `self.issued`) or if it's safely completed
@@ -103,11 +108,21 @@ class DataTracker:
                 if work_id not in self.issued or work_id in self.pending_write:
                     heapq.heappop(self.issued_heap)
                     continue
-                
+
+                content, input_offset, retry_count, issued_at = self.issued[work_id]
+
+                # Skip stale heap entries whose timestamp doesn't match the
+                # current issued_at. This happens when release_work() replaces
+                # issued_at with ALWAYS_EXPIRED_TIMESTAMP and pushes a new heap
+                # entry to match — the *original* (old_ts, work_id) entry is
+                # still in the heap but no longer matches and must be discarded.
+                if heap_ts != issued_at:
+                    heapq.heappop(self.issued_heap)
+                    continue
+
                 # If we are here, the item is genuinely in-flight. Check if it has expired.
                 if now - self.work_timeout > heap_ts:
                     heapq.heappop(self.issued_heap)
-                    content, input_offset, retry_count = self.issued[work_id]
 
                     # Check if the item has exceeded its max retries.
                     if self.max_retries != -1 and retry_count >= self.max_retries:
@@ -146,22 +161,66 @@ class DataTracker:
         return None
 
 
+    def release_work(self, work_ids):
+        """Release in-flight work items so they can be reissued immediately.
+
+        Called when a worker job is preempted (e.g. SIGTERM) and wants to return
+        its assigned work to the queue.
+
+        For each released item we do two things with ALWAYS_EXPIRED_TIMESTAMP:
+
+        1. Push (ALWAYS_EXPIRED_TIMESTAMP, work_id) onto issued_heap.
+           Because issued_heap is a min-heap keyed by timestamp,
+           get_work_batch() pops the smallest timestamps first and treats any
+           entry where ``now - work_timeout > heap_ts`` as expired.  Since
+           ALWAYS_EXPIRED_TIMESTAMP (epoch 0) is always far in the past, the
+           entry is immediately eligible for reissue.
+
+        2. Set the issued_at field in self.issued to the same
+           ALWAYS_EXPIRED_TIMESTAMP value.  get_work_batch() performs lazy
+           deletion: when it pops a heap entry whose timestamp doesn't match
+           the current issued_at for that work_id, it discards the entry as
+           stale.  By changing issued_at, the *original* heap entry (with the
+           real timestamp from when the work was first dispatched) will be
+           detected as stale and harmlessly skipped.
+
+        This is safe because both writes happen under _state_lock, and it
+        reuses the existing expired-work path in get_work_batch(): the
+        ALWAYS_EXPIRED_TIMESTAMP entry trivially passes the expiry check
+        (``now - work_timeout > heap_ts``), so _track_issued_work() is called
+        to increment retry_count, record a fresh issued_at, and return the
+        item in the next batch. The stale original heap entry is cleaned up
+        lazily when get_work_batch() pops it and sees a timestamp mismatch
+        (step 2 above).
+
+        Returns the number of items actually released.
+        """
+        released = 0
+        with self._state_lock:
+            for work_id in work_ids:
+                if work_id in self.issued and work_id not in self.pending_write:
+                    content, input_offset, retry_count, _ = self.issued[work_id]
+                    self.issued[work_id] = (content, input_offset, retry_count, self.ALWAYS_EXPIRED_TIMESTAMP)
+                    heapq.heappush(self.issued_heap, (self.ALWAYS_EXPIRED_TIMESTAMP, work_id))
+                    released += 1
+                    logging.info(f"Released work item {work_id} for immediate reissue.")
+        return released
+
     def _track_issued_work(self, when, content, input_offset, work_id=None):
         if work_id is None:
             # This is brand new work.
             work_id = self.next_work_id
             self.next_work_id += 1
             retry_count = 0
-            self.issued[work_id] = (content, input_offset, retry_count)
+            self.issued[work_id] = (content, input_offset, retry_count, when)
         else:
             # This is reissued work.
             self.expired_reissues += 1
             logging.info(f"Reissuing {work_id} after expiration ({self.expired_reissues=}).")
             assert(work_id in self.issued)
-            # Retrieve the old data and increment the retry count.
-            _content, _input_offset, retry_count = self.issued[work_id]
+            _content, _input_offset, retry_count, _ = self.issued[work_id]
             retry_count += 1
-            self.issued[work_id] = (_content, _input_offset, retry_count)
+            self.issued[work_id] = (_content, _input_offset, retry_count, when)
 
         heapq.heappush(self.issued_heap, (when, work_id))
         return work_id, content
@@ -205,7 +264,7 @@ class DataTracker:
             result = self.pending_write.pop(next_id)
             self.last_processed_work_id = next_id
             
-            _, self.input_offset, _ = self.issued[next_id]
+            _, self.input_offset, _, _ = self.issued[next_id]
             del self.issued[next_id]
 
             output = result + "\n"

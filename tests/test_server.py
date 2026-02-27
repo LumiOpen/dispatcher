@@ -129,5 +129,38 @@ class TestServer(unittest.TestCase):
         self.assertEqual(data2["status"], "all_work_complete")
         self.assertEqual(len(data2["items"]), 0)
 
+    def test_release_work(self):
+        """Test POST /release endpoint."""
+        # Get some work
+        resp = self.client.get("/work?batch_size=2")
+        data = resp.json()
+        self.assertEqual(data["status"], "OK")
+        items = data["items"]
+        self.assertEqual(len(items), 2)
+
+        work_ids = [i["work_id"] for i in items]
+
+        # Release them
+        release_resp = self.client.post("/release", json={"work_ids": work_ids})
+        self.assertEqual(release_resp.status_code, 200)
+        release_data = release_resp.json()
+        self.assertEqual(release_data["status"], "OK")
+        self.assertEqual(release_data["released_count"], 2)
+
+        # The released items should be reissued immediately
+        resp2 = self.client.get("/work?batch_size=2")
+        data2 = resp2.json()
+        self.assertEqual(data2["status"], "OK")
+        reissued_ids = [i["work_id"] for i in data2["items"]]
+        self.assertEqual(sorted(reissued_ids), sorted(work_ids))
+
+    def test_release_unknown_ids(self):
+        """Releasing unknown work_ids should return released_count=0."""
+        release_resp = self.client.post("/release", json={"work_ids": [999, 1000]})
+        self.assertEqual(release_resp.status_code, 200)
+        release_data = release_resp.json()
+        self.assertEqual(release_data["status"], "OK")
+        self.assertEqual(release_data["released_count"], 0)
+
 if __name__ == "__main__":
     unittest.main()

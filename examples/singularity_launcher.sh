@@ -263,14 +263,6 @@ AITER_SCRIPT
 }
 
 ###############################################################################
-# setup_cleanup_trap
-# Sets up cleanup trap to kill server process on exit
-###############################################################################
-setup_cleanup_trap() {
-  trap 'kill "${srv_pid:-0}" 2>/dev/null || true' EXIT
-}
-
-###############################################################################
 # import_container_config
 # Imports container configuration from parent environment into worker context
 # Variables are already available via SINGULARITYENV_* from host, just ensure they're exported
@@ -331,7 +323,6 @@ setup_launcher_environment() {
   translate_slurm_vars
   setup_singularity_environment
   install_dispatcher_packages
-  setup_cleanup_trap
 }
 
 ###############################################################################

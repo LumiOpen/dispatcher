@@ -12,6 +12,8 @@ from dispatcher.models import (
     BatchWorkResponse,
     BatchResultSubmission,
     BatchResultResponse,
+    ReleaseWorkRequest,
+    ReleaseWorkResponse,
     WorkStatus,
 )
 from dispatcher.data_tracker import DataTracker
@@ -59,6 +61,13 @@ def submit_results(batch: BatchResultSubmission):
     success_count = len(batch.items)
     dt.complete_work_batch([(i.work_id, i.result) for i in batch.items])
     return BatchResultResponse(status=WorkStatus.OK, count=success_count)
+
+@app.post("/release", response_model=ReleaseWorkResponse)
+def release_work(req: ReleaseWorkRequest):
+    global dt
+    released_count = dt.release_work(req.work_ids)
+    logging.info(f"Released {released_count}/{len(req.work_ids)} work items")
+    return ReleaseWorkResponse(status=WorkStatus.OK, released_count=released_count)
 
 @app.get("/status")
 def get_status():
