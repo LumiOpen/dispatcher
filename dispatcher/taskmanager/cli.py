@@ -89,19 +89,28 @@ def _install_signal_handlers(backend: VLLMBackendManager, task_manager: TaskMana
                     if hasattr(ctx, "work_id"):
                         work_ids.append(ctx.work_id)
         except Exception:
-            pass
+            logger.exception(
+                "Error while collecting in-flight work items during signal %d handling",
+                signum,
+            )
 
         if work_ids and isinstance(task_source, DispatcherTaskSource):
             try:
                 resp = task_source.client.release_work(work_ids)
                 logger.info("Released %d/%d work items", resp.released_count, len(work_ids))
             except Exception:
-                logger.warning("Failed to release work items")
+                logger.exception(
+                    "Error while releasing work items during signal %d handling",
+                    signum,
+                )
 
         try:
             backend.close()
         except Exception:
-            pass
+            logger.exception(
+                "Error while closing backend during signal %d handling",
+                signum,
+            )
         _sys.exit(0)
 
     for sig in (signal.SIGINT, signal.SIGTERM):

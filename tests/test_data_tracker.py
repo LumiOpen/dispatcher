@@ -343,30 +343,6 @@ class TestDataTracker(unittest.TestCase):
     # Scenario tests for release + timeout interactions
     # ---------------------------------------------------------------
 
-    def test_release_no_double_reissue(self):
-        """Release creates a (0, id) heap entry alongside the original (T1, id).
-        After reissue, the stale (T1, id) entry must be skipped — the same
-        work_id must NOT appear twice in a single get_work_batch call."""
-        dt = DataTracker(self.infile.name, self.outfile.name, self.checkpoint,
-                         work_timeout=WORK_TIMEOUT, checkpoint_interval=CHECKPOINT_INTERVAL)
-        r0, = dt.get_work_batch()  # issued at T1, heap: (T1, 0)
-        work_id = r0[0]
-
-        # Release: heap now has (0, 0) and (T1, 0)
-        dt.release_work([work_id])
-
-        # Wait for BOTH the release entry (0, id) and the original (T1, id)
-        # to be expired, then request a large batch.  The stale (T1, id)
-        # entry must be skipped — work_id should appear at most once.
-        time.sleep(WORK_TIMEOUT + 0.5)
-
-        batch = dt.get_work_batch(batch_size=5)
-        self.assertIsNotNone(batch)
-        ids_in_batch = [item[0] for item in batch]
-        self.assertLessEqual(ids_in_batch.count(work_id), 1,
-                             "Stale heap entry caused double reissue")
-        dt.close()
-
     def test_release_stale_heap_entry_skipped_in_same_batch(self):
         """When batch_size is large enough, the released entry and the stale
         original entry could both be processed in the same get_work_batch call.

@@ -95,7 +95,7 @@ echo "Server is up."
 ###############################################################################
 
 _CHILD_PID=
-trap '[ -n "$_CHILD_PID" ] && kill -TERM -- -"$_CHILD_PID" 2>/dev/null; wait "$_CHILD_PID" 2>/dev/null' TERM INT
+trap '[ -n "$_CHILD_PID" ] && { kill -TERM -- -"$_CHILD_PID" 2>/dev/null; wait "$_CHILD_PID" 2>/dev/null; }' TERM INT
 
 set -m
 srun -l bash -c "
@@ -135,6 +135,9 @@ srun -l bash -c "
   '
 " &
 _CHILD_PID=$!
+# Double-wait idiom: when a signal interrupts the first wait, it returns
+# 128+signum (not the child's real status) and the trap fires.  The second
+# wait then retrieves the child's actual exit status from bash's cache.
 wait "$_CHILD_PID" 2>/dev/null
 wait "$_CHILD_PID" 2>/dev/null
 
