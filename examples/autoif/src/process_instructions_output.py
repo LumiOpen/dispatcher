@@ -21,7 +21,7 @@ def process_output(input_file: str, output_file: str, placeholder_lookup_file: s
     
     # Aggregate placeholder values across all instructions
     # Structure: {placeholder_name: {"type": "static", "values": set()}}
-    placeholder_lookup = defaultdict(lambda: {"type": None, "values": set(), "min": float('inf'), "max": float('-inf')})
+    placeholder_lookup = defaultdict(lambda: {"type": None, "values": set()})
     
     # Load seed instructions if provided (they serve as both examples and actual data)
     if seed_file:
@@ -124,11 +124,7 @@ def process_output(input_file: str, output_file: str, placeholder_lookup_file: s
                 'values': sorted(list(data['values']))
             }
         elif data['type'] == 'numeric':
-            lookup_output[name] = {
-                'type': 'numeric',
-                'min': data['min'] if data['min'] != float('inf') else 1,
-                'max': data['max'] if data['max'] != float('-inf') else 10
-            }
+            lookup_output[name] = {'type': 'numeric'}
         elif data['type'] == 'dynamic':
             lookup_output[name] = {'type': 'dynamic'}
     
@@ -140,7 +136,7 @@ def process_output(input_file: str, output_file: str, placeholder_lookup_file: s
         if data['type'] == 'static':
             print(f"  {name}: static ({len(data['values'])} values)")
         elif data['type'] == 'numeric':
-            print(f"  {name}: numeric (min={data['min']}, max={data['max']})")
+            print(f"  {name}: numeric")
         else:
             print(f"  {name}: dynamic")
 
@@ -198,10 +194,6 @@ def _update_placeholder_lookup(lookup: dict, placeholders: dict) -> None:
         
         elif ptype == 'numeric':
             lookup[name]['type'] = 'numeric'
-            if 'min' in data:
-                lookup[name]['min'] = min(lookup[name]['min'], data['min'])
-            if 'max' in data:
-                lookup[name]['max'] = max(lookup[name]['max'], data['max'])
         
         elif ptype == 'dynamic':
             lookup[name]['type'] = 'dynamic'

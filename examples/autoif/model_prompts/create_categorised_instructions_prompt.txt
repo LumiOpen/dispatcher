@@ -35,7 +35,7 @@ For placeholders that depend on the user's query and must be generated in contex
 Examples: keywords, forbidden_words, phrase, word, topic, end_phrase
 
 ## 3. Numeric (type: "numeric")
-For numeric values. Specify a reasonable min/max range.
+For numeric values.
 Examples: N, M, min_count, max_count, percentage
 
 # Output Format
@@ -45,7 +45,7 @@ Output one JSON object per line. Each object must have:
 - "placeholders": an object where each key is a placeholder name and the value is an object with:
   - For static: {{"type": "static", "values": ["value1", "value2", ...]}}
   - For dynamic: {{"type": "dynamic"}}
-  - For numeric: {{"type": "numeric", "min": X, "max": Y}}
+  - For numeric: {{"type": "numeric"}}
 
 If the instruction has no placeholders, use an empty object for "placeholders".
 
