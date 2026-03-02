@@ -7,14 +7,14 @@ echo "======================================="
 echo "Started: $(date)"
 echo ""
 
-cd /shared_silo/scratch/adamhrin@amd.com/dispatcher/examples/autoif
+cd /shared_silo/scratch/adamhrin@amd.com/dispatcher_autoif/examples/autoif
 
 # Run in subshell to isolate trap from parent pipeline process
 (
     # ============================================================
     # Environment Setup
     # ============================================================
-    source /shared_silo/scratch/adamhrin@amd.com/dispatcher/examples/autoif/execution/environments/singularity_launcher.sh
+    source /shared_silo/scratch/adamhrin@amd.com/dispatcher_autoif/examples/autoif/execution/environments/singularity_launcher.sh
     
     # Reset the EXIT trap to prevent killing parent pipeline
     trap - EXIT
@@ -27,6 +27,13 @@ cd /shared_silo/scratch/adamhrin@amd.com/dispatcher/examples/autoif
     export {{ key }}="{{ value }}"
 {% endfor %}
 {% endif %}
+
+    # ============================================================
+    # Install requirements
+    # ============================================================
+    echo "Installing requirements..."
+    run_sing_python -m pip install --user -r requirements.txt
+    echo "Requirements installed."
 
     # ============================================================
     # Execute Python Script

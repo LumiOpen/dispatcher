@@ -8,12 +8,12 @@ echo "Started: $(date)"
 echo "Connecting to vLLM server: {{ vllm_server.host }}:{{ vllm_server.port }}"
 echo ""
 
-cd /shared_silo/scratch/adamhrin@amd.com/dispatcher/examples/autoif
+cd /shared_silo/scratch/adamhrin@amd.com/dispatcher_autoif/examples/autoif
 
 # ============================================================
 # Environment Setup
 # ============================================================
-source /shared_silo/scratch/adamhrin@amd.com/dispatcher/examples/autoif/execution/environments/singularity_launcher.sh
+source /shared_silo/scratch/adamhrin@amd.com/dispatcher_autoif/examples/autoif/execution/environments/singularity_launcher.sh
 
 {% if exports is defined %}
 # ============================================================
@@ -23,6 +23,13 @@ source /shared_silo/scratch/adamhrin@amd.com/dispatcher/examples/autoif/executio
 export {{ key }}="{{ value }}"
 {% endfor %}
 {% endif %}
+
+# ============================================================
+# Install requirements
+# ============================================================
+echo "Installing requirements..."
+run_sing_python -m pip install --user -r requirements.txt
+echo "Requirements installed."
 
 # ============================================================
 # Job Configuration

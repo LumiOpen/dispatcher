@@ -1,0 +1,115 @@
+# AutoIF Pipeline Configuration - Improved Test Case Generation
+#
+# Uses decoupled function and test case generation with user queries
+
+# ==============================================================================
+# Experiment Metadata
+# ==============================================================================
+experiment:
+  name: "tw_qwen3_instruct"
+  description: "Qwen3-30B-A3B-Instruct-2507"
+  output_dir: "data/tw_qwen3_instruct"
+
+# ==============================================================================
+# vLLM Server Configuration (Interactive Mode)
+# ==============================================================================
+# vllm_server:  # Commented out for sbatch mode
+  # host: "127.0.0.1"
+  # port: 8000
+
+# ==============================================================================
+# Pipeline Sequence
+# ==============================================================================
+pipeline:
+  - augmentation_preprocessing: true
+  - augmentation_generation: true
+  - augmentation_postprocessing: true
+  - verifiers_preprocessing: true
+  - verifiers_generation: true
+
+# ==============================================================================
+# Global Configuration
+# ==============================================================================
+model: "/shared_silo/scratch/models/Qwen3-30B-A3B-Instruct-2507"
+max_model_len: 32768
+tensor_parallel: 4
+workers: 4
+batch_size: 1
+work_timeout: 3600
+request_timeout: 1800
+
+base_dir: "/shared_silo/scratch/adamhrin@amd.com/dispatcher_autoif/examples/autoif"
+language: "fi"
+function_timeout: 10
+
+# ==============================================================================
+# Jobs Configuration
+# ==============================================================================
+jobs:
+  # --------------------------------------------------------------------------
+  # Augmentation
+  # --------------------------------------------------------------------------
+  augmentation_preprocessing:
+    type: cpu_script
+    template: "tw_cpu_slurm.sh.j2"
+    script: src/create_instructions_input.py
+    args:
+      seed-file: "${base_dir}/data/seed_instructions_fi.jsonl"
+      output-file: "aug_input.jsonl"
+      num-instructions-per-category: 100
+      language: "${language}"
+
+  augmentation_generation:
+    type: dispatcher_task
+    template: "tw_dispatcher_slurm.sh.j2"
+    task: tasks.augmentation_task.AugmentInstructionsTask
+    input_file: "aug_input.jsonl"
+    output_file: "aug_output.jsonl"
+    exports:
+      HF_HUB_OFFLINE: "0"
+      VLLM_USE_TRITON_FLASH_ATTN: "0"
+      VLLM_ROCM_USE_AITER: "0"
+
+  augmentation_postprocessing:
+    type: cpu_script
+    template: "tw_cpu_slurm.sh.j2"
+    script: src/process_instructions_output.py
+    args:
+      input-file: "aug_output.jsonl"
+      output-file: "augmented_instructions.jsonl"
+      placeholder-lookup-file: "placeholder_lookup.json"
+      language: "${language}"
+      max-instructions: 300
+      seed-file: "${base_dir}/data/seed_instructions_fi.jsonl"
+
+  # --------------------------------------------------------------------------
+  # Verifiers: Generate evaluation functions and test cases separately
+  # --------------------------------------------------------------------------
+  verifiers_preprocessing:
+    type: cpu_script
+    template: "tw_cpu_slurm.sh.j2"
+    script: src/create_verifiers_input.py
+    args:
+      instructions-file: "augmented_instructions.jsonl"
+      queries-file: "${base_dir}/data/lmsys-chat-fi-500.jsonl"
+      output-file: "verifiers_input.jsonl"
+
+  verifiers_generation:
+    type: dispatcher_task
+    template: "tw_dispatcher_slurm.sh.j2"
+    task: tasks.verifiers_task.GenerateVerifiersTask
+    input_file: "verifiers_input.jsonl"
+    output_file: "verifiers_output.jsonl"
+    work_timeout: 7200
+    request_timeout: 3600
+    exports:
+      HF_HUB_OFFLINE: "0"
+      VLLM_USE_TRITON_FLASH_ATTN: "0"
+      VLLM_ROCM_USE_AITER: "0"
+      NUM_FUNC_GENERATIONS: "5"
+      NUM_TEST_CASES_PER_FUNC: "2"
+      MIN_FUNCTIONS: "1"
+      MIN_TEST_CASES: "1"
+      FUNCTION_PASS_RATE: "0.8"
+      FUNCTION_TIMEOUT: "${function_timeout}"
+      LANGUAGE: "${language}"
