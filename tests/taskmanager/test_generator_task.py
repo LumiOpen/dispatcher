@@ -4,7 +4,7 @@ import random
 import unittest
 from typing import Any, Dict, List, Union, Generator
 
-from dispatcher.taskmanager.task.base import GeneratorTask, TaskFailed
+from dispatcher.taskmanager.task.base import GeneratorTask, TaskFailed, TaskRetry
 from dispatcher.taskmanager.backend.request import Request, Response
 
 # ---------------------------------------------------------------------------
@@ -138,9 +138,16 @@ class MockGeneratorTaskForLifecycle(GeneratorTask):
         if self.mode == "immediate_fail":
             raise TaskFailed(message="immediate failure from test")
 
+        if self.mode == "retry":
+            raise TaskRetry("retry requested from test")
+
         if self.mode == "yield_first":
             yield Request({"prompt": "test_prompt"})
             return {"status": "finished_normally"}
+
+        if self.mode == "retry_after_yield":
+            resp = yield Request({"prompt": "test_prompt"})
+            raise TaskRetry("retry after receiving response")
 
         yield # Unreachable, for linter
 
@@ -202,6 +209,52 @@ class TestGeneratorTaskLifecycle(unittest.TestCase):
         self.assertIn("__ERROR__", result)
         self.assertEqual(result["__ERROR__"]["message"], "immediate failure from test")
         self.assertEqual(result["__ERROR__"]["task_data"], task_data)
+
+    def test_retry_before_first_yield(self):
+        """TaskRetry raised before first yield marks task done with is_retry()."""
+        task_data = {"id": 789}
+        task = MockGeneratorTaskForLifecycle(data=task_data, mode="retry", context="ctx")
+
+        self.assertTrue(task.is_done())
+        self.assertTrue(task.is_retry())
+        result, ctx = task.get_result()
+        self.assertEqual(ctx, "ctx")
+        self.assertIn("__RETRY__", result)
+        self.assertEqual(result["__RETRY__"]["message"], "retry requested from test")
+        self.assertEqual(result["__RETRY__"]["task_data"], task_data)
+
+    def test_retry_after_yield(self):
+        """TaskRetry raised mid-flow (after yield+response) marks task done with is_retry()."""
+        task_data = {"id": 101}
+        task = MockGeneratorTaskForLifecycle(data=task_data, mode="retry_after_yield", context="ctx2")
+
+        self.assertFalse(task.is_done(), "Task should not be done before processing response.")
+        self.assertFalse(task.is_retry())
+
+        # Feed a response to advance the generator past the yield
+        req = task.get_next_request()
+        self.assertIsNotNone(req)
+        task.process_result(_create_success_response(req))
+
+        self.assertTrue(task.is_done())
+        self.assertTrue(task.is_retry())
+        result, ctx = task.get_result()
+        self.assertEqual(ctx, "ctx2")
+        self.assertIn("__RETRY__", result)
+        self.assertEqual(result["__RETRY__"]["message"], "retry after receiving response")
+        self.assertEqual(result["__RETRY__"]["task_data"], task_data)
+
+    def test_is_retry_false_for_normal_completion(self):
+        """is_retry() returns False for a task that completes normally."""
+        task = MockGeneratorTaskForLifecycle(data={}, mode="immediate_return")
+        self.assertTrue(task.is_done())
+        self.assertFalse(task.is_retry())
+
+    def test_is_retry_false_for_task_failed(self):
+        """is_retry() returns False for a task that raises TaskFailed."""
+        task = MockGeneratorTaskForLifecycle(data={}, mode="immediate_fail")
+        self.assertTrue(task.is_done())
+        self.assertFalse(task.is_retry())
 
 
 # ---------------------------------------------------------------------------

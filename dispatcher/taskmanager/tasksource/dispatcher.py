@@ -94,8 +94,13 @@ class DispatcherTaskSource(TaskSource):
             
             # The context should be the original work_item
             work_item = context
-            
-            # Set the result on the work item
+
+            # If the task is a retry, release the work item back to the dispatcher
+            if task.is_retry():
+                self.client.release_work([work_item.work_id])
+                self.logger.info(f"Released work item {work_item.work_id} for retry")
+                return
+
             work_item.set_result(json.dumps(result, ensure_ascii=False))
             
             # Submit back to the dispatcher
