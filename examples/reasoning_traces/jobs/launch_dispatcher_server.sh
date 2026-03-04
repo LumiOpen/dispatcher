@@ -23,7 +23,7 @@ OUTPUT_FILE=/shared_silo/scratch/adamhrin@amd.com/dispatcher/examples/reasoning_
 
 WORK_TIMEOUT=${WORK_TIMEOUT:-7200}
 DISPATCHER_PORT=${DISPATCHER_PORT:-9999}
-
+MAX_RETRIES=${MAX_RETRIES:-6}
 SESSION_NAME="dispatcher-server"
 
 # Dispatcher package source
@@ -109,6 +109,7 @@ if [ "${1:-}" = "--run-server" ]; then
     --infile "$INPUT_FILE" \
     --outfile "$OUTPUT_FILE" \
     --work-timeout "$WORK_TIMEOUT" \
+    --max-retries "$MAX_RETRIES" \
     --host 0.0.0.0 \
     --port "$DISPATCHER_PORT"
 
