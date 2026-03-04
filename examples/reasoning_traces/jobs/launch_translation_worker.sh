@@ -25,6 +25,7 @@
 #SBATCH --gpus-per-node=8
 #SBATCH --output=logs/%A_%a.out
 #SBATCH --error=logs/%A_%a.err
+#SBATCH --open-mode=append
 
 set -euo pipefail
 
