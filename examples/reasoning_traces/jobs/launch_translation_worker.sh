@@ -130,10 +130,23 @@ fi
 
 ###############################################################################
 # Run worker in container (single node, all 8 GPUs)
+#
+# Signal handling for preemption:
+# Singularity tears down the container (including network) when it receives
+# SIGTERM directly, which prevents the Python signal handler from POST-ing
+# /release.  We use job control (set -m) to run the worker in its own process
+# group so SLURM's SIGTERM only hits the outer bash.  The trap forwards SIGTERM
+# to the worker process group, and the inner bash ignores it so only Python
+# handles the signal while the container is still alive.
 ###############################################################################
 
+_CHILD_PID=
+trap '[ -n "$_CHILD_PID" ] && { kill -TERM -- -"$_CHILD_PID" 2>/dev/null; wait "$_CHILD_PID" 2>/dev/null; }' TERM INT
+
+set -m
 run_sing_bash "
-  set -euo pipefail
+  set -uo pipefail
+  trap : TERM HUP
   ${DISPATCHER_PYTHONPATH_EXTRA:+export PYTHONPATH=\"$DISPATCHER_PKG\":\${PYTHONPATH:-}}
 
   export HIP_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
@@ -159,4 +172,10 @@ run_sing_bash "
     --request-timeout $REQUEST_TIMEOUT \
     --startup-timeout $STARTUP_TIMEOUT \
     --vllm-extra-args \"--swap-space 0 --max-num-seqs ${MAX_NUM_SEQS} --no-enable-prefix-caching --max-num-batched-tokens ${MAX_NUM_BATCHED_TOKENS} --block-size 1 --gpu-memory-utilization 0.95 --async-scheduling --quantization fp8\"
-"
+" &
+_CHILD_PID=$!
+# Double-wait idiom: when a signal interrupts the first wait, it returns
+# 128+signum (not the child's real status) and the trap fires.  The second
+# wait then retrieves the child's actual exit status from bash's cache.
+wait "$_CHILD_PID" 2>/dev/null
+wait "$_CHILD_PID" 2>/dev/null

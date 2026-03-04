@@ -18,13 +18,13 @@ set -euo pipefail
 # Configuration (mirrors launch_translation_task_dsv3.sh)
 ###############################################################################
 
-INPUT_FILE=/shared_silo/scratch/adamhrin@amd.com/dispatcher/examples/reasoning_traces/data/Llama-Nemotron-SFT-math-500kplus.jsonl
-OUTPUT_FILE=/shared_silo/scratch/adamhrin@amd.com/dispatcher/examples/reasoning_traces/data/Llama-Nemotron-SFT-math-500kplus_translated_DeepSeek-V3_fi.jsonl
+INPUT_FILE=/shared_silo/scratch/adamhrin@amd.com/dispatcher/examples/reasoning_traces/data/Llama-Nemotron-SFT-math-1.5mplus.jsonl
+OUTPUT_FILE=/shared_silo/scratch/adamhrin@amd.com/dispatcher/examples/reasoning_traces/data/Llama-Nemotron-SFT-math-1.5mplus_translated_DeepSeek-V3_fi.jsonl
 
-WORK_TIMEOUT=${WORK_TIMEOUT:-7200}
+WORK_TIMEOUT=${WORK_TIMEOUT:-1800}
 DISPATCHER_PORT=${DISPATCHER_PORT:-9999}
-MAX_RETRIES=${MAX_RETRIES:-6}
-SESSION_NAME="dispatcher-server"
+MAX_RETRIES=${MAX_RETRIES:-10}
+SESSION_NAME="dispatcher-server-test-retry-reissue"
 
 # Dispatcher package source
 DISPATCHER_PKG=/shared_silo/scratch/adamhrin@amd.com/dispatcher

@@ -128,14 +128,6 @@ install_build_dependencies() {
 }
 
 ###############################################################################
-# setup_cleanup_trap
-# Sets up cleanup trap to kill server process on exit
-###############################################################################
-setup_cleanup_trap() {
-  trap 'kill "${srv_pid:-0}" 2>/dev/null || true' EXIT
-}
-
-###############################################################################
 # translate_slurm_vars
 # Translates SLURM_* environment variables to SINGULARITYENV_* versions
 # so they pass through --cleanenv
@@ -158,7 +150,6 @@ setup_launcher_environment() {
   translate_slurm_vars
   setup_singularity_environment
   install_build_dependencies
-  setup_cleanup_trap
 }
 
 ###############################################################################
