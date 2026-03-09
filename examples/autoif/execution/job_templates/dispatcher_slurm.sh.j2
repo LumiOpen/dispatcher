@@ -1,12 +1,13 @@
 #!/bin/bash
 #SBATCH --job-name={{ job_name }}
-#SBATCH --partition={{ slurm.partition | default('amd-tw-verification') }}
+{% if slurm.account is defined %}#SBATCH --account={{ slurm.account }}
+{% endif %}#SBATCH --partition={{ slurm.partition }}
 #SBATCH --time={{ slurm.time | default('02:00:00') }}
 #SBATCH --nodes={{ slurm.nodes | default(1) }}
-#SBATCH --ntasks-per-node={{ slurm.ntasks_per_node | default(1) }}
-#SBATCH --cpus-per-task={{ slurm.cpus_per_task | default(32) }}
+#SBATCH --ntasks-per-node={{ slurm.ntasks_per_node | default(2) }}
+#SBATCH --cpus-per-task={{ slurm.cpus_per_task | default(7) }}
 #SBATCH --mem={{ slurm.mem | default('480G') }}
-#SBATCH --gpus-per-node={{ slurm.gpus_per_node | default(8) }}
+#SBATCH --gpus-per-node={{ slurm.gpus_per_node }}
 #SBATCH --exclusive=user
 #SBATCH --hint=nomultithread
 #SBATCH --output={{ slurm.output | default('logs/%j.out') }}
@@ -15,12 +16,12 @@
 set -euxo pipefail
 
 echo "======================================="
-echo "{{ job_name }} (TensorWave Dispatcher Job - sbatch)"
+echo "{{ job_name }} (Dispatcher Job - sbatch)"
 echo "======================================="
 echo "Started: $(date)"
 echo ""
 
-cd /shared_silo/scratch/adamhrin@amd.com/dispatcher_autoif/examples/autoif
+cd {{ base_dir }}
 
 # ============================================================
 # Job Configuration
@@ -46,29 +47,31 @@ echo "  Tensor Parallel: $GPUS_PER_TASK"
 echo ""
 
 # ============================================================
-# Environment Setup
+# Host Python Setup (for dispatcher server - no GPU needed)
 # ============================================================
-source /shared_silo/scratch/adamhrin@amd.com/dispatcher_autoif/examples/autoif/execution/environments/singularity_launcher.sh
+{% if cpu_python_modules is defined %}
+{% for mod in cpu_python_modules %}
+module load {{ mod }}
+{% endfor %}
+{% endif %}
+mkdir -p pythonuserbase
+export PYTHONUSERBASE="$(pwd)/pythonuserbase"
+export PATH="$PYTHONUSERBASE/bin:$PATH"
+export PYTHONPATH="$(pwd):${PYTHONPATH:-}"
 
-# Install dispatcher package
-echo "Installing dispatcher package..."
-run_sing_python -m pip install --user --upgrade \
-    -e /shared_silo/scratch/adamhrin@amd.com/dispatcher
-echo "Dispatcher installation complete."
-
-# Install requirements
-echo "Installing requirements..."
-run_sing_python -m pip install --user -r requirements.txt
-echo "Requirements installed."
+echo "Host Python: $(python3 --version) ($(which python3))"
+echo "Installing dispatcher package (host)..."
+python3 -m pip install --user --upgrade {{ dispatcher_package }}
+echo "Dispatcher server package installed."
 
 # ============================================================
-# Dispatcher Server
+# Dispatcher Server (runs on host Python, no GPU access)
 # ============================================================
 export DISPATCHER_SERVER=$(hostname)
 export DISPATCHER_PORT=9999
 
 echo "Starting dispatcher server on $DISPATCHER_SERVER:$DISPATCHER_PORT..."
-run_sing_python -m dispatcher.server \
+python3 -m dispatcher.server \
     --infile "$INPUT_FILE" \
     --outfile "$OUTPUT_FILE" \
     --work-timeout "$WORK_TIMEOUT" \
@@ -89,6 +92,19 @@ done
 echo "Server is up."
 
 # ============================================================
+# Container Environment Setup (for GPU workers)
+# ============================================================
+source {{ environment_setup }}
+
+echo "Installing dispatcher package (container)..."
+run_sing_pip_install --upgrade {{ dispatcher_package }}
+echo "Dispatcher worker package installed."
+
+echo "Installing requirements (container)..."
+run_sing_pip_install -r requirements.txt
+echo "Requirements installed."
+
+# ============================================================
 # Dispatcher Workers (with vLLM launch)
 # ============================================================
 srun -l bash -c '
@@ -99,16 +115,17 @@ srun -l bash -c '
         
         LOCALID=${SLURM_LOCALID:-0}
         
-        # Compute GPU allocation
-        start_gpu=$(( LOCALID * '"'$GPUS_PER_TASK'"' ))
+        # GPU allocation: SLURM cgroups partition and renumber GPUs per task,
+        # so each task always sees GPUs 0..GPUS_PER_TASK-1 regardless of LOCALID.
         GPU_IDS=""
         for (( i=0; i<'"'$GPUS_PER_TASK'"'; i++ )); do
             if [ -z "$GPU_IDS" ]; then
-                GPU_IDS="$(( start_gpu + i ))"
+                GPU_IDS="$i"
             else
-                GPU_IDS="${GPU_IDS},$(( start_gpu + i ))"
+                GPU_IDS="${GPU_IDS},$i"
             fi
         done
+        export ROCR_VISIBLE_DEVICES="$GPU_IDS"
         export HIP_VISIBLE_DEVICES="$GPU_IDS"
         
         # Ports
@@ -123,7 +140,7 @@ srun -l bash -c '
 {% endfor %}
 {% endif %}
         
-        echo "Launching task LOCALID=$LOCALID on GPUs $HIP_VISIBLE_DEVICES (VLLM_PORT=$VLLM_PORT)"
+        echo "Launching task LOCALID=$LOCALID on GPUs $GPU_IDS (VLLM_PORT=$VLLM_PORT)"
         
         # Run task manager worker (launches vLLM)
         run_python -m dispatcher.taskmanager.cli \
@@ -136,8 +153,8 @@ srun -l bash -c '
             --model '"'$MODEL'"' \
             --port $VLLM_PORT \
             --request-timeout '"'$REQUEST_TIMEOUT'"' \
-            --startup-timeout '"'$STARTUP_TIMEOUT'"' \
-            --silence-vllm-logs
+            --startup-timeout '"'$STARTUP_TIMEOUT'"'{% if vllm_extra_args is defined %} \
+            --vllm-extra-args "{{ vllm_extra_args }}"{% endif %} 
     '\''
 '
 

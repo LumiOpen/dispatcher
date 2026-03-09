@@ -36,6 +36,7 @@ NUM_TEST_CASES_PER_FUNC = int(os.getenv("NUM_TEST_CASES_PER_FUNC", 3))
 MIN_FUNCTIONS = int(os.getenv("MIN_FUNCTIONS", 1))
 MIN_TEST_CASES = int(os.getenv("MIN_TEST_CASES", 1))
 FUNCTION_PASS_RATE = float(os.getenv("FUNCTION_PASS_RATE", 0.8))
+TEST_PASS_RATE = float(os.getenv("TEST_PASS_RATE", 0.5))
 
 PROMPT_PATH = "model_prompts/create_verifiers_prompt.j2"
 
@@ -68,7 +69,6 @@ class GenerateVerifiersTask(GeneratorTask):
         "top_p": 0.95,
         "max_tokens": 8192,
         "n": NUM_FUNC_GENERATIONS,
-        "extra_body": {"chat_template_kwargs": {"enable_thinking": False}},
     }
 
     def __init__(self, *args, **kwargs):
@@ -98,29 +98,13 @@ class GenerateVerifiersTask(GeneratorTask):
         for name, meta in placeholders.items():
             entry = {"name": name, "type": meta.get("type", "unknown")}
             if meta.get("type") == "numeric":
-                entry["description"] = f"integer between {meta.get('min', 1)} and {meta.get('max', 10)}"
+                entry["description"] = f"Dynamically generated reasonable integer value"
             elif meta.get("type") == "static":
-                entry["description"] = f"one of: {meta.get('values', [])}"
+                entry["description"] = f"One of: {meta.get('values', [])}"
             elif meta.get("type") == "dynamic":
-                entry["description"] = "dynamically generated value"
+                entry["description"] = "Dynamically generated value based on context"
             info.append(entry)
         return info
-
-    def _sample_placeholder_values(self, placeholders: Dict) -> Dict[str, Any]:
-        """Sample concrete values for placeholders."""
-        values = {}
-        for name, meta in placeholders.items():
-            ptype = meta.get("type", "unknown")
-            if ptype == "numeric":
-                values[name] = random.randint(meta.get("min", 1), meta.get("max", 5))
-            elif ptype == "static":
-                vals = meta.get("values", ["default"])
-                values[name] = random.choice(vals) if vals else "default"
-            elif ptype == "dynamic":
-                values[name] = meta.get("sample", "example_value")
-            else:
-                values[name] = "unknown"
-        return values
 
     @staticmethod
     def _get_language_name() -> str:
@@ -259,7 +243,7 @@ class GenerateVerifiersTask(GeneratorTask):
         """Cross-validate functions against test cases.
 
         A function passes if its accuracy >= FUNCTION_PASS_RATE.
-        A test case passes if at least one function gets it correct.
+        A test case passes if its pass rate across safe functions >= TEST_PASS_RATE.
         Success requires >= MIN_FUNCTIONS passing functions and >= MIN_TEST_CASES passing cases.
         """
         # Filter safe functions
@@ -279,7 +263,7 @@ class GenerateVerifiersTask(GeneratorTask):
                 total_cases=len(test_cases),
             )
 
-        case_passes = [False] * len(test_cases)
+        case_pass_counts = [0] * len(test_cases)
         passing_functions: List[str] = []
         best_accuracy = 0.0
 
@@ -289,7 +273,7 @@ class GenerateVerifiersTask(GeneratorTask):
             for case_idx, test_case in enumerate(test_cases):
                 passed, _ = self.executor.test_function(func, test_case, log_errors=False)
                 if passed:
-                    case_passes[case_idx] = True
+                    case_pass_counts[case_idx] += 1
                     correct_count += 1
 
             accuracy = correct_count / len(test_cases) if test_cases else 0
@@ -300,7 +284,7 @@ class GenerateVerifiersTask(GeneratorTask):
 
         passing_cases = [
             case for idx, case in enumerate(test_cases)
-            if case_passes[idx]
+            if case_pass_counts[idx] / len(safe_functions) >= TEST_PASS_RATE
         ]
 
         success = len(passing_functions) >= MIN_FUNCTIONS and len(passing_cases) >= MIN_TEST_CASES

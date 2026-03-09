@@ -6,9 +6,9 @@
 # Experiment Metadata
 # ==============================================================================
 experiment:
-  name: "tw_qwen3_instruct"
+  name: "lumi_qwen3_instruct"
   description: "Qwen3-30B-A3B-Instruct-2507"
-  output_dir: "data/tw_qwen3_instruct"
+  output_dir: "data/lumi_qwen3_instruct"
 
 # ==============================================================================
 # vLLM Server Configuration (Interactive Mode)
@@ -23,25 +23,29 @@ experiment:
 pipeline:
   - augmentation_preprocessing: true
   - augmentation_generation: true
-  - augmentation_postprocessing: true
-  - verifiers_preprocessing: true
-  - verifiers_generation: true
+  - augmentation_postprocessing: false
+  - verifiers_preprocessing: false
+  - verifiers_generation: false
 
 # ==============================================================================
 # Global Configuration
 # ==============================================================================
-model: "/shared_silo/scratch/models/Qwen3-30B-A3B-Instruct-2507"
+model: "Qwen/Qwen3-30B-A3B-Instruct-2507"
 max_model_len: 32768
-tensor_parallel: 4
+tensor_parallel: 8
 workers: 4
 batch_size: 1
 work_timeout: 3600
 request_timeout: 1800
+startup_timeout: 7200
 
-base_dir: "/shared_silo/scratch/adamhrin@amd.com/dispatcher_autoif/examples/autoif"
-environment_setup: "execution/environments/singularity_launcher.sh"
-dispatcher_package: "/shared_silo/scratch/adamhrin@amd.com/dispatcher"
+base_dir: "/scratch/project_462000963/users/adamhrin/dispatcher/examples/autoif"
+environment_setup: "execution/environments/lumi_launcher.sh"
+dispatcher_package: "/scratch/project_462000963/users/adamhrin/dispatcher"
+cpu_python_modules:
+  - cray-python
 language: "fi"
+hf_home: "/scratch/project_462000963/cache"
 function_timeout: 10
 
 # ==============================================================================
@@ -65,12 +69,12 @@ jobs:
     type: dispatcher_task
     template: "dispatcher_slurm.sh.j2"
     task: tasks.augmentation_task.AugmentInstructionsTask
+    max_model_len: 16384
     input_file: "aug_input.jsonl"
     output_file: "aug_output.jsonl"
+    vllm_extra_args: "--gpu-memory-utilization 0.85"
     exports:
-      HF_HUB_OFFLINE: "0"
-      VLLM_USE_TRITON_FLASH_ATTN: "0"
-      VLLM_ROCM_USE_AITER: "0"
+      NUM_GENERATIONS: "5"
 
   augmentation_postprocessing:
     type: cpu_script
@@ -83,6 +87,7 @@ jobs:
       language: "${language}"
       max-instructions: 300
       seed-file: "${base_dir}/data/seed_instructions_fi.jsonl"
+      include-seeds: false
 
   # --------------------------------------------------------------------------
   # Verifiers: Generate evaluation functions and test cases separately
@@ -102,16 +107,15 @@ jobs:
     task: tasks.verifiers_task.GenerateVerifiersTask
     input_file: "verifiers_input.jsonl"
     output_file: "verifiers_output.jsonl"
+    vllm_extra_args: "--gpu-memory-utilization 0.85"
     work_timeout: 7200
     request_timeout: 3600
     exports:
-      HF_HUB_OFFLINE: "0"
-      VLLM_USE_TRITON_FLASH_ATTN: "0"
-      VLLM_ROCM_USE_AITER: "0"
       NUM_FUNC_GENERATIONS: "5"
       NUM_TEST_CASES_PER_FUNC: "2"
       MIN_FUNCTIONS: "1"
       MIN_TEST_CASES: "1"
-      FUNCTION_PASS_RATE: "0.8"
+      FUNCTION_PASS_RATE: "0.5"
+      TEST_PASS_RATE: "0.5"
       FUNCTION_TIMEOUT: "${function_timeout}"
       LANGUAGE: "${language}"

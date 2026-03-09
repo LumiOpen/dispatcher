@@ -4,16 +4,16 @@
 # Global SLURM defaults
 slurm:
   account: project_462000963
-  partition: dev-g
-  time: "01:00:00"
   output: "logs/%j.out"
   error: "logs/%j.err"
 
 # Job type defaults
 job_type_defaults:
   dispatcher_task:
+    partition: dev-g
+    time: "02:00:00"
     nodes: 1
-    ntasks_per_node: 2
+    ntasks_per_node: 1
     mem: "480G"
     cpus_per_task: 7
     exclusive: user
@@ -21,27 +21,17 @@ job_type_defaults:
     gpus_per_node: "mi250:8"
 
   cpu_script:
-    partition: small
+    partition: debug
+    time: "00:30:00"
     nodes: 1
     ntasks_per_node: 1
     mem: "32G"
     cpus_per_task: 8
-    time: "00:30:00"
 
 # Per-job SLURM overrides
 jobs:
-  verifiers_generation:
-    time: "02:00:00"
-    startup_timeout: 1800
-    request_timeout: 1800
-    work_timeout: 3600
-
   responses_generation:
-    time: "02:00:00"
     ntasks_per_node: 2
-    startup_timeout: 1800
-    request_timeout: 1800
-    work_timeout: 3600
 
   concatenation_job:
     mem: "64G"

@@ -120,20 +120,43 @@ def get_job_ids_from_status(status: dict, mode_key: str) -> Dict[str, str]:
     return {name: info['job_id'] for name, info in old_jobs.items()}
 
 
-def print_status(status: dict, execution_mode: str):
-    """Print pipeline status"""
+def get_job_ids_for_all_enabled_jobs(
+    config: dict, status: dict, mode_key: str
+) -> Tuple[Dict[str, str], List[str]]:
+    """
+    Get job_ids for all enabled pipeline jobs (config is source of truth).
+    Returns (submitted_job_ids, not_submitted_jobs).
+    """
+    all_jobs = get_all_jobs_ordered(config)
+    old_jobs = status.get(mode_key, {})
+    submitted = {}
+    not_submitted = []
+    for job in all_jobs:
+        job_id = old_jobs.get(job, {}).get('job_id')
+        if job_id:
+            submitted[job] = job_id
+        else:
+            not_submitted.append(job)
+    return submitted, not_submitted
+
+
+def print_status(config: dict, status: dict, execution_mode: str):
+    """Print pipeline status for all enabled jobs (config is source of truth)"""
     print("\nPipeline Status:\n" + "=" * 70)
 
+    all_jobs = get_all_jobs_ordered(config)
     mode_key = execution_mode
-    if mode_key in status and status[mode_key]:
-        for job, job_info in status[mode_key].items():
-            if execution_mode == 'sbatch':
-                job_id = job_info.get('job_id', 'N/A')
-                job_status = get_job_status(job_id) if job_id != 'N/A' else 'UNKNOWN'
-                print(f"{job:40} {job_id:10} {job_status}")
-            else:  # interactive
-                job_status = job_info.get('status', 'unknown')
-                print(f"{job:40} {job_status:15}")
+    old_jobs = status.get(mode_key, {})
+
+    for job in all_jobs:
+        job_info = old_jobs.get(job, {})
+        if execution_mode == 'sbatch':
+            job_id = job_info.get('job_id') or 'N/A'
+            job_status = get_job_status(job_id) if job_id != 'N/A' else 'NOT_SUBMITTED'
+            print(f"{job:40} {str(job_id):10} {job_status}")
+        else:  # interactive
+            job_status = job_info.get('status', 'NOT_RUN') if job_info else 'NOT_RUN'
+            print(f"{job:40} {job_status:15}")
 
     print("=" * 70 + "\n")
 
@@ -563,15 +586,24 @@ def handle_force(config: dict, slurm_config: dict, out_dir: Path, execution_mode
     print("\n  Force mode: Rerunning entire pipeline...\n")
 
     status = load_status(out_dir)
+    enabled_jobs = set(get_all_jobs_ordered(config))
 
-    # Cancel SLURM jobs if in sbatch mode
+    # Cancel SLURM jobs only for enabled jobs (they will be rerun)
     if execution_mode == 'sbatch' and 'sbatch' in status:
-        old_jobs = [info['job_id'] for info in status['sbatch'].values()]
-        if old_jobs:
-            cancel_jobs(old_jobs)
+        to_cancel = [
+            info['job_id'] for name, info in status['sbatch'].items()
+            if name in enabled_jobs
+        ]
+        if to_cancel:
+            cancel_jobs(to_cancel)
 
-    # Clear status
-    status = {'sbatch': {}, 'interactive': {}}
+    # Clear status only for enabled jobs (preserve history for now-disabled jobs)
+    for job_name in list(status.get('sbatch', {}).keys()):
+        if job_name in enabled_jobs:
+            del status['sbatch'][job_name]
+    for job_name in list(status.get('interactive', {}).keys()):
+        if job_name in enabled_jobs:
+            del status['interactive'][job_name]
     save_status(out_dir, status)
 
     # Rerun pipeline
@@ -761,7 +793,7 @@ def main():
     # Handle different modes
     if args.status:
         status = load_status(out_dir)
-        print_status(status, execution_mode)
+        print_status(config, status, execution_mode)
         sys.exit(0)
     elif args.force:
         handle_force(config, slurm_config, out_dir, execution_mode)
@@ -770,25 +802,42 @@ def main():
     elif args.continue_pipeline:
         handle_continue(config, slurm_config, out_dir, execution_mode)
     else:
-        # Check for existing jobs
+        # Check pipeline status (config is source of truth for enabled jobs)
         status = load_status(out_dir)
+        submitted_job_ids, not_submitted = get_job_ids_for_all_enabled_jobs(
+            config, status, execution_mode
+        )
 
-        if execution_mode == 'sbatch' and status.get('sbatch'):
-            print_status(status, execution_mode)
-            job_ids = get_job_ids_from_status(status, 'sbatch')
-            all_done, failed, running = check_pipeline_status(job_ids)
+        if execution_mode == 'sbatch' and (submitted_job_ids or not_submitted):
+            print_status(config, status, execution_mode)
 
-            if failed:
-                print(f" {len(failed)} job(s) failed. Use --rerun-failed or --force")
-                sys.exit(1)
-            elif running:
-                print(f" {len(running)} job(s) still running. Use --status to check")
+            if submitted_job_ids:
+                all_done, failed, running = check_pipeline_status(submitted_job_ids)
+
+                if failed:
+                    print(f" {len(failed)} job(s) failed. Use --rerun-failed or --force")
+                    sys.exit(1)
+                elif running:
+                    print(f" {len(running)} job(s) still running. Use --status to check")
+                    sys.exit(0)
+
+            # Submit missing jobs if any
+            if not_submitted:
+                if not submitted_job_ids:
+                    print(" Submitting full pipeline...\n")
+                    submit_pipeline(config, slurm_config, out_dir, execution_mode)
+                else:
+                    print(f" Submitting {len(not_submitted)} job(s) not yet in pipeline...\n")
+                    handle_continue(config, slurm_config, out_dir, execution_mode)
                 sys.exit(0)
-            elif all_done:
-                print(" All jobs completed. Use --force to rerun")
-                sys.exit(0)
 
-        # Fresh submission
+            if submitted_job_ids:
+                all_done, _, _ = check_pipeline_status(submitted_job_ids)
+                if all_done:
+                    print(" All jobs completed. Use --force to rerun")
+                    sys.exit(0)
+
+        # Fresh submission (no jobs in pipeline yet)
         submit_pipeline(config, slurm_config, out_dir, execution_mode)
 
 

@@ -1,49 +1,49 @@
 {"instruction": "Lisää vastauksesi loppuun jälkikirjoitus, joka alkaa merkinnällä {postscript_marker}", "category": "Content", "placeholders": {"postscript_marker": {"type": "static", "values": ["P.S.", "Huom:", "PS:", "Huomautus:", "Jälkikirjoitus:"]}}}
-{"instruction": "Vastauksen tulee sisältää vähintään {N} paikkamerkkiä hakasulkeissa, kuten [osoite].", "category": "Content", "placeholders": {"N": {"type": "numeric", "min": 2, "max": 6}}}
+{"instruction": "Vastauksen tulee sisältää vähintään {N} paikkamerkkiä hakasulkeissa, kuten [osoite].", "category": "Content", "placeholders": {"N": {"type": "numeric"}}}
 {"instruction": "Vastauksesi tulee sisältää otsikko, joka on ympäröity kaksinkertaisilla kulmasulkeilla, kuten <<ilon runo>>.", "category": "Content", "placeholders": {}}
 {"instruction": "Koko vastauksesi tulee olla kirjoitettu suuraakkosin.", "category": "Content", "placeholders": {}}
 {"instruction": "Koko vastauksesi tulee olla kirjoitettu pienaakkosin. Suuraakkosia ei sallita.", "category": "Content", "placeholders": {}}
 {"instruction": "Lopeta vastauksesi täsmälleen tähän lauseeseen: {end_phrase}. Mitään muita sanoja ei saa seurata.", "category": "Content", "placeholders": {"end_phrase": {"type": "dynamic"}}}
 {"instruction": "Älä käytä pilkkuja missään kohdassa vastaustasi.", "category": "Content", "placeholders": {}}
-{"instruction": "Käytä vähintään {N} eri rinnastuskonjunktiota vastauksessasi.", "category": "Content", "placeholders": {"N": {"type": "numeric", "min": 3, "max": 7}}}
+{"instruction": "Käytä vähintään {N} eri rinnastuskonjunktiota vastauksessasi.", "category": "Content", "placeholders": {"N": {"type": "numeric"}}}
 {"instruction": "Käytä emojia jokaisen lauseen lopussa.", "category": "Content", "placeholders": {}}
-{"instruction": "Säilytä {N}:{M} suhde väite- ja kysymyslauseiden välillä vastauksessasi.", "category": "Content", "placeholders": {"N": {"type": "numeric", "min": 1, "max": 3}, "M": {"type": "numeric", "min": 1, "max": 2}}}
+{"instruction": "Säilytä {N}:{M} suhde väite- ja kysymyslauseiden välillä vastauksessasi.", "category": "Content", "placeholders": {"N": {"type": "numeric"}, "M": {"type": "numeric"}}}
 {"instruction": "Vastauksessasi jokaisen lauseen viimeisen sanan tulee olla seuraavan lauseen ensimmäinen sana.", "category": "Content", "placeholders": {}}
 {"instruction": "Kaksi peräkkäistä sanaa ei saa alkaa samalla kirjaimella.", "category": "Content", "placeholders": {}}
 {"instruction": "Vastauksen tulee alkaa verbillä.", "category": "Content", "placeholders": {}}
 {"instruction": "Jokaisen lauseen tulee sisältää vähintään yksi adjektiivi ja yksi adverbi.", "category": "Content", "placeholders": {}}
-{"instruction": "Sisällytä avainsanat {keywords} vähintään {N} kertaa vastauksessasi.", "category": "Content", "placeholders": {"keywords": {"type": "dynamic"}, "N": {"type": "numeric", "min": 1, "max": 3}}}
+{"instruction": "Sisällytä avainsanat {keywords} vähintään {N} kertaa vastauksessasi.", "category": "Content", "placeholders": {"keywords": {"type": "dynamic"}, "N": {"type": "numeric"}}}
 {"instruction": "Älä käytä avainsanoja {forbidden_words} vastauksessasi.", "category": "Content", "placeholders": {"forbidden_words": {"type": "dynamic"}}}
 {"instruction": "Vastauksen tulee sisältää avainsana {keyword} lauseessa numero {position}.", "category": "Content", "placeholders": {"keyword": {"type": "dynamic"}, "position": {"type": "static", "values": ["ensimmäisessä", "toisessa", "kolmannessa", "viimeisessä", "aloittavassa", "päättävässä"]}}}
-{"instruction": "Vastauksesi tulee sisältää sana {word} täsmälleen {N} kertaa.", "category": "Content", "placeholders": {"word": {"type": "dynamic"}, "N": {"type": "numeric", "min": 2, "max": 5}}}
+{"instruction": "Vastauksesi tulee sisältää sana {word} täsmälleen {N} kertaa.", "category": "Content", "placeholders": {"word": {"type": "dynamic"}, "N": {"type": "numeric"}}}
 {"instruction": "Jokaisen kappaleen tulee sisältää vähintään yksi ilmaus lauseesta {phrase}.", "category": "Content", "placeholders": {"phrase": {"type": "dynamic"}}}
-{"instruction": "Vastauksessasi kirjaimen {letter} tulee esiintyä vähintään {N} kertaa.", "category": "Length", "placeholders": {"letter": {"type": "static", "values": ["a", "e", "i", "o", "u", "s", "t", "r", "n", "ä", "ö"]}, "N": {"type": "numeric", "min": 10, "max": 30}}}
-{"instruction": "Vastauksesi tulee sisältää {N} kappaletta. Erota kappaleet toisistaan markdown-jakajalla: * * *", "category": "Length", "placeholders": {"N": {"type": "numeric", "min": 2, "max": 5}}}
-{"instruction": "Vastaa vähintään {N} sanalla.", "category": "Length", "placeholders": {"N": {"type": "numeric", "min": 50, "max": 200}}}
-{"instruction": "Vastaa täsmälleen {N} sanalla.", "category": "Length", "placeholders": {"N": {"type": "numeric", "min": 50, "max": 150}}}
-{"instruction": "Vastaa enintään {N} sanalla.", "category": "Length", "placeholders": {"N": {"type": "numeric", "min": 100, "max": 300}}}
-{"instruction": "Vastaa vähintään {N} lauseella.", "category": "Length", "placeholders": {"N": {"type": "numeric", "min": 3, "max": 10}}}
-{"instruction": "Vastaa täsmälleen {N} lauseella.", "category": "Length", "placeholders": {"N": {"type": "numeric", "min": 3, "max": 8}}}
-{"instruction": "Vastauksessa tulee olla {N} kappaletta. Kappaleet erotetaan toisistaan kahdella rivinvaihdolla.", "category": "Length", "placeholders": {"N": {"type": "numeric", "min": 2, "max": 5}}}
-{"instruction": "Anna {N} eri vastausta. Vastaukset erotetaan toisistaan kuudella tähtimerkillä: ******.", "category": "Length", "placeholders": {"N": {"type": "numeric", "min": 2, "max": 4}}}
-{"instruction": "Vastauksessasi tulee esiintyä vähintään {N} kokonaan suuraakkosin kirjoitettua sanaa.", "category": "Length", "placeholders": {"N": {"type": "numeric", "min": 2, "max": 6}}}
-{"instruction": "Vastauksen tulee sisältää {min_count} - {max_count} sanaa.", "category": "Length", "placeholders": {"min_count": {"type": "numeric", "min": 50, "max": 100}, "max_count": {"type": "numeric", "min": 150, "max": 300}}}
-{"instruction": "Käytä vähintään {N} eri sanaa vastauksessasi.", "category": "Length", "placeholders": {"N": {"type": "numeric", "min": 30, "max": 80}}}
-{"instruction": "Mikään sana ei saa toistua vastauksessa yli {N} kertaa.", "category": "Length", "placeholders": {"N": {"type": "numeric", "min": 2, "max": 5}}}
-{"instruction": "Vastauksesi tulee sisältää täsmälleen {N} luettelokohtaa. Käytä markdown-luettelomerkkejä, esim: * Tämä on kohta.", "category": "Length", "placeholders": {"N": {"type": "numeric", "min": 3, "max": 7}}}
-{"instruction": "Vastauksessasi tulee olla {N} osiota. Merkitse jokaisen osion alku merkinnällä {section_marker}.", "category": "Length", "placeholders": {"N": {"type": "numeric", "min": 2, "max": 5}, "section_marker": {"type": "static", "values": ["## ", "### ", "--- ", "*** ", "[Osio] ", "Osio: ", "Osa "]}}}
+{"instruction": "Vastauksessasi kirjaimen {letter} tulee esiintyä vähintään {N} kertaa.", "category": "Length", "placeholders": {"letter": {"type": "static", "values": ["a", "e", "i", "o", "u", "s", "t", "r", "n", "ä", "ö"]}, "N": {"type": "numeric"}}}
+{"instruction": "Vastauksesi tulee sisältää {N} kappaletta. Erota kappaleet toisistaan markdown-jakajalla: * * *", "category": "Length", "placeholders": {"N": {"type": "numeric"}}}
+{"instruction": "Vastaa vähintään {N} sanalla.", "category": "Length", "placeholders": {"N": {"type": "numeric"}}}
+{"instruction": "Vastaa täsmälleen {N} sanalla.", "category": "Length", "placeholders": {"N": {"type": "numeric"}}}
+{"instruction": "Vastaa enintään {N} sanalla.", "category": "Length", "placeholders": {"N": {"type": "numeric"}}}
+{"instruction": "Vastaa vähintään {N} lauseella.", "category": "Length", "placeholders": {"N": {"type": "numeric"}}}
+{"instruction": "Vastaa täsmälleen {N} lauseella.", "category": "Length", "placeholders": {"N": {"type": "numeric"}}}
+{"instruction": "Vastauksessa tulee olla {N} kappaletta. Kappaleet erotetaan toisistaan kahdella rivinvaihdolla.", "category": "Length", "placeholders": {"N": {"type": "numeric"}}}
+{"instruction": "Anna {N} eri vastausta. Vastaukset erotetaan toisistaan kuudella tähtimerkillä: ******.", "category": "Length", "placeholders": {"N": {"type": "numeric"}}}
+{"instruction": "Vastauksessasi tulee esiintyä vähintään {N} kokonaan suuraakkosin kirjoitettua sanaa.", "category": "Length", "placeholders": {"N": {"type": "numeric"}}}
+{"instruction": "Vastauksen tulee sisältää {min_count} - {max_count} sanaa.", "category": "Length", "placeholders": {"min_count": {"type": "numeric"}, "max_count": {"type": "numeric"}}}
+{"instruction": "Käytä vähintään {N} eri sanaa vastauksessasi.", "category": "Length", "placeholders": {"N": {"type": "numeric"}}}
+{"instruction": "Mikään sana ei saa toistua vastauksessa yli {N} kertaa.", "category": "Length", "placeholders": {"N": {"type": "numeric"}}}
+{"instruction": "Vastauksesi tulee sisältää täsmälleen {N} luettelokohtaa. Käytä markdown-luettelomerkkejä, esim: * Tämä on kohta.", "category": "Length", "placeholders": {"N": {"type": "numeric"}}}
+{"instruction": "Vastauksessasi tulee olla {N} osiota. Merkitse jokaisen osion alku merkinnällä {section_marker}.", "category": "Length", "placeholders": {"N": {"type": "numeric"}, "section_marker": {"type": "static", "values": ["## ", "### ", "--- ", "*** ", "[Osio] ", "Osio: ", "Osa "]}}}
 {"instruction": "Ympäröi koko vastauksesi lainausmerkeillä.", "category": "Format", "placeholders": {}}
 {"instruction": "Koko vastauksen tulee olla JSON-muodossa.", "category": "Format", "placeholders": {}}
 {"instruction": "Vastaa listana, mutta käytä luettelomerkkien sijaan erotinta {separator}.", "category": "Format", "placeholders": {"separator": {"type": "static", "values": ["->", "|", ":", ";", ">>", "•", "—", "=>", "~"]}}}
 {"instruction": "Kirjoita jokainen sana omalle rivilleen.", "category": "Format", "placeholders": {}}
-{"instruction": "Sisäkkäistä sulkeet (ja [hakasulkeet {ja aaltosulkeet}]) vähintään {N} tasoa syvälle.", "category": "Format", "placeholders": {"N": {"type": "numeric", "min": 2, "max": 4}}}
-{"instruction": "Sisällytä lainauksia lainausten sisään vähintään {N} tasoa syvälle, vuorotellen kaksois- ja yksinkertaisten lainausmerkkien välillä, aloittaen kaksoislainausmerkeillä.", "category": "Format", "placeholders": {"N": {"type": "numeric", "min": 2, "max": 4}}}
+{"instruction": "Sisäkkäistä sulkeet (ja [hakasulkeet {ja aaltosulkeet}]) vähintään {N} tasoa syvälle.", "category": "Format", "placeholders": {"N": {"type": "numeric"}}}
+{"instruction": "Sisällytä lainauksia lainausten sisään vähintään {N} tasoa syvälle, vuorotellen kaksois- ja yksinkertaisten lainausmerkkien välillä, aloittaen kaksoislainausmerkeillä.", "category": "Format", "placeholders": {"N": {"type": "numeric"}}}
 {"instruction": "Vastauksesi tulee sisältää luettelokohtia merkittynä * -merkillä ja vähintään yksi alakohta merkittynä - -merkillä jokaiselle pääkohdalle.", "category": "Format", "placeholders": {}}
 {"instruction": "Jokaisen kappaleen tulee alkaa kursiivilla lauseella, käytä HTML-merkintää kursiivin ilmaisemiseen.", "category": "Format", "placeholders": {}}
-{"instruction": "Korosta vähintään {N} osiota vastauksessasi markdown-muotoilulla, esim. *korostettu osio*", "category": "Format", "placeholders": {"N": {"type": "numeric", "min": 2, "max": 5}}}
-{"instruction": "Vastauksen tulee olla CSV-muodossa ja sisältää {N} riviä.", "category": "Format", "placeholders": {"N": {"type": "numeric", "min": 3, "max": 8}}}
-{"instruction": "Vastauksen tulee sisältää markdown-taulukko, jossa on {N} riviä ja {M} saraketta.", "category": "Format", "placeholders": {"N": {"type": "numeric", "min": 2, "max": 5}, "M": {"type": "numeric", "min": 2, "max": 4}}}
-{"instruction": "Vastauksen tulee olla XML-muodossa vähintään {N} sisäkkäisellä tasolla.", "category": "Format", "placeholders": {"N": {"type": "numeric", "min": 2, "max": 4}}}
+{"instruction": "Korosta vähintään {N} osiota vastauksessasi markdown-muotoilulla, esim. *korostettu osio*", "category": "Format", "placeholders": {"N": {"type": "numeric"}}}
+{"instruction": "Vastauksen tulee olla CSV-muodossa ja sisältää {N} riviä.", "category": "Format", "placeholders": {"N": {"type": "numeric"}}}
+{"instruction": "Vastauksen tulee sisältää markdown-taulukko, jossa on {N} riviä ja {M} saraketta.", "category": "Format", "placeholders": {"N": {"type": "numeric"}, "M": {"type": "numeric"}}}
+{"instruction": "Vastauksen tulee olla XML-muodossa vähintään {N} sisäkkäisellä tasolla.", "category": "Format", "placeholders": {"N": {"type": "numeric"}}}
 {"instruction": "Päivämäärien tulee olla muodossa: VVVV-KK-PP.", "category": "Format", "placeholders": {}}
-{"instruction": "Muotoile vastauksesi numeroituna listana, jossa on täsmälleen {N} kohtaa.", "category": "Format", "placeholders": {"N": {"type": "numeric", "min": 3, "max": 8}}}
+{"instruction": "Muotoile vastauksesi numeroituna listana, jossa on täsmälleen {N} kohtaa.", "category": "Format", "placeholders": {"N": {"type": "numeric"}}}
 {"instruction": "Jokaisen listakohdan tulee alkaa etuliitteellä {prefix}.", "category": "Format", "placeholders": {"prefix": {"type": "static", "values": ["[*]", "(i)", ">>", "→", "•", "Vaihe:", "Kohta:"]}}}

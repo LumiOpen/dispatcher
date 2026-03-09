@@ -39,6 +39,8 @@ work_timeout: 3600
 request_timeout: 1800
 
 base_dir: "/shared_silo/scratch/adamhrin@amd.com/dispatcher/examples/autoif"
+environment_setup: "execution/environments/singularity_launcher.sh"
+dispatcher_package: "/shared_silo/scratch/adamhrin@amd.com/dispatcher"
 language: "fi"
 function_timeout: 10
 
@@ -51,7 +53,7 @@ jobs:
   # --------------------------------------------------------------------------
   augmentation_preprocessing:
     type: cpu_script
-    template: "tw_cpu_slurm.sh.j2"
+    template: "cpu_slurm.sh.j2"
     script: src/create_instructions_input.py
     args:
       seed-file: "${base_dir}/data/seed_instructions_fi.jsonl"
@@ -61,7 +63,7 @@ jobs:
 
   augmentation_generation:
     type: dispatcher_task
-    template: "tw_dispatcher_slurm.sh.j2"
+    template: "dispatcher_slurm.sh.j2"
     task: tasks.augmentation_task.AugmentInstructionsTask
     input_file: "aug_input.jsonl"
     output_file: "aug_output.jsonl"
@@ -72,7 +74,7 @@ jobs:
 
   augmentation_postprocessing:
     type: cpu_script
-    template: "tw_cpu_slurm.sh.j2"
+    template: "cpu_slurm.sh.j2"
     script: src/process_instructions_output.py
     args:
       input-file: "aug_output.jsonl"
@@ -87,7 +89,7 @@ jobs:
   # --------------------------------------------------------------------------
   verifiers_preprocessing:
     type: cpu_script
-    template: "tw_cpu_slurm.sh.j2"
+    template: "cpu_slurm.sh.j2"
     script: src/create_verifiers_input.py
     args:
       instructions-file: "augmented_instructions.jsonl"
@@ -96,7 +98,7 @@ jobs:
 
   verifiers_generation:
     type: dispatcher_task
-    template: "tw_dispatcher_slurm.sh.j2"
+    template: "dispatcher_slurm.sh.j2"
     task: tasks.verifiers_task.GenerateVerifiersTask
     input_file: "verifiers_input.jsonl"
     output_file: "verifiers_output.jsonl"

@@ -1,4 +1,5 @@
 """Augmentation task - Generate augmented instructions"""
+import os
 from typing import Any, Dict, Generator, Union
 
 from dispatcher.taskmanager.backend.request import Request, Response
@@ -6,6 +7,7 @@ from dispatcher.taskmanager.task.base import GeneratorTask
 
 __all__ = ["AugmentInstructionsTask"]
 
+NUM_GENERATIONS = int(os.getenv("NUM_GENERATIONS", 2))
 
 class AugmentInstructionsTask(GeneratorTask):
     """
@@ -25,6 +27,7 @@ class AugmentInstructionsTask(GeneratorTask):
         "temperature": 0.75,
         "top_p": 0.9,
         "max_tokens": 8192,
+        "n": NUM_GENERATIONS,
     }
 
     def task_generator(self) -> Generator[Union[Request, list[Request]], Any, Dict[str, Any]]:
@@ -48,14 +51,16 @@ class AugmentInstructionsTask(GeneratorTask):
         # Build chat messages
         messages = [{"role": "user", "content": prompt}]
 
-        # Generate response
         response: Response = yield Request({"messages": messages, **self.GEN_PARAMS})
-        response_text = response.get_text()
 
-        # Return result for dispatcher's output file (raw responses)
-        # Post-processing will be done separately
+        # Parse all N generations
+        responses = []
+        response_texts = response.get_text(n=NUM_GENERATIONS)
+        if response_texts:
+            responses = [text for text in response_texts if text]
+
         return {
             'original': self.data,
-            'responses': [response_text],
+            'responses': responses,
             'category': category
         }

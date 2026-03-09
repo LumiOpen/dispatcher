@@ -7,7 +7,7 @@ Here is the instruction:
 {% if placeholders %}
 This instruction contains the following placeholders that will be provided as function arguments at runtime:
 {% for p in placeholders %}
-- {{ p.name }}: {{ p.type }}
+- {{ p.name }}: {{ p.type }}. {{ p.description }}
 {% endfor %}
 {% endif %}
 

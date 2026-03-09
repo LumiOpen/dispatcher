@@ -1,6 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name={{ job_name }}
-#SBATCH --partition={{ slurm.partition | default('amd-tw-verification') }}
+{% if slurm.account is defined %}#SBATCH --account={{ slurm.account }}
+{% endif %}#SBATCH --partition={{ slurm.partition }}
 #SBATCH --time={{ slurm.time | default('00:30:00') }}
 #SBATCH --nodes={{ slurm.nodes | default(1) }}
 #SBATCH --ntasks-per-node={{ slurm.ntasks_per_node | default(1) }}
@@ -13,20 +14,29 @@
 set -euo pipefail
 
 echo "======================================="
-echo "{{ job_name }} (TensorWave CPU Job - sbatch)"
+echo "{{ job_name }} (CPU Job - sbatch)"
 echo "======================================="
 echo "Started: $(date)"
 echo ""
 
-cd /shared_silo/scratch/adamhrin@amd.com/dispatcher_autoif/examples/autoif
+cd {{ base_dir }}
 
 # ============================================================
-# Environment Setup
+# Python Environment Setup
 # ============================================================
-source /shared_silo/scratch/adamhrin@amd.com/dispatcher_autoif/examples/autoif/execution/environments/singularity_launcher.sh
+{% if cpu_python_modules is defined %}
+{% for mod in cpu_python_modules %}
+module load {{ mod }}
+{% endfor %}
+{% endif %}
+mkdir -p logs pythonuserbase
+export PYTHONUSERBASE="$(pwd)/pythonuserbase"
+export PATH="$PYTHONUSERBASE/bin:$PATH"
+export PYTHONPATH="$(pwd):${PYTHONPATH:-}"
+export HF_HOME="{{ hf_home }}"
+mkdir -p "$HF_HOME/hub"
 
-# Reset trap - CPU jobs do not have a server to kill
-trap - EXIT
+echo "Python: $(python3 --version) ($(which python3))"
 
 {% if exports is defined %}
 # ============================================================
@@ -41,7 +51,7 @@ export {{ key }}="{{ value }}"
 # Install requirements
 # ============================================================
 echo "Installing requirements..."
-run_sing_python -m pip install --user -r requirements.txt
+python3 -m pip install --user -r requirements.txt
 echo "Requirements installed."
 
 # ============================================================
@@ -50,7 +60,7 @@ echo "Requirements installed."
 echo "Running: python {{ script }}"
 echo ""
 
-run_sing_python {{ script }} \
+python3 {{ script }} \
 {%- for key, value in args.items() if value is not none %}
 {%- if value is sameas true %}
     --{{ key }}{% if not loop.last %} \{% endif %}
@@ -59,6 +69,7 @@ run_sing_python {{ script }} \
     --{{ key }} "{{ value }}"{% if not loop.last %} \{% endif %}
 {%- endif %}
 {%- endfor %}
+
 
 exit_code=$?
 if [ $exit_code -ne 0 ]; then

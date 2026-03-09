@@ -6,13 +6,16 @@ from src.utils.lang_id import detect_language
 
 
 def process_output(input_file: str, output_file: str, placeholder_lookup_file: str, 
-                   language: str = 'en', max_instructions: int = 100, seed_file: str = None) -> None:
+                   language: str = 'en', max_instructions: int = 100, seed_file: str = None,
+                   include_seeds: bool = False) -> None:
     """
     Process augmented instructions output:
     1. Parse JSON output from LLM
     2. De-duplicate instructions and filter by language
     3. Build placeholder lookup table from all static placeholders
-    4. Include seed instructions in the output
+    
+    Seed instructions are always used for deduplication and placeholder lookup.
+    They are only included in the final output if include_seeds is True.
     """
     
     seen_instructions = set()
@@ -23,19 +26,21 @@ def process_output(input_file: str, output_file: str, placeholder_lookup_file: s
     # Structure: {placeholder_name: {"type": "static", "values": set()}}
     placeholder_lookup = defaultdict(lambda: {"type": None, "values": set()})
     
-    # Load seed instructions if provided (they serve as both examples and actual data)
     if seed_file:
+        seed_count = 0
         try:
             with open(seed_file, 'r', encoding='utf-8') as f:
                 for line in f:
                     line = line.strip()
                     if line:
                         seed_instr = json.loads(line)
-                        all_instructions.append(seed_instr)
                         seen_instructions.add(seed_instr['instruction'])
-                        # Add placeholders to lookup
                         _update_placeholder_lookup(placeholder_lookup, seed_instr.get('placeholders', {}))
-            print(f"Loaded {len(all_instructions)} seed instructions from {seed_file}")
+                        if include_seeds:
+                            all_instructions.append(seed_instr)
+                        seed_count += 1
+            status = "included in output" if include_seeds else "excluded from output"
+            print(f"Loaded {seed_count} seed instructions from {seed_file} ({status})")
         except FileNotFoundError:
             print(f"Warning: Seed file {seed_file} not found")
         except json.JSONDecodeError as e:
@@ -206,14 +211,16 @@ def main():
                         help='Input file with model-generated instructions (JSONL)')
     parser.add_argument('--output-file', type=str, required=True,
                         help='Output file for filtered instructions (JSONL)')
-    parser.add_argument('--placeholder-lookup-file', type=str, required=True,
-                        help='Output JSON file for placeholder lookup table')
+    parser.add_argument('--placeholder-lookup-file', type=str, default='placeholder_lookup.json',
+                        help='Output JSON file for placeholder lookup table (default: placeholder_lookup.json)')
     parser.add_argument('--language', type=str, default='en',
                         help='Language code for filtering (e.g., "en" for English)')
     parser.add_argument('--max-instructions', type=int, default=100,
                         help='Maximum number of instructions to output')
     parser.add_argument('--seed-file', type=str, default=None,
-                        help='Seed instructions JSONL file to include in output')
+                        help='Seed instructions JSONL file (used for deduplication; included in output only with --include-seeds)')
+    parser.add_argument('--include-seeds', action='store_true', default=False,
+                        help='Include seed instructions in the final output (default: False)')
 
     args = parser.parse_args()
 
@@ -223,7 +230,8 @@ def main():
         placeholder_lookup_file=args.placeholder_lookup_file,
         language=args.language,
         max_instructions=args.max_instructions,
-        seed_file=args.seed_file
+        seed_file=args.seed_file,
+        include_seeds=args.include_seeds
     )
 
 

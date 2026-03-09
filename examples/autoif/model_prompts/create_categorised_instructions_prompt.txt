@@ -18,7 +18,21 @@ Your task is to augment the given list of seed instructions by generating new, d
 
 6.  **Creativity and Uniqueness:** Each instruction should introduce a new kind of verifiable rule, not minor variations.
 
-7. **Atomicity:** Each instruction should focus on a single, clear requirement.
+7. **Atomicity:** Each instruction must contain exactly ONE verifiable constraint. Do not combine multiple independent requirements into a single instruction. If an instruction has multiple sentences or conditions joined by "and", "also", "additionally", or
+   similar, it is NOT atomic — split it into separate instructions instead.
+
+     Bad (compound — multiple constraints bundled together):
+     - "The response must have {{N}} sections. Each section starts with {{section_marker}} and contains at least {{min_count}} words."
+     - "Write exactly {{N}} paragraphs, each ending with a question mark and containing the keyword {{keyword}}."
+     - "Use bullet points for your answer and keep each bullet under {{N}} words."
+
+     Good (atomic — one constraint each):
+     - "The response must have exactly {{N}} sections, each beginning with {{section_marker}}."
+     - "Every paragraph in the response must end with a question mark."
+     - "Each bullet point must contain fewer than {{N}} words."
+     - "The response must include the keyword {{keyword}} in every paragraph."
+
+     A useful test: if you need two different Python checks to verify the instruction, it is not atomic.
 
 {additional_context}
 

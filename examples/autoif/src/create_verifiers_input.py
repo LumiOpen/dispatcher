@@ -45,37 +45,6 @@ def load_user_queries(queries_file: str) -> list:
     return queries
 
 
-def extract_placeholders_from_instruction(instruction: str, placeholder_metadata: dict) -> list:
-    """Extract placeholder info from instruction text and metadata."""
-    placeholder_names = re.findall(r'\{(\w+)\}', instruction)
-    
-    placeholders = []
-    for name in placeholder_names:
-        if name in placeholder_metadata:
-            meta = placeholder_metadata[name]
-            ptype = meta.get('type', 'unknown')
-            
-            if ptype == 'static':
-                placeholders.append({'name': name, 'type': 'static (sampled from predefined values)'})
-            elif ptype == 'numeric':
-                min_val = meta.get('min', 1)
-                max_val = meta.get('max', 10)
-                placeholders.append({'name': name, 'type': f'numeric (integer between {min_val} and {max_val})'})
-            elif ptype == 'dynamic':
-                placeholders.append({'name': name, 'type': 'dynamic (generated based on context)'})
-            else:
-                placeholders.append({'name': name, 'type': 'unknown'})
-        else:
-            if name in ('N', 'M', 'min_count', 'max_count', 'percentage', 'min_length'):
-                placeholders.append({'name': name, 'type': 'numeric (integer)'})
-            elif name in ('keywords', 'forbidden_words', 'keyword', 'word', 'phrase', 'end_phrase', 'topic'):
-                placeholders.append({'name': name, 'type': 'dynamic (generated based on context)'})
-            else:
-                placeholders.append({'name': name, 'type': 'static or dynamic (check instruction context)'})
-    
-    return placeholders
-
-
 def create_verifier_input(instructions_file: str, queries_file: str, output_file: str, 
                           num_queries_per_instruction: int = 3) -> None:
     """Create input for verification function generation."""

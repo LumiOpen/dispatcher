@@ -45,6 +45,7 @@ workers: 4
 batch_size: 1
 
 base_dir: "/shared_silo/scratch/adamhrin@amd.com/dispatcher/examples/autoif"
+dispatcher_package: "/shared_silo/scratch/adamhrin@amd.com/dispatcher"
 
 # ==============================================================================
 # Jobs Configuration
