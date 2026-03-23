@@ -1,10 +1,10 @@
-"""Example task – two responses + judge"""
+"""Example tasks – two responses + judge, and validated response with retry"""
 from typing import Any, Dict, Generator, List, Union
 
 from dispatcher.taskmanager.backend.request import Request, Response
-from dispatcher.taskmanager.task import GeneratorTask, TaskFailed
+from dispatcher.taskmanager.task import GeneratorTask, TaskFailed, TaskRetry
 
-__all__ = ["CompareTwoResponsesTask"]
+__all__ = ["CompareTwoResponsesTask", "ValidatedResponseTask"]
 
 
 class CompareTwoResponsesTask(GeneratorTask):
@@ -90,4 +90,49 @@ class CompareTwoResponsesTask(GeneratorTask):
             "preferred_text": pref_resp.get_text(),
             "dispreferred_text": dis_resp.get_text(),
             "judge_model": judge_model,
+        }
+
+
+class ValidatedResponseTask(GeneratorTask):
+    """Generate a response and validate it against post-checks.
+
+    Demonstrates using TaskRetry to handle cases where an LLM response does
+    not pass user-defined validation. Instead of implementing sequential retry
+    attempts inside task_generator (which would consume the work timeout of a
+    single work item for multiple inference calls), raising TaskRetry releases
+    the work item back to the dispatcher server for immediate re-issue.
+
+    This keeps each attempt independent so that the per-item work timeout
+    covers only a single inference call, and the server's built-in retry
+    tracking (max_retries) decides when to give up and tombstone the item.
+    """
+
+    GEN_PARAMS: Dict[str, Any] = {
+        "temperature": 0.7,
+        "top_p": 0.95,
+        "max_tokens": 4096,
+    }
+
+    # --------------- generator ---------------
+    def task_generator(self) -> Generator[Union[Request, List[Request]], Any, Dict[str, Any]]:
+        messages = self.data.get("messages")
+
+        # Step 1 - generate a response
+        resp: Response = yield Request({"messages": messages, **self.GEN_PARAMS})
+        text = resp.get_text()
+
+        # Step 2 - run post-checks on the response
+        # If validation fails, raise TaskRetry so the dispatcher server
+        # re-issues this work item to a worker for another attempt.
+        if not text or not text.strip():
+            raise TaskRetry(message="Empty response from model")
+
+        # Example: check that the response contains a required marker
+        if "ANSWER:" not in text:
+            raise TaskRetry(message="Response missing required ANSWER: marker")
+
+        # Step 3 - validation passed, return the result
+        return {
+            "messages": messages,
+            "response": text.strip(),
         }
