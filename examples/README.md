@@ -234,9 +234,11 @@ if "ANSWER:" not in text:
 The dispatcher server tracks how many times each item has been reissued and
 will tombstone items that exceed `max_retries` (see
 [Tombstone Entries](#understanding-tombstone-entries-in-output)), so there is
-no risk of infinite retry loops. Because each attempt is independent, the
-re-issued item can also be picked up by any available worker, distributing
-retry load across the cluster.
+no risk of infinite retry loops. Note that `TaskRetry` shares the same retry
+budget as timeout-based retries — both count toward the server's
+`max_retries` limit for a given work item. Because each attempt is
+independent, the re-issued item can also be picked up by any available
+worker, distributing retry load across the cluster.
 
 See `example_task.py` (`ValidatedResponseTask`) for a complete working example.
 
