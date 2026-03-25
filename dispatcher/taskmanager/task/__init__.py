@@ -1,3 +1,3 @@
-from .base import Task, GeneratorTask, TaskFailed
+from .base import Task, GeneratorTask, TaskFailed, TaskRetry
 
-__all__ = ['Task', 'GeneratorTask', 'TaskFailed']
+__all__ = ['Task', 'GeneratorTask', 'TaskFailed', 'TaskRetry']

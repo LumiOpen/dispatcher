@@ -87,13 +87,22 @@ class FileTaskSource(TaskSource):
     def save_task_result(self, task: Task) -> None:
         """Write task result to the output file."""
         try:
+            if task.should_retry():
+                result, context = task.get_result()
+                line_number = context.get("line_number", "unknown")
+                self.logger.warning(
+                    f"Task from line {line_number} requested retry, but FileTaskSource "
+                    f"does not support retries. Skipping. Reason: {task.retry_reason}"
+                )
+                return
+
             # Get result and context from the task
             result, context = task.get_result()
-            
+
             # Write to output file
             self.output_file.write(json.dumps(result, ensure_ascii=False) + "\n")
             self.output_file.flush()
-            
+
             line_number = context.get("line_number", "unknown")
             self.logger.debug(f"Saved result for line {line_number} to output file")
             

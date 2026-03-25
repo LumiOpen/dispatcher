@@ -199,6 +199,49 @@ This will produce the following clean, standardized error in your `output.jsonl`
 ```
 
 
+
+## Re-attempting LLM Requests on Failed Post-Checks
+
+In many workflows, an LLM response must pass user-defined validation before it
+can be accepted -- for example, checking that the output contains required
+structural markers, conforms to a specific format, or meets quality
+constraints. When a response fails these checks, the task needs another
+attempt.
+
+Rather than looping inside `task_generator` to retry (which consumes the work
+item's timeout budget on multiple inference calls within a single attempt),
+the preferred approach is to raise the `TaskRetry` exception. This immediately
+releases the work item back to the dispatcher server, which re-issues it so
+that a fresh attempt gets its own full timeout window.
+
+**Example:**
+
+Suppose a task requires the model to include a specific marker in its response.
+
+```python
+# In your task's task_generator method:
+from dispatcher.taskmanager.task import TaskRetry
+
+# ... get a response from a model ...
+text = resp.get_text()
+
+if "ANSWER:" not in text:
+    # The response did not pass our post-check.
+    # Release it back for a new attempt.
+    raise TaskRetry(message="Response missing required ANSWER: marker")
+```
+
+The dispatcher server tracks how many times each item has been reissued and
+will tombstone items that exceed `max_retries` (see
+[Tombstone Entries](#understanding-tombstone-entries-in-output)), so there is
+no risk of infinite retry loops. Note that `TaskRetry` shares the same retry
+budget as timeout-based retries — both count toward the server's
+`max_retries` limit for a given work item. Because each attempt is
+independent, the re-issued item can also be picked up by any available
+worker, distributing retry load across the cluster.
+
+See `example_task.py` (`ValidatedResponseTask`) for a complete working example.
+
 # Troubleshooting
 
 Some common failure modes and how to resolve them.

@@ -15,7 +15,7 @@ from ..backend.request import Request, Response
 class TaskFailed(Exception):
     """
     Exception to be raised by a task to signal a controlled failure.
-    
+
     This allows a task to terminate itself gracefully and provide a structured
     error payload that will be recorded as its final result.
     """
@@ -23,6 +23,21 @@ class TaskFailed(Exception):
         self.message = message
         self.error_type = error_type
         super().__init__(f"[{self.error_type}] {self.message}")
+
+
+class TaskRetry(Exception):
+    """Exception to signal that the work item should be retried.
+
+    Retry behavior depends on the task source:
+
+    * **DispatcherTaskSource** releases the work item back to the server,
+      which will reissue it (subject to the server's max_retries setting).
+    * **FileTaskSource** does not support retries — the item is skipped
+      and a warning is logged.
+    """
+    def __init__(self, message: str = ""):
+        self.message = message
+        super().__init__(f"TaskRetry: {self.message}" if self.message else "TaskRetry")
 
 
 ###############################################################################
@@ -54,6 +69,14 @@ class Task(ABC):
     def get_result(self) -> Tuple[Dict[str, Any], Any]:
         """Return (result, original_context)."""
 
+    def should_retry(self) -> bool:
+        return False
+
+    @property
+    def retry_reason(self) -> str:
+        """Human-readable reason for the retry, or empty string if none."""
+        return ""
+
 ###############################################################################
 # Generator‑powered task helper
 ###############################################################################
@@ -78,6 +101,8 @@ class GeneratorTask(Task):
         self._awaiting_responses: int = 0            # outstanding count
         self._collected: List[Response] = []         # responses for current yield
         self._result: Optional[Dict[str, Any]] = None
+        self._retry_requested: bool = False
+        self._retry_message: str = ""
 
         # Start the generator and get the first yielded request.
         self._gen = self.task_generator()
@@ -101,6 +126,8 @@ class GeneratorTask(Task):
                     "task_data": self.data
                 }
             }
+        except TaskRetry as e:
+            self._set_retry(e)
 
 
     # ------------------------------------------------------------------
@@ -128,6 +155,13 @@ class GeneratorTask(Task):
         """Generator has returned its final result."""
         return self._result is not None
 
+    def should_retry(self) -> bool:
+        return self._retry_requested
+
+    @property
+    def retry_reason(self) -> str:
+        return self._retry_message
+
     def get_result(self) -> Tuple[Dict[str, Any], Any]:
         if self._result is None:
             raise RuntimeError("Task finished without returning a result dictionary")
@@ -136,6 +170,16 @@ class GeneratorTask(Task):
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    def _set_retry(self, exc: TaskRetry) -> None:
+        self._retry_requested = True
+        self._retry_message = exc.message
+        self._result = {
+            "__RETRY__": {
+                "message": exc.message,
+                "task_data": self.data
+            }
+        }
 
     def _enqueue(self, yielded: Union[Request, List[Request], None]):
         if yielded is None:
@@ -175,3 +219,5 @@ class GeneratorTask(Task):
                     "task_data": self.data
                 }
             }
+        except TaskRetry as e:
+            self._set_retry(e)
