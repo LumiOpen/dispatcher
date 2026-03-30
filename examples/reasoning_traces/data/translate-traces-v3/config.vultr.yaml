@@ -1,0 +1,59 @@
+# AutoIF Pipeline Configuration
+#
+# This is the main task configuration for the AutoIF pipeline.
+# SLURM-specific settings are in slurm.yaml
+
+# ==============================================================================
+# Experiment Metadata
+# ==============================================================================
+experiment:
+  name: "translate-traces-v3"
+  description: "Translate reasoning traces with DeepSeek-V3"
+
+# ==============================================================================
+# Optional: vLLM Server Configuration
+# ==============================================================================
+# If present: pipeline runs in interactive mode, connects to this server
+# If absent: pipeline submits jobs to SLURM
+# Uncomment to use interactive mode:
+vllm_server:
+  host: "127.0.0.1"
+  port: 8000
+
+# ==============================================================================
+# Environment Setup
+# ==============================================================================
+# Path to environment setup script (user-editable)
+environment_setup: "execution/environments/vultr.sh"
+
+# ==============================================================================
+# Pipeline Sequence
+# ==============================================================================
+# Set to false to disable a job, or remove it from the list to skip entirely
+pipeline:
+  - traces_translation: true
+
+# ==============================================================================
+# Global Configuration (can be overridden at job level)
+# ==============================================================================
+# Model parameters
+model: "/vfs_mount/models/DeepSeek-V3"
+max_model_len: 65536
+tensor_parallel: 8
+work_timeout: 7200
+request_timeout: 3600
+
+# ==============================================================================
+# Jobs Configuration
+# ==============================================================================
+jobs:
+  # --------------------------------------------------------------------------
+  # Translation: Translate reasoning traces with DeepSeek-V3
+  # --------------------------------------------------------------------------
+  traces_translation:
+    type: dispatcher_task
+    task: tasks.traces_translation_task.TracesTranslationTask
+    input_file: "/workspace/adamhrin/dispatcher/examples/reasoning_traces/data/default-train-sample-100_reasoning_answers_DeepSeek-R1_en.jsonl"
+    output_file: "/workspace/adamhrin/dispatcher/examples/reasoning_traces/data/default-train-sample-100_reasoning_answers_DeepSeek-R1_en_translated_traces_DeepSeek-V3_fi.jsonl"
+    exports:
+      LANGUAGE: "fi"
