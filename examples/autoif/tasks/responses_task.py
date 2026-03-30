@@ -1,324 +1,470 @@
-"""Example task – two responses + judge"""
+"""Generate scored multi-turn responses for the AutoIF pipeline.
+
+Reads the new ``queries_constraints_verifiers.jsonl`` format produced by
+``concat_queries.py``, resolves placeholders, generates responses,
+verifies them with eval_funcs, and scores for relevance.
+"""
+
 from typing import Any, Dict, Generator, List, Union
 import re
 import os
+import json
 import hashlib
 import logging
+
+import numpy as np
 
 from dispatcher.taskmanager.backend.request import Request, Response
 from dispatcher.taskmanager.task.base import GeneratorTask, TaskFailed
 
+from src.placeholder_resolver import (
+    StaticPlaceholderResolver,
+    LLMPlaceholderResolver,
+    format_value,
+)
+from src.utils.function_executor import FunctionExecutor
+from src.utils.lang_id import get_env_language_name, detect_language
+from src.utils.text_utils import format_constraints_with_conjunctions
+from src.utils.error_utils import format_error_type_with_turn
+
 logger = logging.getLogger(__name__)
 
-from src.utils.text_utils import format_instructions_with_conjunctions
-from src.utils.lang_id import LANG_MAP
-from src.keyword_handler import KeywordHandler
-from src.scoring_handler import ScoringHandler
-from src.verification_handler import VerificationHandler
+__all__ = ["GenerateResponsesTask"]
 
-__all__ = ["GenerateQueryResponsesTask"]
+# Score extraction patterns (ordered by specificity)
+_SCORE_PATTERNS = [
+    r'\*\*Score:\s*(\d+)\*\*\s*$',
+    r'`Score:\s*(\d+)`\s*$',
+    r'\(Score\s*:?\s*(\d+)\)\s*$',
+    r'Score:\s*(\d+)\s*$',
+    r'Score\s*:?\s*(\d+)\s*$',
+]
 
-def is_no_followup_case(queries: List[str]) -> bool:
-    """Check if this is a no_followup case (queries after first are empty)."""
-    if len(queries) <= 1:
-        return False
-    # Check if all queries after the first one are empty
-    return all(query.strip() == "" for query in queries[1:])
 
-class GenerateQueryResponsesTask(GeneratorTask):
-    """Generate query responses with verifiers"""
+class GenerateResponsesTask(GeneratorTask):
+    """Generate responses from the new constraints/turns input format."""
 
-    # Fixed generation hyper‑parameters for candidate answers
     GEN_PARAMS: Dict[str, Any] = {
         "temperature": 0.7,
         "top_p": 0.95,
         "max_tokens": 8192,
     }
 
-    @staticmethod
-    def _get_language_name() -> str:
-        """Get the full language name from LANGUAGE env variable."""
-        lang_code = os.environ.get('LANGUAGE', 'en').lower().strip()
-        return LANG_MAP.get(lang_code, 'English')
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
 
     @staticmethod
-    def _generate_task_id(instruction_ids: List[List[str]]) -> str:
-        """Generate a unique task ID as a hash of the instruction_ids list."""
-        # Flatten and sort instruction_ids for consistent hashing
+    def _generate_task_id(constraint_ids_per_turn: List[List[str]]) -> str:
         flat_ids = []
-        for turn_ids in instruction_ids:
+        for turn_ids in constraint_ids_per_turn:
             flat_ids.extend(sorted(turn_ids))
-        ids_str = "|".join(flat_ids)
-        return hashlib.sha256(ids_str.encode()).hexdigest()[:16]
+        return hashlib.sha256("|".join(flat_ids).encode()).hexdigest()[:16]
 
-    # --------------- generator ---------------
-    def task_generator(self) -> Generator[Union[Request, List[Request]], Any, Dict[str, Any]]:
-        # self.data is prepopulated with the data from the jsonl row being
-        # processed
-        # these are queries with verifiers of format
-        # {
-        #     'instruction_ids': [[instruction_ids_turn1], [instruction_ids_turn2], ...],
-        #     'instructions': [[instructions_turn1], [instructions_turn2], ...],
-        #     'instruction_categories': [[categories_turn1], [categories_turn2], ...],
-        #     'queries': [query1, query2, ...],
-        #     'queries_responses': [response1, response2, ...],
-        #     'query_metadata': query_metadata,
-        #     'eval_funcs': [["def evaluate():...",], ["def evaluate():...",], ...],
-        # }
-        # Get data fields
-        queries = self.data.get("queries", [])
-        queries_responses = self.data.get("queries_responses", [])
-        instruction_ids = self.data.get("instruction_ids", [])
-        instructions = self.data.get("instructions", [])
-        instruction_categories = self.data.get("instruction_categories", [])
-        eval_funcs = self.data.get("eval_funcs", [])
-        
-        # Generate unique task ID from instruction_ids for logging
-        task_id = self._generate_task_id(instruction_ids)
-        
-        num_turns = len(queries)
-        queries_messages = []
-        all_responses = []
-        all_scores = []
-        all_scoring_responses = []
-        final_messages = []
-        final_instructions = []
-        final_prompts = []
-        
-        # Determine if this is a no_followup case
-        # meaning next turns after the first one will ask to rephrase the previous response 
-        # instead of following up with another user question
-        is_no_followup = is_no_followup_case(queries)
-        
-        # Process each turn
-        MAX_RETRIES = 5
-        for turn_idx in range(num_turns):
-            # Save state before attempting turn (for rollback on retry)
-            saved_state = {
-                'final_prompts_len': len(final_prompts),
-                'queries_messages_len': len(queries_messages),
-                'all_responses_len': len(all_responses),
-                'all_scores_len': len(all_scores),
-                'all_scoring_responses_len': len(all_scoring_responses),
-                'final_instructions_len': len(final_instructions),
-                'final_messages_len': len(final_messages),
-            }
-            
-            turn_succeeded = False
-            for retry_attempt in range(MAX_RETRIES):
+    # ------------------------------------------------------------------
+    # Verification helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _check_error(response: str, turn: int) -> None:
+        """Raise TaskFailed if the response contains an error JSON."""
+
+        def _extract_json(text: str):
+            m = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL | re.IGNORECASE)
+            if m:
                 try:
-                    # Restore state on retry (rollback any partial changes from failed attempt)
-                    if retry_attempt > 0:
-                        final_prompts[:] = final_prompts[:saved_state['final_prompts_len']]
-                        queries_messages[:] = queries_messages[:saved_state['queries_messages_len']]
-                        all_responses[:] = all_responses[:saved_state['all_responses_len']]
-                        all_scores[:] = all_scores[:saved_state['all_scores_len']]
-                        all_scoring_responses[:] = all_scoring_responses[:saved_state['all_scoring_responses_len']]
-                        final_instructions[:] = final_instructions[:saved_state['final_instructions_len']]
-                        final_messages[:] = final_messages[:saved_state['final_messages_len']]
-                    
-                    # Get raw query for this turn
-                    raw_query = queries[turn_idx] if turn_idx < len(queries) else ""
-                    
-                    # Step 0a - Format the query with LLM (if there's a query)
-                    if raw_query.strip():
+                    return json.loads(m.group(1))
+                except json.JSONDecodeError:
+                    pass
+            for m in re.finditer(r"\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}", text, re.DOTALL):
+                try:
+                    parsed = json.loads(m.group())
+                    if isinstance(parsed, dict):
+                        return parsed
+                except json.JSONDecodeError:
+                    continue
+            try:
+                parsed = json.loads(text.strip())
+                if isinstance(parsed, dict):
+                    return parsed
+            except json.JSONDecodeError:
+                pass
+            return None
+
+        data = _extract_json(response)
+        if data and "error" in data:
+            err = data["error"]
+            if err == "contradicting_constraints":
+                raise TaskFailed(
+                    message=f"Expected error 'contradicting_constraints' found in response: {response}",
+                    error_type=format_error_type_with_turn("contradicting_constraints", turn),
+                )
+            raise TaskFailed(
+                message=f"Error found in response: {err}",
+                error_type=format_error_type_with_turn("error_in_response", turn),
+            )
+
+    @staticmethod
+    def _check_language(response: str, turn: int) -> None:
+        """Raise TaskFailed if the response is not in the target language."""
+        target = os.environ.get("LANGUAGE")
+        if not target:
+            return
+        try:
+            code3, code2 = detect_language(response)
+        except Exception as e:
+            raise TaskFailed(
+                message=f"Language detection error: {e} <response>{response}</response>",
+                error_type=format_error_type_with_turn("language_detection", turn),
+            )
+        valid = {code3, code2} if code2 is not None else {code3}
+        if target not in valid:
+            raise TaskFailed(
+                message=f"Response not in expected language {target}, got {valid} <response>{response}</response>",
+                error_type=format_error_type_with_turn("invalid_language", turn),
+            )
+
+    @staticmethod
+    def _run_eval_funcs(
+        response: str,
+        constraint_ids: List[str],
+        eval_funcs_by_id: Dict[str, List[str]],
+        resolved_values: Dict[str, Dict[str, Any]],
+        turn: int,
+    ) -> None:
+        """Run evaluation functions for each constraint; raise on failure."""
+        executor = FunctionExecutor()
+        failed = []
+
+        for cid in constraint_ids:
+            funcs = eval_funcs_by_id.get(cid, [])
+            if not funcs:
+                raise TaskFailed(
+                    message=f"No evaluation functions for constraint {cid}",
+                    error_type=format_error_type_with_turn("no_eval_functions_for_constraint", turn),
+                )
+            kwargs = resolved_values.get(cid, {})
+            results = []
+            for func in funcs:
+                try:
+                    r = executor.execute_with_response(func, response, **kwargs)
+                    if r is not None:
+                        results.append(r)
+                except Exception as e:
+                    raise TaskFailed(
+                        message=f"Error executing eval func for constraint {cid}: {e} <response>{response}</response>",
+                        error_type=format_error_type_with_turn("function_execution_failed", turn),
+                    )
+            acc = float(np.mean(results)) if results else 0.0
+            if acc <= 0:
+                failed.append((cid, acc))
+
+        if failed:
+            if len(failed) == 1:
+                cid, acc = failed[0]
+                raise TaskFailed(
+                    message=f"Verification failed for constraint {cid} (acc={acc}) <response>{response}</response>",
+                    error_type=format_error_type_with_turn("constraint_verification_failed", turn),
+                )
+            ids_str = ", ".join(str(c) for c, _ in failed)
+            raise TaskFailed(
+                message=f"Verification failed for constraints {ids_str} <response>{response}</response>",
+                error_type=format_error_type_with_turn("multiple_constraints_verification_failed", turn),
+            )
+
+    # ------------------------------------------------------------------
+    # Scoring helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _build_scoring_messages(
+        turn_idx: int,
+        is_rephrase: bool,
+        turn_constraints: List[str],
+        query: str,
+        response_text: str,
+        first_response: str,
+    ) -> List[Dict[str, str]]:
+        """Build messages for the scoring LLM call."""
+        if is_rephrase:
+            with open("model_prompts/scoring_rephrase_prompt.txt", "r") as f:
+                tmpl = f.read().strip()
+            prompt = tmpl.format(
+                query=query,
+                previous_turn_response=first_response,
+                current_response=response_text,
+                constraints=format_constraints_with_conjunctions(turn_constraints),
+            )
+        else:
+            with open("model_prompts/scoring_prompt.txt", "r") as f:
+                tmpl = f.read().strip()
+            prompt = tmpl.format(
+                constraints=turn_constraints,
+                query=query,
+                response=response_text,
+            )
+        return [{"role": "user", "content": prompt}]
+
+    @staticmethod
+    def _extract_and_check_score(scoring_text: str, turn_idx: int) -> int:
+        """Extract score from scoring text; raise if below threshold."""
+        threshold = int(os.environ.get("SCORE_THRESHOLD", "4"))
+
+        for pattern in _SCORE_PATTERNS:
+            match = re.search(pattern, scoring_text, re.IGNORECASE)
+            if match:
+                try:
+                    score = int(match.group(1))
+                    if score < threshold:
+                        raise TaskFailed(
+                            message=f"Score {score} at turn {turn_idx + 1} is below threshold {threshold}. Scoring response: <response>{scoring_text}</response>",
+                            error_type=format_error_type_with_turn("score_below_threshold", turn_idx),
+                        )
+                    return score
+                except (ValueError, IndexError):
+                    continue
+
+        raise TaskFailed(
+            message=f"Score not found in the scoring response: {scoring_text}",
+            error_type=format_error_type_with_turn("score_extraction_failed", turn_idx),
+        )
+
+    # ------------------------------------------------------------------
+    # Main generator
+    # ------------------------------------------------------------------
+
+    def task_generator(self) -> Generator[Union[Request, List[Request]], Any, Dict[str, Any]]:
+        # ---- Step 1: Parse input ----
+        query = self.data["messages"][0]["content"]
+        constraints = self.data["constraints"]          # Dict[str, constraint_info]
+        turns = self.data["turns"]                      # List[{constraint_ids: [...]}]
+        query_metadata = self.data.get("query_metadata", {})
+
+        # Collect constraint_ids per turn for task ID
+        constraint_ids_per_turn = [t["constraint_ids"] for t in turns]
+        task_id = self._generate_task_id(constraint_ids_per_turn)
+        num_turns = len(turns)
+
+        # Build eval_funcs lookup: constraint_id -> list of func strings
+        eval_funcs_by_id: Dict[str, List[str]] = {}
+        for cid, cinfo in constraints.items():
+            eval_funcs_by_id[cid] = cinfo.get("eval_funcs", [])
+
+        # ---- Step 2: Resolve all placeholders (once, before turn loop) ----
+        placeholder_lookup_file = os.environ.get("PLACEHOLDER_LOOKUP_FILE", "")
+        placeholder_lookup: Dict[str, Any] = {}
+        if placeholder_lookup_file:
+            try:
+                with open(placeholder_lookup_file, "r") as f:
+                    placeholder_lookup = json.load(f)
+            except (FileNotFoundError, json.JSONDecodeError):
+                logger.warning(f"[{task_id}] Could not load placeholder lookup from {placeholder_lookup_file}")
+
+        static_resolver = StaticPlaceholderResolver(placeholder_lookup)
+        llm_resolver = LLMPlaceholderResolver()
+
+        # Phase A: resolve static placeholders immediately
+        resolved_values: Dict[str, Dict[str, Any]] = {}  # cid -> {name: value}
+        for cid, cinfo in constraints.items():
+            placeholders = cinfo.get("placeholders", {})
+            if not placeholders:
+                continue
+            vals = static_resolver.resolve(placeholders)
+            if vals:
+                resolved_values.setdefault(cid, {}).update(vals)
+
+        # Phase B: build one LLM request per constraint for remaining placeholders
+        pending_requests: List[Request] = []
+        for cid, cinfo in constraints.items():
+            placeholders = cinfo.get("placeholders", {})
+            if not placeholders:
+                continue
+            req = llm_resolver.build_request(cid, cinfo["constraint"], placeholders, query, self.GEN_PARAMS)
+            if req is not None:
+                pending_requests.append(req)
+
+        # Phase C: yield batch and collect responses
+        if pending_requests:
+            responses: Union[Response, List[Response]] = yield pending_requests
+            if isinstance(responses, Response):
+                responses = [responses]
+
+            # Phase D: parse responses into resolved_values
+            for req, resp in zip(pending_requests, responses):
+                cid = req.context["constraint_id"]
+                try:
+                    vals = llm_resolver.parse_response(resp.get_text())
+                except Exception as e:
+                    raise TaskFailed(
+                        message=f"Failed to parse placeholder response for constraint {cid}: {e}. Response: {resp.get_text()}",
+                        error_type="placeholder_resolution_failed",
+                    )
+                resolved_values.setdefault(cid, {}).update(vals)
+
+        # ---- Step 3: Build resolved constraint texts ----
+        resolved_constraints: Dict[str, str] = {}
+        for cid, cinfo in constraints.items():
+            text = cinfo["constraint"]
+            for pname, pval in resolved_values.get(cid, {}).items():
+                text = text.replace(f"{{{pname}}}", format_value(pval))
+            resolved_constraints[cid] = text
+
+        self.logger.info(f"[TASK:{task_id}] Resolved constraints: {resolved_constraints}")
+
+        # ---- Step 4: Per-turn generation loop ----
+        MAX_RETRIES = int(os.environ.get("MAX_RETRIES", "5"))
+        language = get_env_language_name()
+        is_no_followup = True  # always true – single query, multiple rephrase turns
+
+        queries_messages: List[Dict[str, str]] = []
+        output_turns: List[Dict[str, Any]] = []
+        all_responses: List[str] = []
+        final_messages: List[Dict[str, str]] = []
+        formatted_query: str = ""
+
+        for turn_idx in range(num_turns):
+            # Save state for rollback on retry
+            saved = {
+                "queries_messages": len(queries_messages),
+                "all_responses": len(all_responses),
+                "output_turns": len(output_turns),
+                "final_messages": len(final_messages),
+            }
+
+            turn_succeeded = False
+            last_exception = None
+
+            for retry in range(MAX_RETRIES):
+                try:
+                    # Rollback on retry
+                    if retry > 0:
+                        queries_messages[:] = queries_messages[:saved["queries_messages"]]
+                        all_responses[:] = all_responses[:saved["all_responses"]]
+                        output_turns[:] = output_turns[:saved["output_turns"]]
+                        final_messages[:] = final_messages[:saved["final_messages"]]
+
+                    # a. Get this turn's constraint_ids and resolved texts
+                    turn_cids = turns[turn_idx]["constraint_ids"]
+                    turn_constraint_texts = [resolved_constraints[cid] for cid in turn_cids]
+
+                    # b. Format constraints as bullet-point list
+                    constraints_bullet_list = "\n".join(f"- {t}" for t in turn_constraint_texts)
+
+                    # b2. Format query (turn 0 only)
+                    if turn_idx == 0:
                         with open("model_prompts/format_query_prompt.txt", "r") as f:
-                            format_query_prompt = f.read().strip()
-                        format_query_prompt = format_query_prompt.format(query=raw_query)
-                        logger.info(f"[{task_id}] Turn {turn_idx} format query prompt: {format_query_prompt}")
-                        
-                        format_query_messages = [{"role": "user", "content": format_query_prompt}]
-                        format_query_resp: Response = yield Request({"messages": format_query_messages, **self.GEN_PARAMS})
-                        formatted_query = format_query_resp.get_text().strip()
-                        logger.info(f"[{task_id}] Turn {turn_idx} formatted query: {formatted_query}")
-                    else:
-                        formatted_query = ""
-                    
-                    # Step 0b - Create per-turn keyword handler and generate keywords if needed
-                    # Keywords are generated BEFORE building the prompt, so instructions already
-                    # have keywords applied when we construct the prompt (no regex substitution needed)
-                    keyword_handler = KeywordHandler(
-                        turn_idx=turn_idx,
-                        instruction_categories=instruction_categories[turn_idx] if turn_idx < len(instruction_categories) else [],
-                        instructions=instructions[turn_idx] if turn_idx < len(instructions) else [],
-                        instruction_ids=instruction_ids[turn_idx] if turn_idx < len(instruction_ids) else [],
-                        query=queries[0] if is_no_followup else queries[turn_idx] if turn_idx < len(queries) else ""  # for no-followup case we want to potentially generate keywords for all turns that are related only to the first (and only) query
-                    )
+                            fmt_prompt = f.read().strip()
+                        fmt_prompt = fmt_prompt.format(query=query, language=language)
+                        logger.info(f"[TASK:{task_id},RETRY:{retry}] Turn 0 format query prompt: {fmt_prompt}")
 
-                    # Process keyword generation for this turn if needed
-                    if keyword_handler.has_keyword_instructions():
-                        yield from keyword_handler.process_keyword_generation(self.GEN_PARAMS)
-                    
-                    # Get final instructions with keyword replacements already applied
-                    turn_final_instructions = keyword_handler.get_final_instructions()
-                    
-                    # Format instructions as bullet-point list with "-" prefix
-                    instructions_bullet_list = "\n".join([f"- {instr}" for instr in turn_final_instructions])
-                    
-                    # Get full language name from env variable
-                    language = self._get_language_name()
-                    
-                    # Step 0c - Build prompt from scratch using appropriate template
-                    # Instructions already have keywords applied, so no post-processing needed
+                        fmt_resp: Response = yield Request({"messages": [{"role": "user", "content": fmt_prompt}], **self.GEN_PARAMS})
+                        formatted_query = fmt_resp.get_text().strip()
+                        logger.info(f"[TASK:{task_id},RETRY:{retry}] Turn 0 formatted query: {formatted_query}")
+
+                    # c. Build prompt
                     if num_turns == 1:
-                        # Single turn uses the original template
                         template_file = "model_prompts/generate_response_prompt.txt"
-                        with open(template_file, "r") as f:
-                            prompt_template = f.read().strip()
-                        current_prompt = prompt_template.format(
-                            query=formatted_query,
-                            instructions=instructions_bullet_list,
-                            language=language
-                        )
                     elif turn_idx == 0:
-                        # First turn of multi-turn conversation
                         template_file = "model_prompts/generate_response_turn1_prompt.txt"
-                        with open(template_file, "r") as f:
-                            prompt_template = f.read().strip()
-                        current_prompt = prompt_template.format(
+                    else:
+                        template_file = "model_prompts/rephrase_response_turnN_prompt.txt"
+
+                    with open(template_file, "r") as f:
+                        tmpl = f.read().strip()
+
+                    if turn_idx == 0 or num_turns == 1:
+                        current_prompt = tmpl.format(
                             query=formatted_query,
-                            instructions=instructions_bullet_list,
-                            language=language
+                            constraints=constraints_bullet_list,
+                            language=language,
                         )
                     else:
-                        # Subsequent turns of multi-turn conversation
-                        if is_no_followup:
-                            # Use rephrase prompt (no query needed)
-                            template_file = "model_prompts/rephrase_response_turnN_prompt.txt"
-                            with open(template_file, "r") as f:
-                                prompt_template = f.read().strip()
-                            current_prompt = prompt_template.format(
-                                instructions=instructions_bullet_list,
-                                language=language
-                            )
-                        else:
-                            # Use regular turnN prompt with query
-                            template_file = "model_prompts/generate_response_turnN_prompt.txt"
-                            with open(template_file, "r") as f:
-                                prompt_template = f.read().strip()
-                            current_prompt = prompt_template.format(
-                                query=formatted_query,
-                                instructions=instructions_bullet_list,
-                                language=language
-                            )
-                    
-                    logger.info(f"[{task_id}] Turn {turn_idx} prompt: {current_prompt}")
-                    
-                    # Store the final prompt
-                    final_prompts.append(current_prompt)
-                    
-                    # Add user message for this turn
-                    queries_messages.append({
-                        "role": "user",
-                        "content": current_prompt
-                    })
-                    
-                    # Step 1 – get response for the current turn
-                    queries_resp: Response = yield Request({"messages": queries_messages, **self.GEN_PARAMS})
-                    response_text = queries_resp.get_text()
+                        current_prompt = tmpl.format(
+                            constraints=constraints_bullet_list,
+                            language=language,
+                        )
+
+                    logger.info(f"[TASK:{task_id},RETRY:{retry}] Turn {turn_idx} prompt: {current_prompt}")
+
+                    queries_messages.append({"role": "user", "content": current_prompt})
+
+                    # d. Generate response
+                    gen_resp: Response = yield Request({"messages": queries_messages, **self.GEN_PARAMS})
+                    response_text = gen_resp.get_text()
                     all_responses.append(response_text)
-                    
-                    # Step 2 - verify response
-                    verification_handler = VerificationHandler(
-                        turn_idx=turn_idx,
-                        instruction_ids=instruction_ids,
-                        instructions=instructions,
-                        eval_funcs=eval_funcs,
-                        instruction_categories=instruction_categories,
-                        keyword_handler=keyword_handler
-                    )
-                    verification_handler.verify_response(response_text)
 
-                    # Step 3 - score the response for this turn
-                    scoring_handler = ScoringHandler(
-                        turn_idx=turn_idx,
-                        is_no_followup=is_no_followup,
-                        instruction_ids=instruction_ids,
-                        instructions=instructions,
-                        queries=queries,
-                        all_responses=all_responses
-                    )
+                    # e. Verify response
+                    self._check_error(response_text, turn_idx)
+                    self._check_language(response_text, turn_idx)
+                    self._run_eval_funcs(response_text, turn_cids, eval_funcs_by_id, resolved_values, turn_idx)
 
-                    scoring_messages = scoring_handler.construct_scoring_messages(response_text)
+                    # f. Score relevance
+                    is_rephrase = is_no_followup and turn_idx > 0
+                    scoring_messages = self._build_scoring_messages(
+                        turn_idx, is_rephrase, turn_constraint_texts,
+                        query, response_text, all_responses[0] if all_responses else "",
+                    )
                     scored_resp: Response = yield Request({"messages": scoring_messages, **self.GEN_PARAMS})
                     scoring_text = scored_resp.get_text()
+                    score = self._extract_and_check_score(scoring_text, turn_idx)
 
-                    # Extract score and check threshold
-                    score = scoring_handler.extract_and_check_score(scoring_text)
+                    # Add assistant message for conversation continuity
+                    queries_messages.append({"role": "assistant", "content": response_text})
 
-                    all_scores.append(score)
-                    all_scoring_responses.append(scoring_text)
-                    
-                    # Add assistant response to conversation for next turn
-                    queries_messages.append({
-                        "role": "assistant",
-                        "content": response_text
+                    # g. Store per-turn output
+                    output_turns.append({
+                        "constraint_ids": turn_cids,
+                        "response": response_text,
+                        "prompt": current_prompt,
+                        "score": score,
+                        "scoring_response": scoring_text,
                     })
-                    
-                    # Build final messages format for this turn
-                    # Store final instructions (already computed with keyword replacements)
-                    final_instructions.append(turn_final_instructions)
 
-                    # Format instructions with conjunctions for final user_content
-                    formatted_instructions = format_instructions_with_conjunctions(turn_final_instructions)
-                    
-                    # Build user_content by concatenating formatted_query (already computed) with formatted_instructions
-                    if formatted_query:
-                        user_content = f"{formatted_query} {formatted_instructions}"
+                    formatted_constraints = format_constraints_with_conjunctions(turn_constraint_texts)
+                    if formatted_query and turn_idx == 0:
+                        user_content = f"{formatted_query} {formatted_constraints}"
                     else:
-                        # No query (constraints-only turn): just use formatted instructions
-                        user_content = formatted_instructions
-                    
-                    logger.info(f"[{task_id}] Turn {turn_idx} user_content: {user_content}")
-                    
+                        user_content = formatted_constraints
+
+                    logger.info(f"[TASK:{task_id},RETRY:{retry}] Turn {turn_idx} user_content: {user_content}")
+
                     final_messages.extend([
-                        {
-                            "role": "user", 
-                            "content": user_content
-                        },
-                        {
-                            "role": "assistant", 
-                            "content": response_text
-                        }
+                        {"role": "user", "content": user_content},
+                        {"role": "assistant", "content": response_text},
                     ])
-                    
-                    # Turn succeeded, exit retry loop
+
                     turn_succeeded = True
                     break
-                    
+
                 except TaskFailed as tf:
-                    # Store the exception for potential re-raise
                     last_exception = tf
-                    # Continue to next retry attempt
                     continue
-            
-            # If turn failed after all retries, re-raise the last exception
-            # This allows the dispatcher to handle the error gracefully and dump an error record
+
             if not turn_succeeded:
                 if turn_idx > 0:
-                    break # this allows to save at least the already processed turns which results in valid conversations only with less turns (which is still good data)
+                    # Return partial results for earlier turns
+                    break
                 raise last_exception
-        
-        # Dump eval_funcs as dicts with instruction_ids as keys
-        eval_funcs_dict = {}
-        for turn_idx, turn_instruction_ids in enumerate(instruction_ids):
-            for instr_idx, instruction_id in enumerate(turn_instruction_ids):
-                if instruction_id not in eval_funcs_dict and turn_idx < len(eval_funcs) and instr_idx < len(eval_funcs[turn_idx]):
-                    eval_funcs_dict[instruction_id] = eval_funcs[turn_idx][instr_idx]
 
-        # Return results
+        # ---- Build output constraints dict (mirrors input structure, with resolved text) ----
+        used_cids = set()
+        for turn in output_turns:
+            used_cids.update(turn["constraint_ids"])
+
+        output_constraints: Dict[str, Dict[str, Any]] = {}
+        for cid in used_cids:
+            cinfo = constraints[cid]
+            output_constraints[cid] = {
+                "constraint": resolved_constraints[cid],
+                "category": cinfo.get("category", "default"),
+                "eval_funcs": cinfo.get("eval_funcs", []),
+            }
+
         return {
-            'uuid': task_id,
-            'instruction_ids': instruction_ids,
-            'instructions': final_instructions,
-            'instruction_categories': instruction_categories,
-            'queries': queries,
-            'queries_responses': queries_responses,
-            'query_metadata': self.data.get("query_metadata"),
-            'responses': all_responses,
-            'eval_funcs': eval_funcs_dict,
-            'prompts': final_prompts,
-            'messages': final_messages,
-            'scores': all_scores,
-            'scoring_responses': all_scoring_responses
+            "uuid": task_id,
+            "query": query,
+            "query_metadata": query_metadata,
+            "constraints": output_constraints,
+            "turns": output_turns,
+            "messages": final_messages,
         }

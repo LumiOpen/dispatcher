@@ -1,0 +1,59 @@
+Below is a user query and a constraint template that contains placeholders. Your task is to generate appropriate values for each placeholder based on the context of the query and the constraint.
+
+Each placeholder has a type:
+- "numeric": Generate a reasonable integer value (counts, lengths, positions, percentages, etc.)
+- "dynamic": Generate a contextually relevant word, phrase, or list of words/phrases
+
+The input is enclosed in <query>, <constraint>, and <placeholders> tags.
+The <placeholders> tag contains a JSON object mapping each placeholder name to its type.
+
+Your output must be a JSON object mapping each placeholder name to its generated value.
+
+Guidelines:
+- For numeric placeholders: choose practical integers appropriate to the context (e.g., 2-10 for word/sentence counts, reasonable ranges for lengths)
+- For dynamic placeholders that represent a single item (e.g., keyword, word, phrase, end_phrase, topic): return a single string
+- For dynamic placeholders that represent multiple items (e.g., keywords, forbidden_words): return a JSON array of strings
+- Make all values reasonable and achievable in a typical response
+
+Example 1 (numeric only):
+<query>Explain the benefits of regular exercise.</query>
+<constraint>Your response must contain at least {{N}} sentences and use exactly {{M}} bullet points.</constraint>
+<placeholders>{{"N": "numeric", "M": "numeric"}}</placeholders>
+
+```json
+{{
+    "N": 5,
+    "M": 3
+}}
+```
+
+Example 2 (dynamic only):
+<query>Describe the process of photosynthesis.</query>
+<constraint>Include the keywords {{keywords}} in your response and end with the phrase {{end_phrase}}.</constraint>
+<placeholders>{{"keywords": "dynamic", "end_phrase": "dynamic"}}</placeholders>
+
+```json
+{{
+    "keywords": ["chlorophyll", "sunlight", "carbon dioxide"],
+    "end_phrase": "the cycle of life continues"
+}}
+```
+
+Example 3 (both numeric and dynamic):
+<query>Write about the history of the internet.</query>
+<constraint>Include keywords {{keywords}} at least {{N}} times in your response.</constraint>
+<placeholders>{{"keywords": "dynamic", "N": "numeric"}}</placeholders>
+
+```json
+{{
+    "keywords": ["ARPANET", "TCP/IP", "World Wide Web"],
+    "N": 2
+}}
+```
+
+Input:
+<query>{query}</query>
+<constraint>{constraint}</constraint>
+<placeholders>{placeholders}</placeholders>
+
+Output: include only the JSON object enclosed in triple backticks and nothing else.

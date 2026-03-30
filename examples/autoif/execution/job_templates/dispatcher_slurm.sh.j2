@@ -1,17 +1,13 @@
 #!/bin/bash
 #SBATCH --job-name={{ job_name }}
-{% if slurm.account is defined %}#SBATCH --account={{ slurm.account }}
-{% endif %}#SBATCH --partition={{ slurm.partition }}
-#SBATCH --time={{ slurm.time | default('02:00:00') }}
-#SBATCH --nodes={{ slurm.nodes | default(1) }}
-#SBATCH --ntasks-per-node={{ slurm.ntasks_per_node | default(2) }}
-#SBATCH --cpus-per-task={{ slurm.cpus_per_task | default(7) }}
-#SBATCH --mem={{ slurm.mem | default('480G') }}
-#SBATCH --gpus-per-node={{ slurm.gpus_per_node }}
-#SBATCH --exclusive=user
-#SBATCH --hint=nomultithread
-#SBATCH --output={{ slurm.output | default('logs/%j.out') }}
-#SBATCH --error={{ slurm.error | default('logs/%j.err') }}
+{% for key, value in slurm.items() -%}
+{% if value is sameas true -%}
+#SBATCH --{{ key.replace('_', '-') }}
+{% elif value is sameas false -%}
+{% else -%}
+#SBATCH --{{ key.replace('_', '-') }}={{ value }}
+{% endif -%}
+{% endfor %}
 
 set -euxo pipefail
 
@@ -96,20 +92,30 @@ echo "Server is up."
 # ============================================================
 source {{ environment_setup }}
 
-echo "Installing dispatcher package (container)..."
-run_sing_pip_install --upgrade {{ dispatcher_package }}
-echo "Dispatcher worker package installed."
+# Pre-build wheels on the shared filesystem so every srun worker can install
+# without rebuilding from source (avoids node-local /tmp issues and parallel
+# build race conditions on setup.py).
+WHEEL_DIR="$(pwd)/.wheels"
+rm -rf "$WHEEL_DIR"
+mkdir -p "$WHEEL_DIR"
 
-echo "Installing requirements (container)..."
-run_sing_pip_install -r requirements.txt
-echo "Requirements installed."
+echo "Building dispatcher wheel..."
+run_sing_python -m pip wheel --wheel-dir "$WHEEL_DIR" {{ dispatcher_package }}
+echo "Building requirement wheels..."
+run_sing_python -m pip wheel --wheel-dir "$WHEEL_DIR" -r requirements.txt
+echo "Wheels ready in $WHEEL_DIR"
 
 # ============================================================
 # Dispatcher Workers (with vLLM launch)
 # ============================================================
 srun -l bash -c '
     source {{ environment_setup }}
-    
+
+    echo "Installing packages from pre-built wheels..."
+    run_sing_pip_install --no-index --find-links '"'$WHEEL_DIR'"' dispatcher
+    run_sing_pip_install --no-index --find-links '"'$WHEEL_DIR'"' -r requirements.txt
+    echo "Packages installed."
+
     run_sing_bash '\''
         set -euxo pipefail
         

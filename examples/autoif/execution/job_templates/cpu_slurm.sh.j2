@@ -1,15 +1,13 @@
 #!/bin/bash
 #SBATCH --job-name={{ job_name }}
-{% if slurm.account is defined %}#SBATCH --account={{ slurm.account }}
-{% endif %}#SBATCH --partition={{ slurm.partition }}
-#SBATCH --time={{ slurm.time | default('00:30:00') }}
-#SBATCH --nodes={{ slurm.nodes | default(1) }}
-#SBATCH --ntasks-per-node={{ slurm.ntasks_per_node | default(1) }}
-#SBATCH --cpus-per-task={{ slurm.cpus_per_task | default(8) }}
-#SBATCH --mem={{ slurm.mem | default('32G') }}
-#SBATCH --gpus=0
-#SBATCH --output={{ slurm.output | default('logs/%j.out') }}
-#SBATCH --error={{ slurm.error | default('logs/%j.err') }}
+{% for key, value in slurm.items() -%}
+{% if value is sameas true -%}
+#SBATCH --{{ key.replace('_', '-') }}
+{% elif value is sameas false -%}
+{% else -%}
+#SBATCH --{{ key.replace('_', '-') }}={{ value }}
+{% endif -%}
+{% endfor -%}
 
 set -euo pipefail
 
@@ -52,7 +50,23 @@ export {{ key }}="{{ value }}"
 # ============================================================
 echo "Installing requirements..."
 python3 -m pip install --user -r requirements.txt
+{% if pip_extras is defined %}
+{% for pkg in pip_extras %}
+python3 -m pip install --user "{{ pkg }}"
+{% endfor %}
+{% endif %}
 echo "Requirements installed."
+{% if setup_commands is defined %}
+
+# ============================================================
+# Setup Commands
+# ============================================================
+{% for cmd in setup_commands %}
+echo "Setup: {{ cmd }}"
+{{ cmd }}
+{% endfor %}
+echo "Setup commands completed."
+{% endif %}
 
 # ============================================================
 # Execute Python Script

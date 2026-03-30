@@ -1,0 +1,120 @@
+## Examples
+
+**Example 1: Constraint without placeholders**
+Constraint: "Koko vastauksesi tulee olla kirjoitettu pienillä kirjaimilla."
+
+```python
+def evaluate(response: str, **kwargs) -> bool:
+    return response == response.lower()
+```
+
+```json
+{
+    "cases": [
+        { "input": { "response": "tämä on kokonaan pienillä kirjaimilla kirjoitettua tekstiä." }, "output": true },
+        { "input": { "response": "Tässä on Iso kirjain." }, "output": false },
+        { "input": { "response": "kaikki pienillä\nrivinvaihdoilla\nsilti kelvollinen" }, "output": true }
+    ]
+}
+```
+
+**Example 2: Constraint with numeric placeholder**
+Constraint: "Vastauksessasi tulee olla vähintään {N} sanaa, jotka alkavat konsonantilla."
+
+```python
+import re
+from typing import Any
+
+def evaluate(response: str, **kwargs) -> bool:
+    N = kwargs.get('N', 1)
+    words = re.findall(r'\\b\\w+\\b', response)
+    consonant_start_words = [word for word in words if re.match(r'^[^aeiouyäöAEIOUYÄÖ]', word)]
+    return len(consonant_start_words) >= N
+```
+
+**Example 3: Constraint with numeric and text placeholders**
+Constraint: "Vastauksessasi tulee olla {N} osaa. Merkitse jokaisen osan alku merkinnällä {section_marker}."
+
+```python
+from typing import Any
+
+def evaluate(response: str, **kwargs) -> bool:
+    N = kwargs.get('N', 1)
+    section_marker = kwargs.get('section_marker')
+    
+    sections = response.split(section_marker)
+    # First split part before first marker doesn't count
+    return len(sections) - 1 == N or (len(sections) == N and response.startswith(section_marker))
+```
+
+```json
+{
+    "cases": [
+        { "input": { "response": "### Johdanto\nTervetuloa.\n### Sisältö\nTässä on tekstiä.\n### Yhteenveto\nNäkemiin.", "N": 3, "section_marker": "### " }, "output": true },
+        { "input": { "response": "--- Osa 1\nTekstiä.\n--- Osa 2\nLisää tekstiä.", "N": 3, "section_marker": "--- " }, "output": false },
+        { "input": { "response": "[OSA] Ensimmäinen\n[OSA] Toinen\n[OSA] Kolmas\n[OSA] Neljäs", "N": 4, "section_marker": "[OSA] " }, "output": true }
+    ]
+}
+```
+
+**Example 4: Constraint with list placeholder**
+Constraint: "Älä sisällytä avainsanoja {forbidden_words} vastaukseen."
+
+```python
+from typing import Any, List
+
+def evaluate(response: str, **kwargs) -> bool:
+    forbidden_words = kwargs.get('forbidden_words', [])
+    response_lower = response.lower()
+    
+    for word in forbidden_words:
+        if word.lower() in response_lower:
+            return False
+    return True
+```
+
+```json
+{
+    "cases": [
+        { "input": { "response": "Taivas on kirkas ja kaunis tänään.", "forbidden_words": ["sade", "pilvi", "myrsky"] }, "output": true },
+        { "input": { "response": "Iltapäivällä saattaa tulla sade.", "forbidden_words": ["sade", "pilvi", "myrsky"] }, "output": false },
+        { "input": { "response": "Ihana päivä\nulkoiluun\nei huonoa säätä odotettavissa", "forbidden_words": ["kauhea", "hirveä"] }, "output": true }
+    ]
+}
+```
+
+Example 5: Constraint that requires using an NLP library
+Constraint: "Vastauksessasi jokainen lause tulee sisältää vähintään {N} eri prepositioita."
+
+```python
+import trankit
+
+# Initialize pipeline (Finnish model)
+nlp = trankit.Pipeline(lang='finnish')
+
+def evaluate(response: str, **kwargs) -> bool:
+    N = kwargs.get('N', 1)
+    doc = nlp(response)
+
+    for sent in doc['sentences']:
+        prepositions = set()
+
+        for token in sent['tokens']:
+            if token['upos'] == 'ADP':
+                prepositions.add(token['text'].lower())
+
+        if len(prepositions) < N:
+            return False
+
+    return True
+```
+
+```json
+{
+    "cases": [
+{ "input": { "response": "Koira juoksi talon ympäri ja sillan yli. Kissa istui pöydän alla ja tuolin vieressä.", "N": 2 }, "output": true }
+{ "input": { "response": "Lintu lensi puun yli ja järven ympäri. Kala ui veden alla.", "N": 2 }, "output": false },
+{ "input": { "response": "Auto pysähtyi talon edessä ja puun vieressä. Pyörä kaatui aidan yli ja portin yli.", "N": 2 }, "output": false }
+    ]
+}
+```

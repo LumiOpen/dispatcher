@@ -16,9 +16,9 @@
 {"instruction": "Do not include keywords {forbidden_words} in the response.", "category": "Content", "placeholders": {"forbidden_words": {"type": "dynamic"}}}
 {"instruction": "The response must include keyword {keyword} in the {position} sentence.", "category": "Content", "placeholders": {"keyword": {"type": "dynamic"}, "position": {"type": "static", "values": ["first", "second", "third", "last", "opening", "closing"]}}}
 {"instruction": "Your response must contain the word {word} exactly {N} times.", "category": "Content", "placeholders": {"word": {"type": "dynamic"}, "N": {"type": "numeric"}}}
-{"instruction": "Each paragraph must contain at least one instance of the phrase {phrase}.", "category": "Content", "placeholders": {"phrase": {"type": "dynamic"}}}
+{"instruction": "Each paragraph must contain at least one instance of the phrase {phrase}. Paragraphs are separated by two newline characters.", "category": "Content", "placeholders": {"phrase": {"type": "dynamic"}}}
 {"instruction": "In your response, the letter {letter} should appear at least {N} times.", "category": "Length", "placeholders": {"letter": {"type": "static", "values": ["a", "e", "i", "o", "u", "s", "t", "r", "n"]}, "N": {"type": "numeric"}}}
-{"instruction": "Your response should contain {N} paragraphs. You separate paragraphs using the markdown divider: * * *", "category": "Length", "placeholders": {"N": {"type": "numeric"}}}
+{"instruction": "Your response should contain {N} paragraphs. You separate paragraphs using the markdown divider: {markdown_divider}", "category": "Length", "placeholders": {"N": {"type": "numeric"}, "markdown_divider": {"type": "static", "values": ["* * *", "---", "***", "##", "###"]}}}
 {"instruction": "Answer with at least {N} words.", "category": "Length", "placeholders": {"N": {"type": "numeric"}}}
 {"instruction": "Answer with exactly {N} words.", "category": "Length", "placeholders": {"N": {"type": "numeric"}}}
 {"instruction": "Answer with at most {N} words.", "category": "Length", "placeholders": {"N": {"type": "numeric"}}}
@@ -39,7 +39,7 @@
 {"instruction": "Nest parentheses (and [brackets {and braces}]) at least {N} levels deep.", "category": "Format", "placeholders": {"N": {"type": "numeric"}}}
 {"instruction": "Include quotes within quotes within quotes, at least {N} levels deep, alternating between double quotes and single quotes, starting with double quotes.", "category": "Format", "placeholders": {"N": {"type": "numeric"}}}
 {"instruction": "Your response must include bullet points denoted by * and at least one sub-bullet point denoted by - for each bullet point.", "category": "Format", "placeholders": {}}
-{"instruction": "Each paragraph must begin with a sentence in italics, use HTML to indicate the italics.", "category": "Format", "placeholders": {}}
+{"instruction": "Each paragraph must begin with a sentence in italics, use HTML to indicate the italics. Paragprahs are separated by two newline characters.", "category": "Format", "placeholders": {}}
 {"instruction": "Highlight at least {N} sections in your answer with markdown, i.e. *highlighted section*", "category": "Format", "placeholders": {"N": {"type": "numeric"}}}
 {"instruction": "The response must be in CSV format with {N} rows.", "category": "Format", "placeholders": {"N": {"type": "numeric"}}}
 {"instruction": "The response must contain a markdown table with {N} rows and {M} columns.", "category": "Format", "placeholders": {"N": {"type": "numeric"}, "M": {"type": "numeric"}}}

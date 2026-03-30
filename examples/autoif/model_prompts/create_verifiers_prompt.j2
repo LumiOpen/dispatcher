@@ -1,98 +1,55 @@
-You are an expert for writing evaluation functions in Python to evaluate whether a response strictly follows an instruction.
+You are an expert for writing evaluation functions in Python to evaluate whether a response strictly adheres to a constraint.
 
-Here is the instruction: 
+## Input data
+
+Here is the constraint in {{ language }} language: 
 
 {{ instruction }}
 
 {% if placeholders %}
-This instruction contains the following placeholders that will be provided as function arguments at runtime:
+This constraint template contains the following placeholders that will be provided to the python function as keyword arguments at runtime:
 {% for p in placeholders %}
 - {{ p.name }}: {{ p.type }}. {{ p.description }}
 {% endfor %}
 {% endif %}
 
-Please write a Python function named `evaluate` to evaluate whether an input string `response` follows this instruction. The function accepts keyword arguments (**kwargs) for any placeholder values that may be provided at runtime.
+## Task specification
 
-If the response follows the instruction, simply return True, otherwise return False. 
-You are allowed to import ONLY the following libraries: re, json, csv, string, math, collections, spacy, nltk, syllapy, emoji, dateutil, unicodedata, markdown, bs4, typing, functools.
+Please write a Python function named `evaluate` to evaluate whether an input string `response` adheres to the constraint. The function accepts keyword arguments (**kwargs) for any placeholder values that may be provided at runtime.
+
+If the response adheres to the constraint, simply return True, otherwise return False. 
+
+## Allowed python libraries
+
+You are allowed to import ONLY the following libraries:
+- re: Use when matching or searching text with regular expressions.
+- json: Use when parsing or producing JSON-formatted data.
+- csv: Use when reading or writing CSV-formatted data.
+- string: Use when working with string constants (e.g., punctuation, digits, ascii letters).
+- math: Use when performing mathematical operations (e.g., ceil, floor, sqrt, log).
+- collections: Use when counting elements, ordering dicts, or using specialised containers like Counter and defaultdict.
+- spacy: Use when performing NLP tasks such as tokenisation, POS tagging, or dependency parsing for a single language.
+- nltk: Use when performing NLP tasks such as sentence splitting, stemming, or accessing language corpora.
+- trankit: Use when performing multilingual NLP tasks — it supports 56+ languages out of the box and provides tokenisation, sentence segmentation, POS tagging, morphological tagging, dependency parsing, and named entity recognition with a single unified pipeline. Prefer trankit over spacy/nltk when multilingual support or language-agnostic processing is needed.
+- syllapy: Use when counting syllables in words.
+- emoji: Use when detecting, counting, or converting emoji characters.
+- dateutil: Use when parsing dates and times from various string formats.
+- unicodedata: Use when inspecting Unicode character properties (e.g., category, name, normalisation).
+- markdown: Use when converting Markdown text to HTML.
+- bs4: Use when parsing and navigating HTML or XML documents.
+- typing: Use when adding type hints to function signatures or variables.
+- functools: Use when applying higher-order function utilities like lru_cache, reduce, or partial.
+
+
+## Guidelines
+
+- The input response string can be a multiline string - string containing newline characters. Consider this when writing your evaluation logic.
+- The test cases must be designed to be complex and realistic, mirroring real-life scenarios. They must explicitly cover common edge cases or potential pitfalls of the instruction (e.g., punctuation, capitalization, varying formats, special characters, multiline strings, empty inputs, leading/trailing spaces, or near-miss scenarios). The 'output' for each case must be 100% correct and definitive, as these tests are the ultimate standard for cross-validation.
+- Language localisation: The functions must take into account the specifics of the {{ language }} language and the test cases must be in the {{ language }} language.
+
+
+## Output format:
+
 Your response will only contain a single python code block with the function definition and a single json block with a list of {{ num_test_cases }} test cases in the key `cases`, which includes an input in the key `input` and an expected output in the key `output` (true, false). 
 
-Note that the input response string can be a multiline string - string containing newline characters. Consider this when writing your evaluation logic.
-
-**CRITICAL INSTRUCTION FOR TEST CASES:**
-**The {{ num_test_cases }} test cases must be designed to be complex and realistic, mirroring real-life scenarios. They must explicitly cover common edge cases or potential pitfalls of the instruction (e.g., punctuation, capitalization, varying formats, special characters, multiline strings, empty inputs, leading/trailing spaces, or near-miss scenarios). The 'output' for each case must be 100% correct and definitive, as these tests are the ultimate standard for cross-validation.**
-
-# Examples
-
-## Example 1: Instruction without placeholders
-Instruction: "Your entire response should be in all lowercase letters."
-
-```python
-import re
-
-def evaluate(response: str, **kwargs) -> bool:
-    return response == response.lower()
-```
-
-```json
-{
-    "cases": [
-        { "input": { "response": "this is all lowercase text." }, "output": true },
-        { "input": { "response": "This has a Capital letter." }, "output": false },
-        { "input": { "response": "all lowercase\nwith newlines\nstill valid" }, "output": true }
-    ]
-}
-```
-
-## Example 2: Instruction with numeric and text placeholders
-Instruction: "Your response must have {N} sections. Mark the beginning of each section with {section_marker}."
-
-```python
-import re
-from typing import Any
-
-def evaluate(response: str, **kwargs) -> bool:
-    N = kwargs.get('N')
-    section_marker = kwargs.get('section_marker')
-    
-    sections = response.split(section_marker)
-    # First split part before first marker doesn't count
-    return len(sections) - 1 == N or (len(sections) == N and response.startswith(section_marker))
-```
-
-```json
-{
-    "cases": [
-        { "input": { "response": "### Introduction\nHello.\n### Body\nContent here.\n### Conclusion\nGoodbye.", "N": 3, "section_marker": "### " }, "output": true },
-        { "input": { "response": "--- Part 1\nText.\n--- Part 2\nMore text.", "N": 3, "section_marker": "--- " }, "output": false },
-        { "input": { "response": "[SEC] First\n[SEC] Second\n[SEC] Third\n[SEC] Fourth", "N": 4, "section_marker": "[SEC] " }, "output": true }
-    ]
-}
-```
-
-## Example 3: Instruction with list placeholder
-Instruction: "Do not include keywords {forbidden_words} in the response."
-
-```python
-import re
-from typing import Any, List
-
-def evaluate(response: str, **kwargs) -> bool:
-    forbidden_words = kwargs.get('forbidden_words', [])
-    response_lower = response.lower()
-    
-    for word in forbidden_words:
-        if word.lower() in response_lower:
-            return False
-    return True
-```
-
-```json
-{
-    "cases": [
-        { "input": { "response": "The sky is clear and beautiful today.", "forbidden_words": ["rain", "cloud", "storm"] }, "output": true },
-        { "input": { "response": "It might rain later this afternoon.", "forbidden_words": ["rain", "cloud", "storm"] }, "output": false },
-        { "input": { "response": "A wonderful day\nfor outdoor activities\nno bad weather expected", "forbidden_words": ["terrible", "awful"] }, "output": true }
-    ]
-}
-```
+{{ examples }}

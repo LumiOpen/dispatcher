@@ -6,5 +6,5 @@ Here is the full list of constraints you need to follow:
 
 INPUT DATA:
 <constraints>
-{instructions}
+{constraints}
 </constraints>

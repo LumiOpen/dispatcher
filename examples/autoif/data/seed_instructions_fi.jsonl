@@ -16,9 +16,9 @@
 {"instruction": "Älä käytä avainsanoja {forbidden_words} vastauksessasi.", "category": "Content", "placeholders": {"forbidden_words": {"type": "dynamic"}}}
 {"instruction": "Vastauksen tulee sisältää avainsana {keyword} lauseessa numero {position}.", "category": "Content", "placeholders": {"keyword": {"type": "dynamic"}, "position": {"type": "static", "values": ["ensimmäisessä", "toisessa", "kolmannessa", "viimeisessä", "aloittavassa", "päättävässä"]}}}
 {"instruction": "Vastauksesi tulee sisältää sana {word} täsmälleen {N} kertaa.", "category": "Content", "placeholders": {"word": {"type": "dynamic"}, "N": {"type": "numeric"}}}
-{"instruction": "Jokaisen kappaleen tulee sisältää vähintään yksi ilmaus lauseesta {phrase}.", "category": "Content", "placeholders": {"phrase": {"type": "dynamic"}}}
+{"instruction": "Jokaisen kappaleen tulee sisältää vähintään yksi ilmaus lauseesta {phrase}. Kappaleet erotetaan toisistaan kahdella rivinvaihdolla.", "category": "Content", "placeholders": {"phrase": {"type": "dynamic"}}}
 {"instruction": "Vastauksessasi kirjaimen {letter} tulee esiintyä vähintään {N} kertaa.", "category": "Length", "placeholders": {"letter": {"type": "static", "values": ["a", "e", "i", "o", "u", "s", "t", "r", "n", "ä", "ö"]}, "N": {"type": "numeric"}}}
-{"instruction": "Vastauksesi tulee sisältää {N} kappaletta. Erota kappaleet toisistaan markdown-jakajalla: * * *", "category": "Length", "placeholders": {"N": {"type": "numeric"}}}
+{"instruction": "Vastauksesi tulee sisältää {N} kappaletta. Erota kappaleet toisistaan markdown-jakajalla: {markdown_divider}", "category": "Length", "placeholders": {"N": {"type": "numeric"}, "markdown_divider": {"type": "static", "values": ["* * *", "---", "***", "##", "###"]}}}
 {"instruction": "Vastaa vähintään {N} sanalla.", "category": "Length", "placeholders": {"N": {"type": "numeric"}}}
 {"instruction": "Vastaa täsmälleen {N} sanalla.", "category": "Length", "placeholders": {"N": {"type": "numeric"}}}
 {"instruction": "Vastaa enintään {N} sanalla.", "category": "Length", "placeholders": {"N": {"type": "numeric"}}}
@@ -39,7 +39,7 @@
 {"instruction": "Sisäkkäistä sulkeet (ja [hakasulkeet {ja aaltosulkeet}]) vähintään {N} tasoa syvälle.", "category": "Format", "placeholders": {"N": {"type": "numeric"}}}
 {"instruction": "Sisällytä lainauksia lainausten sisään vähintään {N} tasoa syvälle, vuorotellen kaksois- ja yksinkertaisten lainausmerkkien välillä, aloittaen kaksoislainausmerkeillä.", "category": "Format", "placeholders": {"N": {"type": "numeric"}}}
 {"instruction": "Vastauksesi tulee sisältää luettelokohtia merkittynä * -merkillä ja vähintään yksi alakohta merkittynä - -merkillä jokaiselle pääkohdalle.", "category": "Format", "placeholders": {}}
-{"instruction": "Jokaisen kappaleen tulee alkaa kursiivilla lauseella, käytä HTML-merkintää kursiivin ilmaisemiseen.", "category": "Format", "placeholders": {}}
+{"instruction": "Jokaisen kappaleen tulee alkaa kursiivilla lauseella, käytä HTML-merkintää kursiivin ilmaisemiseen. Kappaleet erotetaan toisistaan kahdella rivinvaihdolla.", "category": "Format", "placeholders": {}}
 {"instruction": "Korosta vähintään {N} osiota vastauksessasi markdown-muotoilulla, esim. *korostettu osio*", "category": "Format", "placeholders": {"N": {"type": "numeric"}}}
 {"instruction": "Vastauksen tulee olla CSV-muodossa ja sisältää {N} riviä.", "category": "Format", "placeholders": {"N": {"type": "numeric"}}}
 {"instruction": "Vastauksen tulee sisältää markdown-taulukko, jossa on {N} riviä ja {M} saraketta.", "category": "Format", "placeholders": {"N": {"type": "numeric"}, "M": {"type": "numeric"}}}

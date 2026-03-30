@@ -27,7 +27,7 @@ from src.utils.constants import (
 )
 from src.utils.response_parser import ResponseParser
 from src.utils.function_executor import FunctionExecutor
-from src.utils.lang_id import LANG_MAP
+from src.utils.lang_id import get_env_language_name
 
 __all__ = ["GenerateVerifiersTask"]
 
@@ -106,12 +106,6 @@ class GenerateVerifiersTask(GeneratorTask):
             info.append(entry)
         return info
 
-    @staticmethod
-    def _get_language_name() -> str:
-        """Get the full language name from LANGUAGE env variable."""
-        lang_code = os.environ.get('LANGUAGE', 'en').lower().strip()
-        return LANG_MAP.get(lang_code, 'English')
-
     def task_generator(self) -> Generator[Union[Request, List[Request]], Any, Dict[str, Any]]:
         """Generate evaluation functions and test cases."""
         instruction_id = self.data.get("instruction_id", "unknown")
@@ -124,7 +118,7 @@ class GenerateVerifiersTask(GeneratorTask):
 
         # Build placeholder info
         placeholder_info = self._build_placeholder_info(placeholders)
-        language = self._get_language_name()
+        language = get_env_language_name()
 
         # Render prompt
         prompt = self._render_template(

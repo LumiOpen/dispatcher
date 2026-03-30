@@ -17,7 +17,7 @@ Score 5: Highly Relevant / Comprehensive
   - The response directly and comprehensively answers the query, providing all necessary information and addressing all aspects of the question. It is clear, concise, and well-organized. It might offer good examples or explanations that enhance understanding. The response is very helpful and directly addresses the user's intent.
 
 Content to Judge:
-<constraints>{instructions}</constraints>
+<constraints>{constraints}</constraints>
 <query>{query}</query>
 <response>{response}</response>
 

@@ -15,6 +15,7 @@ IMPORTANT: Do NOT answer the user query. Your only task is to output the cleaned
 OUTPUT FORMAT:
 - Output ONLY the cleaned query, with appropriate sentence-ending punctuation.
 - Do not include any explanation, preamble, or additional text.
+- The answer must be in {language} language
 
 QUERY TO FORMAT:
 <query>

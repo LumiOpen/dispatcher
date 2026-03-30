@@ -521,26 +521,26 @@ def create_output_entry(query: Dict, selected_verifiers: List[Dict] = None, sour
             template_file = "model_prompts/generate_response_prompt.txt"
             turn_query = query['queries'][turn_idx]
             prompt_template = open(template_file).read().strip()
-            prompt = prompt_template.format(query=turn_query, instructions=current_instructions_text, language=language)
+            prompt = prompt_template.format(query=turn_query, constraints=current_instructions_text, language=language)
         elif turn_idx == 0:
             # First turn of multi-turn conversation
             template_file = "model_prompts/generate_response_turn1_prompt.txt"
             turn_query = query['queries'][turn_idx]
             prompt_template = open(template_file).read().strip()
-            prompt = prompt_template.format(query=turn_query, instructions=current_instructions_text, language=language)
+            prompt = prompt_template.format(query=turn_query, constraints=current_instructions_text, language=language)
         else:
             # Subsequent turns of multi-turn conversation
             if no_followup:
                 # Use rephrase prompt (no query needed)
                 template_file = "model_prompts/rephrase_response_turnN_prompt.txt"
                 prompt_template = open(template_file).read().strip()
-                prompt = prompt_template.format(instructions=current_instructions_text, language=language)
+                prompt = prompt_template.format(constraints=current_instructions_text, language=language)
             else:
                 # Use regular turnN prompt with query
                 template_file = "model_prompts/generate_response_turnN_prompt.txt"
                 turn_query = query['queries'][turn_idx]
                 prompt_template = open(template_file).read().strip()
-                prompt = prompt_template.format(query=turn_query, instructions=current_instructions_text, language=language)
+                prompt = prompt_template.format(query=turn_query, constraints=current_instructions_text, language=language)
         
         prompts.append(prompt)
         

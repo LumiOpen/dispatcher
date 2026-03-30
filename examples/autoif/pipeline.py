@@ -518,7 +518,7 @@ def execute_jobs(
 
         # Execute
         if execution_mode == 'sbatch':
-            dependency = f"afterany:{prev_job_id}" if prev_job_id else None
+            dependency = f"afterok:{prev_job_id}" if prev_job_id else None
             job_id = submit_job(str(job_script), dependency)
 
             if job_id:
@@ -625,7 +625,7 @@ def handle_rerun_failed(config: dict, slurm_config: dict, out_dir: Path, executi
         print("No previous jobs found")
         sys.exit(1)
 
-    job_ids = get_job_ids_from_status(status, 'sbatch')
+    job_ids, _ = get_job_ids_for_all_enabled_jobs(config, status, 'sbatch')
     all_done, failed, running = check_pipeline_status(job_ids)
 
     if not failed:

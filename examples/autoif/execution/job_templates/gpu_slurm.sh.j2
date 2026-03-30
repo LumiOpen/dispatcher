@@ -1,0 +1,103 @@
+#!/bin/bash
+#SBATCH --job-name={{ job_name }}
+{% for key, value in slurm.items() -%}
+{% if value is sameas true -%}
+#SBATCH --{{ key.replace('_', '-') }}
+{% elif value is sameas false -%}
+{% else -%}
+#SBATCH --{{ key.replace('_', '-') }}={{ value }}
+{% endif -%}
+{% endfor -%}
+
+set -euo pipefail
+
+echo "======================================="
+echo "{{ job_name }} (GPU Job - sbatch)"
+echo "======================================="
+echo "Started: $(date)"
+echo ""
+
+cd {{ base_dir }}
+
+# ============================================================
+# Container Environment Setup (ROCm + PyTorch for MI250X)
+# ============================================================
+source {{ environment_setup }}
+
+# Pre-build wheels on the shared filesystem so the container can
+# install without rebuilding from source.
+WHEEL_DIR="$(pwd)/.wheels"
+mkdir -p "$WHEEL_DIR"
+echo "Building wheels for requirements..."
+run_sing_python -m pip wheel --wheel-dir "$WHEEL_DIR" -r requirements.txt 2>&1 | tail -5
+{% if pip_extras is defined %}
+{% for pkg in pip_extras %}
+run_sing_python -m pip wheel --wheel-dir "$WHEEL_DIR" "{{ pkg }}" 2>&1 | tail -3
+{% endfor %}
+{% endif %}
+echo "Wheels ready in $WHEEL_DIR"
+
+# ============================================================
+# Execute inside container with GPU access
+# ============================================================
+run_sing_bash '
+set -euo pipefail
+
+echo "Installing packages from pre-built wheels..."
+pip install --target "$PIP_TARGET" --no-index --find-links '"'"'{{ base_dir }}/.wheels'"'"' -r requirements.txt 2>/dev/null || \
+    pip install --target "$PIP_TARGET" -r requirements.txt
+{% if pip_extras is defined %}
+{% for pkg in pip_extras %}
+pip install --target "$PIP_TARGET" "{{ pkg }}" 2>/dev/null || true
+{% endfor %}
+{% endif %}
+echo "Packages installed."
+{% if setup_commands is defined %}
+
+# Setup commands (run inside container after package install)
+{% for cmd in setup_commands %}
+{{ cmd }}
+{% endfor %}
+echo "Setup commands completed."
+{% endif %}
+
+# Project code on PYTHONPATH
+export PYTHONPATH="{{ base_dir }}:${PYTHONPATH:-}"
+export HF_HOME="{{ hf_home }}"
+mkdir -p "$HF_HOME/hub"
+
+echo "Python: $(python3 --version)"
+echo "PyTorch ROCm: $(python3 -c "import torch; print(torch.version.hip)" 2>/dev/null || echo "N/A")"
+echo "GPU available: $(python3 -c "import torch; print(torch.cuda.is_available())" 2>/dev/null || echo "false")"
+echo ""
+
+{% if exports is defined %}
+# Environment variables
+{% for key, value in exports.items() %}
+export {{ key }}="{{ value }}"
+{% endfor %}
+{% endif %}
+
+echo "Running: python3 {{ script }}"
+echo ""
+
+python3 {{ script }} \
+{%- for key, value in args.items() if value is not none %}
+{%- if value is sameas true %}
+    --{{ key }}{% if not loop.last %} \{% endif %}
+{%- elif value is sameas false %}
+{%- else %}
+    --{{ key }} "{{ value }}"{% if not loop.last %} \{% endif %}
+{%- endif %}
+{%- endfor %}
+
+
+exit_code=$?
+if [ $exit_code -ne 0 ]; then
+    echo "ERROR: Script failed with exit code $exit_code"
+    exit $exit_code
+fi
+
+echo ""
+echo "Completed: $(date)"
+'

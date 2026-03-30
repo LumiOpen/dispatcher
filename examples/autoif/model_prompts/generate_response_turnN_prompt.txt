@@ -11,5 +11,5 @@ INPUT DATA:
 </query>
 
 <constraints>
-{instructions}
+{constraints}
 </constraints>

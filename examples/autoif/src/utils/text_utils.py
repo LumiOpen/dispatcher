@@ -44,42 +44,42 @@ def get_conjunction() -> str:
     return LANG_CONJUNCTIONS.get(lang, 'and')
 
 
-def format_instructions_with_conjunctions(instructions: Union[str, List[str]]) -> str:
-    """Format instructions with proper conjunctions and capitalization.
-    
+def format_constraints_with_conjunctions(constraints: Union[str, List[str]]) -> str:
+    """Format constraints with proper conjunctions and capitalization.
+
     Uses language-specific conjunction based on LANGUAGE environment variable.
-    Strips trailing punctuation from instructions to allow proper joining.
+    Strips trailing punctuation from constraints to allow proper joining.
 
     Args:
-        instructions: Single instruction string or list of instructions
+        constraints: Single constraint string or list of constraints
 
     Returns:
-        Formatted instruction text with conjunctions.
+        Formatted constraint text with conjunctions.
         Format: "{Constraint1}, {constraint2}, ... and {constraintN}."
 
     Examples (English):
         - Single: "Your response should be short."
         - Two: "Your response should be short and format your response as a list."
         - Three+: "Your response should be short, format your response as a list and include examples."
-    
+
     Examples (Finnish):
         - Two: "Vastauksesi pitäisi olla lyhyt ja muotoile vastauksesi listaksi."
     """
-    if isinstance(instructions, str):
-        return instructions
+    if isinstance(constraints, str):
+        return constraints
 
-    if not instructions:
+    if not constraints:
         return ""
 
-    if len(instructions) == 1:
-        return instructions[0]
+    if len(constraints) == 1:
+        return constraints[0]
 
     conjunction = get_conjunction()
 
-    # Strip trailing punctuation from all instructions
-    stripped = [instr.rstrip('.!?;:') for instr in instructions]
-    
-    # Lowercase first letter of instructions from second onwards
+    # Strip trailing punctuation from all constraints
+    stripped = [instr.rstrip('.!?;:') for instr in constraints]
+
+    # Lowercase first letter of constraints from second onwards
     formatted = [stripped[0]] + [instr[0].lower() + instr[1:] if instr else instr
                                  for instr in stripped[1:]]
 

@@ -101,6 +101,13 @@ def get_language_name(lang_code, default=None):
     return default
 
 
+def get_env_language_name() -> str:
+    """Get the full language name from the LANGUAGE environment variable."""
+    import os
+    lang_code = os.environ.get('LANGUAGE', 'en').lower().strip()
+    return LANG_MAP.get(lang_code, 'English')
+
+
 def detect_language(text):
     """Given a text, it returns the Glotlid prediction as NLLB language code, e.g., Latn-eng
     """

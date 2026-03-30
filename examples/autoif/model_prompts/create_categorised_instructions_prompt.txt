@@ -6,19 +6,28 @@ Your task is to augment the given list of seed instructions by generating new, d
 - Subcategories: {subcategories}
 
 # Constraints and Criteria
-1.  **Verifiability:** Every generated instruction must be verifiable by a Python function. This means the instruction should describe a specific requirement for the text output, not a subjective style. 
+1. **Verifiability:** Every generated instruction must be verifiable by a Python function. This means the instruction should describe a specific requirement for the text output, not a subjective style. 
 
-2.  **Specificity**: Instructions must be specific enough for a Python function to verify the output without ambiguity. If an instruction mentions structures (paragraphs, sections, lists), you must define their boundaries explicitly.
+2. **Specificity**: Instructions must be specific enough for a Python function to verify the output without ambiguity. 
+    - If an instruction mentions structures (paragraphs, sections, lists), you must define their boundaries explicitly. Example: "Your response should contain {{N}} paragraphs. You separate paragraphs using the divider {{divider}}"
+    - Do not use vague terms when specifying quantities such as "some", "sometimes" "a few", "a little". Be specific.
 
-3.  **No Open-ended Knowledge Questions:** Avoid instructions that require external or factual knowledge.
+3. **No Open-ended Knowledge Questions:** Avoid instructions that require external or factual knowledge.
+    Bad examples to avoid:
+    - "In your answer, you must use at least {{N}} different subjects, which are objects or places."
+    - "In your answer, you must use at least {{N}} different subjects that are abstract concepts."
+    - "In your answer, each paragraph should contain at least {{N}} different place names, such as capital city, country, or continent."
 
-4.  **No Subjective Style:** Do not request stylistic, tonal, or emotional instructions. Focus on verifiable structure.
+4. **No Subjective Style:** Do not request stylistic, tonal, or emotional instructions. Focus on verifiable structure.
 
-5.  **No Translation:** Do not generate instructions that require translating the input into another language.
+5. **No Translation:** Do not generate instructions that require translating the input into another language.
 
-6.  **Creativity and Uniqueness:** Each instruction should introduce a new kind of verifiable rule, not minor variations.
+6. **Creativity and Uniqueness:** Each instruction should introduce a new kind of verifiable rule, not minor variations.
 
-7. **Atomicity:** Each instruction must contain exactly ONE verifiable constraint. Do not combine multiple independent requirements into a single instruction. If an instruction has multiple sentences or conditions joined by "and", "also", "additionally", or
+7. **Clarity:** The instruction must make sense and be clear. If it is ambiguous or benefits from further clarification, include an example in the end of the instruction in the format "[Instruction definition], such as [example]". 
+    - Example: "The answer must contain at least {{N}} different words formed by rotating the letters of another word, such as night → thing."
+
+8. **Atomicity:** Each instruction must contain exactly ONE verifiable constraint. Do not combine multiple independent requirements into a single instruction. If an instruction has multiple sentences or conditions joined by "and", "also", "additionally", or
    similar, it is NOT atomic — split it into separate instructions instead.
 
      Bad (compound — multiple constraints bundled together):

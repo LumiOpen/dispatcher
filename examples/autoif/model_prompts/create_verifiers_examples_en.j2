@@ -1,0 +1,74 @@
+## Examples
+
+**Example 1: Instruction without placeholders**
+Instruction: "Your entire response should be in all lowercase letters."
+
+```python
+import re
+
+def evaluate(response: str, **kwargs) -> bool:
+    return response == response.lower()
+```
+
+```json
+{
+    "cases": [
+        { "input": { "response": "this is all lowercase text." }, "output": true },
+        { "input": { "response": "This has a Capital letter." }, "output": false },
+        { "input": { "response": "all lowercase\nwith newlines\nstill valid" }, "output": true }
+    ]
+}
+```
+
+**Example 2: Instruction with numeric and text placeholders**
+Instruction: "Your response must have {N} sections. Mark the beginning of each section with {section_marker}."
+
+```python
+import re
+from typing import Any
+
+def evaluate(response: str, **kwargs) -> bool:
+    N = kwargs.get('N', 1)
+    section_marker = kwargs.get('section_marker')
+    
+    sections = response.split(section_marker)
+    # First split part before first marker doesn't count
+    return len(sections) - 1 == N or (len(sections) == N and response.startswith(section_marker))
+```
+
+```json
+{
+    "cases": [
+        { "input": { "response": "### Introduction\nHello.\n### Body\nContent here.\n### Conclusion\nGoodbye.", "N": 3, "section_marker": "### " }, "output": true },
+        { "input": { "response": "--- Part 1\nText.\n--- Part 2\nMore text.", "N": 3, "section_marker": "--- " }, "output": false },
+        { "input": { "response": "[SEC] First\n[SEC] Second\n[SEC] Third\n[SEC] Fourth", "N": 4, "section_marker": "[SEC] " }, "output": true }
+    ]
+}
+```
+
+## Example 3: Instruction with list placeholder
+Instruction: "Do not include keywords {forbidden_words} in the response."
+
+```python
+import re
+from typing import Any, List
+
+def evaluate(response: str, **kwargs) -> bool:
+    forbidden_words = kwargs.get('forbidden_words', [])
+    response_lower = response.lower()
+    
+    for word in forbidden_words:
+        if word.lower() in response_lower:
+            return False
+    return True
+```
+
+```json
+{
+    "cases": [
+        { "input": { "response": "The sky is clear and beautiful today.", "forbidden_words": ["rain", "cloud", "storm"] }, "output": true },
+        { "input": { "response": "It might rain later this afternoon.", "forbidden_words": ["rain", "cloud", "storm"] }, "output": false },
+        { "input": { "response": "A wonderful day\nfor outdoor activities\nno bad weather expected", "forbidden_words": ["terrible", "awful"] }, "output": true }
+    ]
+}
+```

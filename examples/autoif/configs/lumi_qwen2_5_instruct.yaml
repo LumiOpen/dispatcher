@@ -21,11 +21,14 @@ experiment:
 # Pipeline Sequence
 # ==============================================================================
 pipeline:
-  - augmentation_preprocessing: true
-  - augmentation_generation: true
-  - augmentation_postprocessing: true
+  - augmentation_preprocessing: false
+  - augmentation_generation: false
+  - augmentation_postprocessing: false
   - verifiers_preprocessing: false
   - verifiers_generation: false
+  - verifiers_cross_validation: false
+  - concatenation_job: false
+  - response_generation: true
 
 # ==============================================================================
 # Global Configuration
@@ -119,3 +122,57 @@ jobs:
       TEST_PASS_RATE: "0.5"
       FUNCTION_TIMEOUT: "${function_timeout}"
       LANGUAGE: "${language}"
+
+  # --------------------------------------------------------------------------
+  # Cross-validation
+  # --------------------------------------------------------------------------
+  verifiers_cross_validation:
+    type: cpu_script
+    template: "cpu_slurm.sh.j2"
+    script: src/verifiers_cross_validation.py
+    args:
+      input-file: "verifiers_output.jsonl"
+      output-file: "verifiers_validated.jsonl"
+    exports:
+      MIN_FUNCTIONS: "1"
+      MIN_TEST_CASES: "1"
+      FUNCTION_PASS_RATE: "0.5"
+      MIN_CASE_PASSES: "1"
+      FUNCTION_TIMEOUT: "${function_timeout}"
+
+  # --------------------------------------------------------------------------
+  # Concatenation: combine queries with verified constraints
+  # --------------------------------------------------------------------------
+  concatenation_job:
+    type: cpu_script
+    template: "cpu_slurm.sh.j2"
+    script: src/concat_queries.py
+    args:
+      verifiers-file: "verifiers_validated.jsonl"
+      queries-dataset: "/scratch/project_462000963/datasets/posttraining_data/SFTTrainer_format/fin/lmsys-chat-translated"
+      output-file: "queries_constraints_verifiers.jsonl"
+      language: "${language}"
+      instructions-per-query: 3
+      turns: 2
+      no-followup: true
+      balance-categories: true
+
+  # --------------------------------------------------------------------------
+  # Response Generation
+  # --------------------------------------------------------------------------
+  response_generation:
+    type: dispatcher_task
+    template: "dispatcher_slurm.sh.j2"
+    task: tasks.responses_task.GenerateResponsesTask
+    input_file: "queries_constraints_verifiers.jsonl"
+    output_file: "scored_responses.jsonl"
+    vllm_extra_args: "--gpu-memory-utilization 0.85"
+    work_timeout: 3600
+    request_timeout: 1800
+    workers: 4
+    exports:
+      LANGUAGE: "${language}"
+      SCORE_THRESHOLD: "4"
+      PLACEHOLDER_LOOKUP_FILE: "${base_dir}/data/lumi_qwen2_5_instruct/placeholder_lookup.json"
+      MAX_RETRIES: "5"
+      FUNCTION_TIMEOUT: "${function_timeout}"

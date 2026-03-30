@@ -39,7 +39,7 @@ The query, original response, rephrased response as well as the list of constrai
 <query>{query}</query>
 <original_response>{previous_turn_response}</original_response>
 <rephrased_response>{current_response}</rephrased_response>
-<constraints>{instructions}</constraints>
+<constraints>{constraints}</constraints>
 
 Your judgement:
 After examining the query, original response and rephrased response, provide the following:

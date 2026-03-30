@@ -23,7 +23,7 @@ experiment:
 pipeline:
   - augmentation_preprocessing: true
   - augmentation_generation: true
-  - augmentation_postprocessing: false
+  - augmentation_postprocessing: true
   - verifiers_preprocessing: false
   - verifiers_generation: false
 
@@ -62,7 +62,7 @@ jobs:
     args:
       seed-file: "${base_dir}/data/seed_instructions_fi.jsonl"
       output-file: "aug_input.jsonl"
-      num-instructions-per-category: 100
+      num-instructions-per-category: 20
       language: "${language}"
 
   augmentation_generation:
@@ -74,7 +74,7 @@ jobs:
     output_file: "aug_output.jsonl"
     vllm_extra_args: "--gpu-memory-utilization 0.85"
     exports:
-      NUM_GENERATIONS: "5"
+      NUM_GENERATIONS: "10"
 
   augmentation_postprocessing:
     type: cpu_script
@@ -85,7 +85,7 @@ jobs:
       output-file: "augmented_instructions.jsonl"
       placeholder-lookup-file: "placeholder_lookup.json"
       language: "${language}"
-      max-instructions: 300
+      max-instructions: 1000
       seed-file: "${base_dir}/data/seed_instructions_fi.jsonl"
       include-seeds: false
 
@@ -108,14 +108,14 @@ jobs:
     input_file: "verifiers_input.jsonl"
     output_file: "verifiers_output.jsonl"
     vllm_extra_args: "--gpu-memory-utilization 0.85"
-    work_timeout: 7200
-    request_timeout: 3600
+    work_timeout: 1800
+    request_timeout: 1600
     exports:
       NUM_FUNC_GENERATIONS: "5"
       NUM_TEST_CASES_PER_FUNC: "2"
       MIN_FUNCTIONS: "1"
       MIN_TEST_CASES: "1"
       FUNCTION_PASS_RATE: "0.5"
-      TEST_PASS_RATE: "0.5"
+      MIN_CASE_PASSES: "1"
       FUNCTION_TIMEOUT: "${function_timeout}"
       LANGUAGE: "${language}"
