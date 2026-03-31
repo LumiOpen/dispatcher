@@ -209,6 +209,8 @@ def main():
     total = len(valid_items)
     if total == 0:
         logger.info("Nothing to process — all items already checkpointed")
+        if not os.path.exists(args.output_file):
+            open(args.output_file, "a").close()
         _sort_output_file(args.output_file)
         return
 

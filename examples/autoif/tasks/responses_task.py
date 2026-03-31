@@ -309,7 +309,7 @@ class GenerateResponsesTask(GeneratorTask):
                 text = text.replace(f"{{{pname}}}", format_value(pval))
             resolved_constraints[cid] = text
 
-        self.logger.info(f"[TASK:{task_id}] Resolved constraints: {resolved_constraints}")
+        logger.info(f"[TASK:{task_id}] Resolved constraints: {resolved_constraints}")
 
         # ---- Step 4: Per-turn generation loop ----
         MAX_RETRIES = int(os.environ.get("MAX_RETRIES", "5"))

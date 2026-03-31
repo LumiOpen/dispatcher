@@ -133,12 +133,21 @@ jobs:
     args:
       input-file: "verifiers_output.jsonl"
       output-file: "verifiers_validated.jsonl"
+    # cray-python already provides spacy and trankit (1.1.2); only
+    # transformers needs pinning because >=4.48 uses torch.compiler
+    # (PyTorch 2.1+) which is absent in cray-python's torch 2.0.1.
+    pip_extras:
+      - "transformers<4.48.0"
     exports:
+      FUNCTION_TIMEOUT: "300"
+      INIT_TIMEOUT: "300"
+      CASE_TIMEOUT: "30"
       MIN_FUNCTIONS: "1"
       MIN_TEST_CASES: "1"
-      FUNCTION_PASS_RATE: "0.5"
+      FUNCTION_PASS_RATE: "0.8"
       MIN_CASE_PASSES: "1"
-      FUNCTION_TIMEOUT: "${function_timeout}"
+      CROSSVAL_WORKERS: "8"
+      THREADS_PER_WORKER: "2"
 
   # --------------------------------------------------------------------------
   # Concatenation: combine queries with verified constraints
@@ -149,13 +158,10 @@ jobs:
     script: src/concat_queries.py
     args:
       verifiers-file: "verifiers_validated.jsonl"
-      queries-dataset: "/scratch/project_462000963/datasets/posttraining_data/SFTTrainer_format/fin/lmsys-chat-translated"
+      queries-path: "/scratch/project_462000963/datasets/posttraining_data/SFTTrainer_format/fin/lmsys-chat-translated"
       output-file: "queries_constraints_verifiers.jsonl"
-      language: "${language}"
-      instructions-per-query: 3
+      instructions-per-turn: "3"
       turns: 2
-      no-followup: true
-      balance-categories: true
 
   # --------------------------------------------------------------------------
   # Response Generation
