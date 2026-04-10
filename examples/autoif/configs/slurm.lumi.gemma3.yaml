@@ -1,4 +1,4 @@
-# SLURM Configuration for AutoIF Pipeline
+# SLURM Configuration for AutoIF Pipeline (Gemma 3 27B - TP=4)
 # This file contains SLURM-specific settings for job submission
 
 # Global SLURM defaults
@@ -10,7 +10,7 @@ slurm:
 # Job type defaults
 job_type_defaults:
   dispatcher_task:
-    partition: dev-g
+    partition: standard-g
     time: "03:00:00"
     nodes: 1
     ntasks_per_node: 1
@@ -18,7 +18,7 @@ job_type_defaults:
     cpus_per_task: 7
     exclusive: true
     hint: nomultithread
-    gpus_per_node: "mi250:8"
+    gpus_per_node: "mi250:4"
 
   cpu_script:
     partition: debug
@@ -30,6 +30,8 @@ job_type_defaults:
 
 # Per-job SLURM overrides
 jobs:
+  augmentation_generation:
+    time: "00:30:00"
   cross_validation_job:
     cpus_per_task: 16
     mem: "0"

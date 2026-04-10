@@ -115,6 +115,14 @@ srun -l bash -c '
     run_sing_pip_install --no-index --find-links '"'$WHEEL_DIR'"' dispatcher
     run_sing_pip_install --no-index --find-links '"'$WHEEL_DIR'"' -r requirements.txt
     echo "Packages installed."
+{% if pip_extras is defined %}
+
+    echo "Installing extra packages..."
+{% for pkg in pip_extras %}
+    run_sing_pip_install {{ pkg }}
+{% endfor %}
+    echo "Extra packages installed."
+{% endif %}
 
     run_sing_bash '\''
         set -euxo pipefail
