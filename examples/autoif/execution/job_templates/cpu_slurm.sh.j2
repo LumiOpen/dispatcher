@@ -34,7 +34,15 @@ export PYTHONPATH="$(pwd):${PYTHONPATH:-}"
 export HF_HOME="{{ hf_home }}"
 mkdir -p "$HF_HOME/hub"
 
+{% if container is defined %}
+# Run commands inside container (host env vars are inherited)
+_run() { singularity exec -B /shared_silo:/shared_silo {{ container }} "$@"; }
+echo "Container: {{ container }}"
+echo "Python: $(_run python3 --version 2>&1)"
+{% else %}
+_run() { "$@"; }
 echo "Python: $(python3 --version) ($(which python3))"
+{% endif %}
 
 {% if exports is defined %}
 # ============================================================
@@ -49,10 +57,10 @@ export {{ key }}="{{ value }}"
 # Install requirements
 # ============================================================
 echo "Installing requirements..."
-python3 -m pip install --user -r requirements.txt
+_run python3 -m pip install --user -r requirements.txt
 {% if pip_extras is defined %}
 {% for pkg in pip_extras %}
-python3 -m pip install --user "{{ pkg }}"
+_run python3 -m pip install --user {{ pkg }}
 {% endfor %}
 {% endif %}
 echo "Requirements installed."
@@ -74,7 +82,7 @@ echo "Setup commands completed."
 echo "Running: python {{ script }}"
 echo ""
 
-python3 {{ script }} \
+_run python3 {{ script }} \
 {%- for key, value in args.items() if value is not none %}
 {%- if value is sameas true %}
     --{{ key }}{% if not loop.last %} \{% endif %}

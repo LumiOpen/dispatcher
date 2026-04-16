@@ -1,3 +1,2 @@
 fasttext-numpy2-wheel
-huggingface_hub<1.0
 numpy<2.3

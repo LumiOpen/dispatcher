@@ -226,33 +226,22 @@ def main():
     # ---- Worker pool (pre-fork after model preloading) ----
     worker_pool = None
     preimport = []
-    if loaded_models.get("trankit"):
-        preimport.extend(["torch", "trankit", "transformers"])
     if loaded_models.get("spacy"):
         preimport.append("spacy")
+    if loaded_models.get("stanza"):
+        preimport.append("stanza")
+    if loaded_models.get("trankit"):
+        preimport.append("trankit")
     if loaded_models.get("nltk"):
         preimport.append("nltk")
 
     if preimport:
         from utils.worker_pool import WorkerPool
         from utils.function_executor import set_worker_pool
-        from utils.model_preloader import _TRANKIT_CACHE_DIR
-
-        # Build pipeline preload config for trankit languages
-        pipeline_preload = None
-        trankit_langs = loaded_models.get("trankit", [])
-        if trankit_langs and _TRANKIT_CACHE_DIR:
-            pipeline_preload = {
-                lang: {"gpu": False, "cache_dir": _TRANKIT_CACHE_DIR}
-                for lang in trankit_langs
-            }
-            logger.info("Trankit pipelines will be pre-loaded in workers: %s",
-                         trankit_langs)
 
         worker_pool = WorkerPool.create(
             num_workers=workers,
             preimport_modules=preimport,
-            preload_pipelines=pipeline_preload,
         )
         set_worker_pool(worker_pool)
         logger.info("Worker pool active (%d workers, pre-imported: %s)",

@@ -83,14 +83,14 @@ def evaluate(response: str, **kwargs) -> bool:
 }
 ```
 
-Example 5: Constraint that requires using an NLP library
+**Example 5: Constraint that requires using an NLP library (example using trankit)**
 Constraint: "Vastauksessasi jokainen lause tulee sisältää vähintään {N} eri prepositioita."
 
 ```python
 import trankit
 
 # Initialize pipeline (Finnish model)
-nlp = trankit.Pipeline(lang='finnish')
+nlp = trankit.Pipeline('finnish')
 
 def evaluate(response: str, **kwargs) -> bool:
     N = kwargs.get('N', 1)
@@ -100,7 +100,7 @@ def evaluate(response: str, **kwargs) -> bool:
         prepositions = set()
 
         for token in sent['tokens']:
-            if token['upos'] == 'ADP':
+            if token.get('upos') == 'ADP': # Part-of-Speech tag for prepositions
                 prepositions.add(token['text'].lower())
 
         if len(prepositions) < N:
@@ -112,9 +112,78 @@ def evaluate(response: str, **kwargs) -> bool:
 ```json
 {
     "cases": [
-{ "input": { "response": "Koira juoksi talon ympäri ja sillan yli. Kissa istui pöydän alla ja tuolin vieressä.", "N": 2 }, "output": true }
-{ "input": { "response": "Lintu lensi puun yli ja järven ympäri. Kala ui veden alla.", "N": 2 }, "output": false },
-{ "input": { "response": "Auto pysähtyi talon edessä ja puun vieressä. Pyörä kaatui aidan yli ja portin yli.", "N": 2 }, "output": false }
+        { "input": { "response": "Koira juoksi talon ympäri ja sillan yli. Kissa istui pöydän alla ja tuolin vieressä.", "N": 2 }, "output": true },
+        { "input": { "response": "Lintu lensi puun yli ja järven ympäri. Kala ui veden alla.", "N": 2 }, "output": false },
+        { "input": { "response": "Auto pysähtyi talon edessä ja puun vieressä. Pyörä kaatui aidan yli ja portin yli.", "N": 2 }, "output": false }
+    ]
+}
+```
+
+**Example 6: Constraint that requires using an NLP library (example using spacy)**
+Constraint: "Jokaisen lauseen tulee sisältää vähintään {N} sanaa."
+
+```python
+import spacy
+
+nlp = spacy.load("fi_core_news_sm")
+
+def evaluate(response: str, **kwargs) -> bool:
+    N = kwargs.get('N', 1)
+    doc = nlp(response)
+
+    sentences = list(doc.sents)
+    if not sentences:
+        return False
+
+    for sent in sentences:
+        # Count actual word tokens (exclude punctuation and whitespace)
+        word_count = sum(1 for token in sent if not token.is_punct and not token.is_space)
+        if word_count < N:
+            return False
+
+    return True
+```
+
+```json
+{
+    "cases": [
+        { "input": { "response": "Koira juoksi nopeasti pitkän matkan kotiin. Kissa nukkui rauhallisesti sohvalla koko päivän.", "N": 5 }, "output": true },
+        { "input": { "response": "Aurinko paistaa kirkkaasti taivaalla tänään. Sataa.", "N": 5 }, "output": false },
+        { "input": { "response": "Tämä on lyhyt lause jossa on tarpeeksi sanoja.\nTämäkin rivi sisältää useita eri sanoja mukavasti.", "N": 7 }, "output": true }
+    ]
+}
+```
+
+**Example 7: Constraint that requires using an NLP library (example using stanza)**
+Constraint: "Vastauksen tulee sisältää täsmälleen {N} sanaa, jotka alkavat suuraakkosella mutta eivät ole lauseen alussa."
+
+```python
+import stanza
+
+nlp = stanza.Pipeline('fi', processors='tokenize,pos')
+
+def evaluate(response: str, **kwargs) -> bool:
+    N = kwargs.get('N', 1)
+    doc = nlp(response)
+    count = 0
+
+    for sent in doc.sentences:
+        for i, word in enumerate(sent.words):
+            # Skip the first word of each sentence
+            if i == 0:
+                continue
+            if word.text[0].isupper():
+                count += 1
+
+    return count == N
+```
+
+```json
+{
+    "cases": [
+        { "input": { "response": "Tänään menin Helsinkiin tapaamaan Markkua.", "N": 2 }, "output": true },
+        { "input": { "response": "kaupassa oli paljon ihmisiä ja kaikki olivat kiireisiä.", "N": 0 }, "output": true },
+        { "input": { "response": "Kävin Tampereella ja Turussa viime viikolla. Molemmat olivat kauniita kaupunkeja.", "N": 3 }, "output": false }
     ]
 }
 ```

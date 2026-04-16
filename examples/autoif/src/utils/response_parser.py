@@ -111,7 +111,13 @@ class ResponseParser:
     def _validate_cases_structure(self, data: Any) -> Optional[List[Dict[str, Any]]]:
         """Validate and normalize cases from parsed JSON.
 
-        Expected input: {"cases": [{"input": {"response": "..."}, "output": true}, ...]}
+        Accepts two LLM output formats and normalizes to:
+            {"input": {"response": "...", <kwargs>}, "output": bool}
+
+        Format A (dict input):
+            {"input": {"response": "...", ...}, "output": true}
+        Format B (string input + optional kwargs):
+            {"input": "...", "kwargs": {"N": 2}, "output": true}
 
         Returns:
             List of validated case dicts, or None if structure is invalid.
@@ -129,15 +135,23 @@ class ResponseParser:
                 continue
             if 'input' not in case or 'output' not in case:
                 continue
-            if not isinstance(case['input'], dict) or 'response' not in case['input']:
+
+            inp = case['input']
+            if isinstance(inp, dict) and 'response' in inp:
+                normalized_input = inp
+            elif isinstance(inp, str):
+                normalized_input = {"response": inp}
+                if isinstance(case.get('kwargs'), dict):
+                    normalized_input.update(case['kwargs'])
+            else:
                 continue
-            # Normalize output to bool
+
             output = case['output']
             if isinstance(output, str):
                 output = output.lower() == 'true'
             else:
                 output = bool(output)
-            valid.append({"input": case['input'], "output": output})
+            valid.append({"input": normalized_input, "output": output})
 
         return valid if valid else None
 

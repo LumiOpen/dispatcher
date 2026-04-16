@@ -4,7 +4,6 @@
 # Global SLURM defaults
 slurm:
   partition: amd-tw-verification
-  time: "01:00:00"
   output: "logs/%j.out"
   error: "logs/%j.err"
 
@@ -12,10 +11,9 @@ slurm:
 job_type_defaults:
   dispatcher_task:
     nodes: 1
-    ntasks_per_node: 2
-    mem: "480G"
-    cpus_per_task: 32
-    gpus_per_node: 8
+    ntasks_per_node: 1
+    mem: "0"
+    gpus_per_node: 2
     exclusive: user
     hint: nomultithread
     time: "04:00:00"
@@ -31,23 +29,13 @@ job_type_defaults:
 
 # Per-job SLURM overrides (SLURM settings only)
 jobs:
-  augmentation_generation:
-    time: "02:00:00"
-
   verifiers_generation:
+    ntasks_per_node: 2
+    gpus_per_node: 8
     time: "10:00:00"
 
   responses_generation:
     time: "08:00:00"
-
-  augmentation_preprocessing:
-    time: "00:15:00"
-
-  augmentation_postprocessing:
-    time: "00:15:00"
-
-  verifiers_preprocessing:
-    time: "00:15:00"
 
   concatenation_job:
     mem: "128G"

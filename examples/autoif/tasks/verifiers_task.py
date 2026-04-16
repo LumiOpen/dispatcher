@@ -37,8 +37,49 @@ MIN_FUNCTIONS = int(os.getenv("MIN_FUNCTIONS", 1))
 MIN_TEST_CASES = int(os.getenv("MIN_TEST_CASES", 1))
 FUNCTION_PASS_RATE = float(os.getenv("FUNCTION_PASS_RATE", 0.8))
 TEST_PASS_RATE = float(os.getenv("TEST_PASS_RATE", 0.5))
+SKIP_CROSS_VALIDATION = os.getenv("SKIP_CROSS_VALIDATION", "false").lower() in ("true", "1", "yes")
 
 PROMPT_PATH = "model_prompts/create_verifiers_prompt.j2"
+
+# Mapping from ISO 639-1 codes to trankit Pipeline language keys.
+# trankit only accepts full lowercase English names, not ISO codes.
+# See: https://trankit.readthedocs.io/en/latest/pkgnames.html
+TRANKIT_LANG_KEYS = {
+    'bg': 'bulgarian', 'ca': 'catalan', 'hr': 'croatian', 'cs': 'czech',
+    'da': 'danish', 'nl': 'dutch', 'en': 'english', 'et': 'estonian',
+    'fi': 'finnish', 'fr': 'french', 'gl': 'galician', 'de': 'german',
+    'el': 'greek', 'hu': 'hungarian', 'ga': 'irish', 'it': 'italian',
+    'lv': 'latvian', 'lt': 'lithuanian', 'pl': 'polish', 'pt': 'portuguese',
+    'ro': 'romanian', 'ru': 'russian', 'sr': 'serbian', 'sk': 'slovak',
+    'sl': 'slovenian', 'es': 'spanish', 'sv': 'swedish', 'uk': 'ukrainian',
+}
+
+# Mapping from ISO 639-1 codes to spaCy small-model names.
+# Only languages that have official trained spaCy pipelines are listed.
+# English uses 'web' genre; all others use 'news'.
+SPACY_MODEL_KEYS = {
+    'ca': 'ca_core_news_sm', 'hr': 'hr_core_news_sm', 'da': 'da_core_news_sm',
+    'nl': 'nl_core_news_sm', 'en': 'en_core_web_sm', 'fi': 'fi_core_news_sm',
+    'fr': 'fr_core_news_sm', 'de': 'de_core_news_sm', 'el': 'el_core_news_sm',
+    'it': 'it_core_news_sm', 'lt': 'lt_core_news_sm', 'pl': 'pl_core_news_sm',
+    'pt': 'pt_core_news_sm', 'ro': 'ro_core_news_sm', 'ru': 'ru_core_news_sm',
+    'sl': 'sl_core_news_sm', 'es': 'es_core_news_sm', 'sv': 'sv_core_news_sm',
+    'uk': 'uk_core_news_sm',
+}
+
+# Stanza uses ISO 639-1 codes directly.
+# All languages supported by trankit are also supported by stanza.
+STANZA_LANG_KEYS = {
+    'bg': 'bg', 'ca': 'ca', 'hr': 'hr', 'cs': 'cs',
+    'da': 'da', 'nl': 'nl', 'en': 'en', 'et': 'et',
+    'fi': 'fi', 'fr': 'fr', 'gl': 'gl', 'de': 'de',
+    'el': 'el', 'hu': 'hu', 'ga': 'ga', 'it': 'it',
+    'lv': 'lv', 'lt': 'lt', 'pl': 'pl', 'pt': 'pt',
+    'ro': 'ro', 'ru': 'ru', 'sr': 'sr', 'sk': 'sk',
+    'sl': 'sl', 'es': 'es', 'sv': 'sv', 'uk': 'uk',
+}
+
+EXAMPLES_PATH = "model_prompts/create_verifiers_examples_{lang_code}.j2"
 
 
 @dataclass
@@ -120,6 +161,20 @@ class GenerateVerifiersTask(GeneratorTask):
         placeholder_info = self._build_placeholder_info(placeholders)
         language = get_env_language_name()
 
+         # Resolve NLP library language keys from LANGUAGE env var
+        lang_code = os.environ.get('LANGUAGE', 'en').lower().strip()
+        trankit_lang = TRANKIT_LANG_KEYS.get(lang_code)
+        spacy_model = SPACY_MODEL_KEYS.get(lang_code)
+        stanza_lang = STANZA_LANG_KEYS.get(lang_code)
+
+        # Load language-specific examples if available
+        examples_path = EXAMPLES_PATH.format(lang_code=lang_code)
+        examples = ""
+        try:
+            examples = self._render_template(examples_path)
+        except jinja2.TemplateNotFound:
+            logger.debug(f"[GenerateVerifiersTask] No examples template found at {examples_path}")
+
         # Render prompt
         prompt = self._render_template(
             PROMPT_PATH,
@@ -127,6 +182,11 @@ class GenerateVerifiersTask(GeneratorTask):
             placeholders=placeholder_info if placeholders else None,
             num_test_cases=NUM_TEST_CASES_PER_FUNC,
             language=language,
+            trankit_lang=trankit_lang,
+            spacy_model=spacy_model,
+            stanza_lang=stanza_lang,
+            lang_code=lang_code,
+            examples=examples,
         )
         logger.info(f"[GenerateVerifiersTask] IID:{instruction_id} prompt: {prompt}")
 
@@ -143,7 +203,7 @@ class GenerateVerifiersTask(GeneratorTask):
         response_texts = response.get_text(n=NUM_FUNC_GENERATIONS)
         if response_texts:
             for text in response_texts:
-                logger.info(f"[GenerateVerifiersTask] IID:{instruction_id} generation response: {text[:500]}...")
+                logger.info(f"[GenerateVerifiersTask] IID:{instruction_id} generation response: {text}")
 
                 # Parse function
                 func_str, error = self.parser.parse_function(text, instruction_id)
@@ -186,6 +246,22 @@ class GenerateVerifiersTask(GeneratorTask):
                 message=f"Only {len(all_cases)} test cases, need {MIN_TEST_CASES}",
                 error_type=REASON_INSUFFICIENT_TEST_CASES
             )
+
+        if SKIP_CROSS_VALIDATION:
+            logger.info(
+                f"[GenerateVerifiersTask] IID:{instruction_id} "
+                f"Cross-validation SKIPPED, returning {len(all_functions)} "
+                f"functions and {len(all_cases)} raw test cases"
+            )
+            return {
+                "instruction_id": instruction_id,
+                "instruction": instruction,
+                "instruction_category": instruction_category,
+                "placeholders": placeholders,
+                "eval_func": all_functions,
+                "cases": all_cases,
+                "best_accuracy": None,
+            }
 
         # Cross-validate
         cv_result = self._run_cross_validation(all_functions, all_cases)

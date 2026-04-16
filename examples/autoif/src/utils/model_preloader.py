@@ -1,10 +1,14 @@
 """Pre-download NLP models detected in generated function code.
 
 Scans all function strings for known NLP library patterns (spaCy model
-loads, trankit pipeline initialisations, NLTK resource imports) and
-downloads the required artefacts once before cross-validation starts.
-This avoids per-subprocess download overhead and ensures models that
-are distributed as pip packages (spaCy) are actually installed.
+loads, stanza pipeline initialisations, trankit pipeline initialisations,
+NLTK resource imports) and downloads the required artefacts once before
+cross-validation starts.  This avoids per-subprocess download overhead
+and ensures models are available in the same environment workers use.
+
+Checks and downloads run **in-process** (spacy, stanza, nltk) so they
+see exactly the same sys.path and PYTHONUSERBASE as the spawned workers.
+Only trankit warm-up and external downloads use subprocesses.
 """
 
 import glob as _glob
@@ -49,43 +53,8 @@ _TRANKIT_VERSION = "v1.0.0"
 
 
 # ---------------------------------------------------------------------------
-# Warmup script — executed in a subprocess.
-# Redirects sys.stdout to stderr BEFORE importing anything so that library
-# print() calls (trankit's "Loading pretrained XLM-Roberta…") don't corrupt
-# the JSON result written to the real stdout fd at the end.
+# Scanners — detect NLP library usage in function code
 # ---------------------------------------------------------------------------
-_WARMUP_SCRIPT = r"""
-import sys, os, json, traceback
-
-_real_stdout = sys.stdout
-sys.stdout = sys.stderr
-
-lang = sys.argv[1] if len(sys.argv) > 1 else "finnish"
-result = {}
-
-try:
-    print(f"[warmup] importing trankit ...", flush=True)
-    import trankit
-    print(f"[warmup] trankit imported, version={getattr(trankit, '__version__', '?')}", flush=True)
-
-    print(f"[warmup] creating Pipeline(lang='{lang}') ...", flush=True)
-    p = trankit.Pipeline(lang=lang)
-    print(f"[warmup] Pipeline created, running test sentence ...", flush=True)
-
-    out = p("Tama on testi.")
-    n_tokens = sum(len(s.get("tokens", [])) for s in out.get("sentences", []))
-    print(f"[warmup] test sentence OK, {n_tokens} tokens", flush=True)
-    result = {"ok": True, "tokens": n_tokens}
-
-except Exception as e:
-    tb = traceback.format_exc()
-    print(f"[warmup] EXCEPTION:\n{tb}", flush=True)
-    result = {"ok": False, "error": str(e)[:1000], "traceback": tb[-2000:]}
-
-sys.stdout = _real_stdout
-json.dump(result, sys.stdout)
-"""
-
 
 def _scan_spacy_models(functions: List[str]) -> Set[str]:
     """Detect ``spacy.load("model_name")`` calls."""
@@ -107,6 +76,17 @@ def _scan_trankit_languages(functions: List[str]) -> Set[str]:
     return langs
 
 
+def _scan_stanza_languages(functions: List[str]) -> Set[str]:
+    """Detect ``stanza.Pipeline('lang')`` or ``stanza.Pipeline(lang='lang')``."""
+    langs: Set[str] = set()
+    for fn in functions:
+        for m in re.findall(r'stanza\.Pipeline\(\s*["\'](\w+)["\']\s*', fn):
+            langs.add(m.lower())
+        for m in re.findall(r'stanza\.Pipeline\(\s*lang\s*=\s*["\'](\w+)["\']\s*', fn):
+            langs.add(m.lower())
+    return langs
+
+
 def _scan_nltk_resources(functions: List[str]) -> Set[str]:
     """Detect NLTK corpus/tokenizer imports that need downloadable data."""
     resources: Set[str] = set()
@@ -121,23 +101,41 @@ def _scan_nltk_resources(functions: List[str]) -> Set[str]:
     return resources
 
 
-def _download_spacy_model(model: str, logger: logging.Logger) -> bool:
-    # Check if already installed — avoids a slow download on compute nodes.
+# ---------------------------------------------------------------------------
+# In-process downloaders — spacy, stanza, nltk
+#
+# These run in the same process as the caller so they see the exact same
+# sys.path, PYTHONUSERBASE, and installed packages that spawned workers
+# will see.  No subprocess environment mismatches.
+# ---------------------------------------------------------------------------
+
+def _ensure_spacy_model(model: str, logger: logging.Logger) -> bool:
+    """Ensure a spaCy model is loadable, downloading if needed.
+
+    Check is in-process (same sys.path as workers).  Download requires
+    a subprocess because ``spacy download`` is a pip install wrapper.
+    """
     try:
-        proc = subprocess.run(
-            [sys.executable, "-c", f"import spacy; spacy.load('{model}')"],
-            capture_output=True, text=True, timeout=30,
-        )
-        if proc.returncode == 0:
-            logger.info("  spaCy model %s already installed — skipping download", model)
-            return True
-    except subprocess.TimeoutExpired:
-        pass
+        import spacy
+        spacy.load(model)
+        logger.info("  spaCy model %s already installed", model)
+        return True
+    except OSError:
+        pass  # model not found — download below
+    except ImportError:
+        logger.warning("  spaCy is not installed — cannot load model %s", model)
+        return False
+
     t0 = time.monotonic()
-    logger.info("Pre-downloading spaCy model: %s ...", model)
+    logger.info("  Downloading spaCy model: %s ...", model)
     try:
+        # spaCy models are hosted on GitHub releases, not PyPI, so we
+        # must use `spacy download` for URL resolution.  Extra args
+        # after the model name are forwarded to `pip install`; pass
+        # --user so the model installs into PYTHONUSERBASE (required
+        # in read-only containers like Singularity).
         proc = subprocess.run(
-            [sys.executable, "-m", "spacy", "download", model],
+            [sys.executable, "-m", "spacy", "download", model, "--user"],
             capture_output=True, text=True, timeout=DOWNLOAD_TIMEOUT,
         )
         elapsed = time.monotonic() - t0
@@ -153,25 +151,98 @@ def _download_spacy_model(model: str, logger: logging.Logger) -> bool:
     return False
 
 
-def _download_nltk_resource(resource: str, logger: logging.Logger) -> bool:
-    t0 = time.monotonic()
-    logger.info("Pre-downloading NLTK resource: %s ...", resource)
-    script = f"import nltk; nltk.download('{resource}', quiet=True)"
+def _ensure_stanza_model(lang: str, logger: logging.Logger) -> bool:
+    """Ensure a stanza model is downloaded, downloading if needed.
+
+    Both the check and the download run in-process.
+    """
     try:
-        proc = subprocess.run(
-            [sys.executable, "-c", script],
-            capture_output=True, text=True, timeout=DOWNLOAD_TIMEOUT,
-        )
+        import stanza
+    except ImportError:
+        logger.warning("  stanza is not installed — cannot load model %s", lang)
+        return False
+
+    # Check if model is already usable.
+    try:
+        stanza.Pipeline(lang, processors='tokenize', verbose=False,
+                        download_method=stanza.DownloadMethod.REUSE_RESOURCES)
+        logger.info("  stanza model %s already downloaded", lang)
+        return True
+    except Exception:
+        pass  # model not found — download below
+
+    t0 = time.monotonic()
+    logger.info("  Downloading stanza model: %s ...", lang)
+    try:
+        stanza.download(lang, verbose=False)
         elapsed = time.monotonic() - t0
-        if proc.returncode == 0:
+        logger.info("  stanza model %s OK (%.0fs)", lang, elapsed)
+        return True
+    except Exception as e:
+        elapsed = time.monotonic() - t0
+        logger.warning("  stanza model %s FAILED (%.0fs): %s", lang, elapsed, e)
+    return False
+
+
+def _set_stanza_offline(logger: logging.Logger) -> None:
+    """Disable stanza's resource-update check.
+
+    By default ``stanza.Pipeline(...)`` downloads ``resources.json``
+    on every invocation to check for model updates.
+
+    Stanza has no global env-var to control this, so we monkey-patch
+    the default ``download_method`` to ``None`` (skip all downloads).
+    Since models are already downloaded in the preloading phase, this
+    is safe.  This patch applies to the parent process (for model
+    verification steps); spawned workers apply their own patch at
+    startup in ``_worker_loop``.
+    """
+    try:
+        import stanza.pipeline.core as _core
+        _original_init = _core.Pipeline.__init__
+
+        def _patched_init(self, *args, **kwargs):
+            kwargs.setdefault("download_method", None)
+            kwargs.setdefault("verbose", False)
+            return _original_init(self, *args, **kwargs)
+
+        _core.Pipeline.__init__ = _patched_init
+        logger.info("Patched stanza.Pipeline default download_method=None for workers")
+    except Exception as e:
+        logger.warning("Failed to patch stanza download_method: %s", e)
+
+
+def _ensure_nltk_resource(resource: str, logger: logging.Logger) -> bool:
+    """Ensure an NLTK resource is downloaded, downloading if needed.
+
+    Both the check and the download run in-process.
+    """
+    try:
+        import nltk
+    except ImportError:
+        logger.warning("  nltk is not installed — cannot download resource %s", resource)
+        return False
+
+    # Check if already available.
+    try:
+        nltk.data.find(f"tokenizers/{resource}" if resource.startswith("punkt")
+                       else f"corpora/{resource}")
+        logger.info("  NLTK resource %s already downloaded", resource)
+        return True
+    except LookupError:
+        pass  # not found — download below
+
+    t0 = time.monotonic()
+    logger.info("  Downloading NLTK resource: %s ...", resource)
+    try:
+        if nltk.download(resource, quiet=True):
+            elapsed = time.monotonic() - t0
             logger.info("  NLTK resource %s OK (%.0fs)", resource, elapsed)
             return True
-        logger.warning("  NLTK resource %s FAILED (%.0fs): %s",
-                        resource, elapsed, proc.stderr[-300:] if proc.stderr else "")
-    except subprocess.TimeoutExpired:
-        logger.warning("  NLTK resource %s timed out after %ds", resource, DOWNLOAD_TIMEOUT)
+        logger.warning("  NLTK resource %s download returned False", resource)
     except Exception as e:
-        logger.warning("  NLTK resource %s error: %s", resource, e)
+        elapsed = time.monotonic() - t0
+        logger.warning("  NLTK resource %s FAILED (%.0fs): %s", resource, elapsed, e)
     return False
 
 
@@ -204,12 +275,8 @@ def _find_model_safetensors(cache_dir: str, model_id: str) -> Optional[str]:
 # XLM-RoBERTa base model verification
 # ---------------------------------------------------------------------------
 
-def _verify_xlmr_cached(logger: logging.Logger) -> bool:
-    """Verify xlm-roberta-base is present in the HF cache.
-
-    Does NOT download — downloading on compute nodes is slow and unreliable.
-    If the model is missing, logs an error with pre-download instructions.
-    """
+def _ensure_xlmr_cached(logger: logging.Logger) -> bool:
+    """Ensure xlm-roberta-base is present in the HF cache, downloading if needed."""
     cache_dir = _hf_cache_dir(logger)
     if not cache_dir:
         return False
@@ -222,20 +289,23 @@ def _verify_xlmr_cached(logger: logging.Logger) -> bool:
         logger.info("  Found: %s (size=%d bytes)", model_file, fsize)
         return True
 
-    logger.error(
-        "  %s NOT FOUND in HF cache at %s\n"
-        "  Pre-download from the login node:\n"
-        "    module load cray-python\n"
-        "    HF_HOME=%s python3 -c \"\n"
-        "      from huggingface_hub import snapshot_download\n"
-        "      snapshot_download('%s', cache_dir='%s')\n"
-        "    \"",
-        _TRANKIT_EMBEDDING,
-        cache_dir,
-        os.environ.get("HF_HOME", "/scratch/project_462000963/cache"),
-        _TRANKIT_EMBEDDING,
-        cache_dir,
-    )
+    logger.info("  %s not found in HF cache — downloading ...", _TRANKIT_EMBEDDING)
+    t0 = time.monotonic()
+    try:
+        from huggingface_hub import snapshot_download
+        snapshot_download(_TRANKIT_EMBEDDING, cache_dir=cache_dir)
+        elapsed = time.monotonic() - t0
+
+        model_file = _find_model_safetensors(cache_dir, _TRANKIT_EMBEDDING)
+        if model_file:
+            logger.info("  %s downloaded successfully (%.0fs)", _TRANKIT_EMBEDDING, elapsed)
+            return True
+        logger.warning("  %s download completed but model file not found", _TRANKIT_EMBEDDING)
+    except ImportError:
+        logger.warning("  huggingface_hub not installed — cannot download %s", _TRANKIT_EMBEDDING)
+    except Exception as e:
+        elapsed = time.monotonic() - t0
+        logger.warning("  %s download error (%.0fs): %s", _TRANKIT_EMBEDDING, elapsed, e)
     return False
 
 
@@ -297,14 +367,48 @@ def _download_trankit_model(lang: str, logger: logging.Logger) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Trankit warm-up: full end-to-end Pipeline test
+# Trankit warm-up: full end-to-end Pipeline test (subprocess for memory
+# isolation — loading a trankit Pipeline consumes significant memory that
+# would bloat the parent before forking workers).
 # ---------------------------------------------------------------------------
+_WARMUP_SCRIPT = r"""
+import sys, os, json, traceback
+
+_real_stdout = sys.stdout
+sys.stdout = sys.stderr
+
+lang = sys.argv[1] if len(sys.argv) > 1 else "finnish"
+result = {}
+
+try:
+    print(f"[warmup] importing trankit ...", flush=True)
+    import trankit
+    print(f"[warmup] trankit imported, version={getattr(trankit, '__version__', '?')}", flush=True)
+
+    print(f"[warmup] creating Pipeline(lang='{lang}', gpu=False) ...", flush=True)
+    p = trankit.Pipeline(lang=lang, gpu=False)
+    print(f"[warmup] Pipeline created, running test sentence ...", flush=True)
+
+    out = p("Tama on testi.")
+    n_tokens = sum(len(s.get("tokens", [])) for s in out.get("sentences", []))
+    print(f"[warmup] test sentence OK, {n_tokens} tokens", flush=True)
+    result = {"ok": True, "tokens": n_tokens}
+
+except Exception as e:
+    tb = traceback.format_exc()
+    print(f"[warmup] EXCEPTION:\n{tb}", flush=True)
+    result = {"ok": False, "error": str(e)[:1000], "traceback": tb[-2000:]}
+
+sys.stdout = _real_stdout
+json.dump(result, sys.stdout)
+"""
+
 
 def _warmup_trankit(lang: str, logger: logging.Logger) -> bool:
     """Fully initialize trankit.Pipeline in a subprocess and verify it works.
 
-    Catches model-loading errors (state_dict mismatches, missing files)
-    BEFORE workers start, and reports them loudly.
+    Uses a subprocess for memory isolation — loading a trankit Pipeline
+    consumes significant memory that we don't want in the parent before fork.
     """
     t0 = time.monotonic()
     logger.info("Warming up trankit Pipeline('%s') ...", lang)
@@ -316,7 +420,6 @@ def _warmup_trankit(lang: str, logger: logging.Logger) -> bool:
         )
         elapsed = time.monotonic() - t0
 
-        # Always log stderr — it has trankit's own progress messages and any errors
         if proc.stderr:
             for line in proc.stderr.strip().splitlines()[-30:]:
                 logger.info("  [warmup stderr] %s", line)
@@ -373,43 +476,55 @@ def scan_and_preload_models(
     DOWNLOAD_TIMEOUT = timeout
 
     # Log environment for debugging
-    logger.info("Environment: HF_HOME=%s  TRANSFORMERS_CACHE=%s  cwd=%s  python=%s",
+    logger.info("Environment: HF_HOME=%s  PYTHONUSERBASE=%s  cwd=%s  python=%s",
                 os.environ.get("HF_HOME", "(unset)"),
-                os.environ.get("TRANSFORMERS_CACHE", "(unset)"),
+                os.environ.get("PYTHONUSERBASE", "(unset)"),
                 os.getcwd(),
                 sys.executable)
 
     spacy_models = _scan_spacy_models(all_function_strings)
+    stanza_langs = _scan_stanza_languages(all_function_strings)
     trankit_langs = _scan_trankit_languages(all_function_strings)
     nltk_resources = _scan_nltk_resources(all_function_strings)
 
-    if not spacy_models and not trankit_langs and not nltk_resources:
+    if not spacy_models and not stanza_langs and not trankit_langs and not nltk_resources:
         logger.info("No NLP model dependencies detected in functions")
-        return {"spacy": [], "trankit": [], "nltk": []}
+        return {"spacy": [], "stanza": [], "trankit": [], "nltk": []}
 
-    logger.info("Detected NLP models: spacy=%s, trankit=%s, nltk=%s",
-                sorted(spacy_models), sorted(trankit_langs), sorted(nltk_resources))
+    logger.info("Detected NLP models: spacy=%s, stanza=%s, trankit=%s, nltk=%s",
+                sorted(spacy_models), sorted(stanza_langs),
+                sorted(trankit_langs), sorted(nltk_resources))
 
-    loaded: Dict[str, List[str]] = {"spacy": [], "trankit": [], "nltk": []}
+    loaded: Dict[str, List[str]] = {"spacy": [], "stanza": [], "trankit": [], "nltk": []}
 
     for model in sorted(spacy_models):
-        if _download_spacy_model(model, logger):
+        if _ensure_spacy_model(model, logger):
             loaded["spacy"].append(model)
 
-    # Verify xlm-roberta-base is cached (downloading on compute nodes is unreliable)
+    for lang in sorted(stanza_langs):
+        if _ensure_stanza_model(lang, logger):
+            loaded["stanza"].append(lang)
+
+    # After downloading stanza models, patch Pipeline to skip update checks.
+    # Must happen before fork() so workers inherit the patched default.
+    if loaded["stanza"]:
+        _set_stanza_offline(logger)
+
+    # Ensure xlm-roberta-base is in the HF cache (download if missing)
     xlmr_ok = False
     if trankit_langs:
-        xlmr_ok = _verify_xlmr_cached(logger)
+        xlmr_ok = _ensure_xlmr_cached(logger)
 
     for lang in sorted(trankit_langs):
         if _download_trankit_model(lang, logger):
             loaded["trankit"].append(lang)
 
     for resource in sorted(nltk_resources):
-        if _download_nltk_resource(resource, logger):
+        if _ensure_nltk_resource(resource, logger):
             loaded["nltk"].append(resource)
 
-    # Full end-to-end warm-up: load trankit.Pipeline and process a test sentence
+    # Full end-to-end warm-up: load trankit.Pipeline and process a test
+    # sentence.  Runs in a subprocess for memory isolation.
     warmup_ok = False
     for lang in sorted(trankit_langs):
         if _warmup_trankit(lang, logger):
@@ -421,7 +536,7 @@ def scan_and_preload_models(
                               "problem may be in trankit adapter loading")
             else:
                 logger.warning("  xlm-roberta-base also missing — "
-                              "pre-download it from the login node")
+                              "download failed")
 
     # If the base model is unavailable AND warmup failed, trankit is unusable.
     if not xlmr_ok and not warmup_ok and loaded.get("trankit"):
@@ -429,11 +544,17 @@ def scan_and_preload_models(
                        "unavailable and warmup failed; trankit is unusable")
         loaded["trankit"] = []
 
-    # Set offline mode after preloading.  Workers should never download
-    # models themselves — it causes cache corruption on Lustre.
-    os.environ["TRANSFORMERS_OFFLINE"] = "1"
-    os.environ["HF_HUB_OFFLINE"] = "1"
-    logger.info("Set TRANSFORMERS_OFFLINE=1 HF_HUB_OFFLINE=1 for worker subprocesses")
+    # Set offline mode after preloading ONLY when all models are cached.
+    # On Lustre this avoids cache corruption from concurrent worker downloads.
+    # On other filesystems (e.g. TensorWave) we leave online mode so that
+    # trankit can auto-download models on first import as a fallback.
+    if xlmr_ok and warmup_ok:
+        os.environ["TRANSFORMERS_OFFLINE"] = "1"
+        os.environ["HF_HUB_OFFLINE"] = "1"
+        logger.info("Set TRANSFORMERS_OFFLINE=1 HF_HUB_OFFLINE=1 for worker subprocesses")
+    else:
+        logger.info("Skipping offline mode — preloading incomplete, "
+                     "workers may download models on first use")
 
     # Tell the function executor where the trankit cache lives so workers
     # can find it via the environment.
@@ -442,7 +563,7 @@ def scan_and_preload_models(
         logger.info("Trankit cache_dir: %s", abs_cache)
 
     total = sum(len(v) for v in loaded.values())
-    expected = len(spacy_models) + len(trankit_langs) + len(nltk_resources)
+    expected = len(spacy_models) + len(stanza_langs) + len(trankit_langs) + len(nltk_resources)
     logger.info("Model pre-loading complete: %d/%d downloads succeeded, "
                 "xlmr_cached=%s, trankit_warmup=%s",
                 total, expected, xlmr_ok, warmup_ok)

@@ -19,7 +19,7 @@
 # Configuration Variables (override before sourcing)
 ###############################################################################
 
-: "${LAUNCHER_IMG:=/shared_silo/scratch/containers/rocm_vllm_rocm7.0.0_vllm_0.11.1_20251103.sif}"
+: "${LAUNCHER_IMG:=/shared_silo/scratch/containers/vllm-openai-rocm-gemma4.sif}"
 : "${LAUNCHER_PYTHON_VERSION:=3.12}"
 : "${LAUNCHER_HOME:=/shared_silo/scratch/adamhrin@amd.com}"
 : "${LAUNCHER_CACHE_DIR:=${LAUNCHER_HOME}/cache}"
@@ -48,8 +48,9 @@ export LAUNCHER_PYUSERPKG="${LAUNCHER_PYUSERBASE}/lib/python${LAUNCHER_PYTHON_VE
 get_binds() {
     local binds=(
         -B /shared_silo/scratch/adamhrin@amd.com:/shared_silo/scratch/adamhrin@amd.com:rw
-        -B /shared_silo/scratch/models:/shared_silo/scratch/models:ro
+        -B /shared_silo/scratch/models:/shared_silo/scratch/models:rw
         -B /shared_silo/scratch/datasets:/shared_silo/scratch/datasets:ro
+        -B /shared_silo/scratch/cache:/shared_silo/scratch/cache:rw
         -B "${PWD:-$(pwd)}:/workspace"
     )
     
@@ -87,11 +88,26 @@ export -f translate_slurm_vars
 # These pass through --cleanenv and become regular env vars inside container
 ###############################################################################
 setup_apptainer_environment() {
-    # HuggingFace offline mode
-    export APPTAINERENV_HF_HUB_OFFLINE="${HF_HUB_OFFLINE:-1}"
-    export APPTAINERENV_TRANSFORMERS_OFFLINE="${TRANSFORMERS_OFFLINE:-1}"
-    export APPTAINERENV_HF_HOME="${LAUNCHER_HOME}/hf_cache"
-    
+    # HuggingFace cache
+    export APPTAINERENV_HF_HOME="${HF_HOME:-/shared_silo/scratch/models}"
+
+    # Offline mode flags (propagate from environment if set)
+    [ -n "${HF_HUB_OFFLINE:-}" ] && export APPTAINERENV_HF_HUB_OFFLINE="$HF_HUB_OFFLINE"
+    [ -n "${TRANSFORMERS_OFFLINE:-}" ] && export APPTAINERENV_TRANSFORMERS_OFFLINE="$TRANSFORMERS_OFFLINE"
+
+    # HF token: read from env, then fall back to the default cached token file
+    if [ -z "${HF_TOKEN:-}" ]; then
+        local _token_file="$HOME/.cache/huggingface/token"
+        if [ -f "$_token_file" ]; then
+            HF_TOKEN="$(cat "$_token_file")"
+        fi
+    fi
+    if [ -n "${HF_TOKEN:-}" ]; then
+        { set +x; } 2>/dev/null
+        export APPTAINERENV_HF_TOKEN="$HF_TOKEN"
+        set -x
+    fi
+
     # vLLM settings
     export APPTAINERENV_VLLM_USE_V1="${VLLM_USE_V1:-1}"
     export APPTAINERENV_VLLM_TARGET_DEVICE="rocm"
@@ -162,7 +178,6 @@ setup_launcher_environment() {
     # Create directories
     mkdir -p logs
     mkdir -p "$LAUNCHER_CACHE_DIR"
-    mkdir -p "${LAUNCHER_HOME}/hf_cache"
     mkdir -p "$LAUNCHER_PYUSERBASE"
     
     # Initialize aiter cache (copies entire aiter package if needed)
@@ -228,8 +243,13 @@ run_sing_bash() {
     
     # Per-rank Triton cache isolation (avoids multi-rank races on shared filesystems)
     export TRITON_CACHE_DIR=\"/tmp/triton_cache/\${SLURM_JOB_ID:-nojob}/\${SLURM_PROCID:-\${SLURM_LOCALID:-0}}\"
-    export XDG_CACHE_HOME=\"/tmp/xdg_cache/\${SLURM_JOB_ID:-nojob}/\${SLURM_PROCID:-\${SLURM_LOCALID:-0}}\"
-    mkdir -p \"\$TRITON_CACHE_DIR\" \"\$XDG_CACHE_HOME\" 2>/dev/null || true
+    mkdir -p \"\$TRITON_CACHE_DIR\" 2>/dev/null || true
+
+    # Persistent XDG_CACHE_HOME on shared filesystem so vLLM torch.compile
+    # cache (keyed partly on env vars including VLLM_XLA_CACHE_PATH, which
+    # derives from XDG_CACHE_HOME) produces a stable hash across SLURM jobs.
+    export XDG_CACHE_HOME=\"/shared_silo/scratch/cache/xdg/\${SLURM_PROCID:-\${SLURM_LOCALID:-0}}\"
+    mkdir -p \"\$XDG_CACHE_HOME\" 2>/dev/null || true
     
     # Torch extensions in shared memory
     export TORCH_EXTENSIONS_DIR=\"\${TORCH_EXTENSIONS_DIR:-/dev/shm/torch_ext}\"
@@ -277,6 +297,15 @@ python3 \"\$@\"
         bash --noprofile --norc -c "$full_cmd" bash "$@"
 }
 export -f run_sing_python
+
+###############################################################################
+# run_sing_pip_install [args] - pip install inside container
+# Installs into PYTHONUSERBASE (--user) so packages persist across runs
+###############################################################################
+run_sing_pip_install() {
+    run_sing_python -m pip install --user "$@"
+}
+export -f run_sing_pip_install
 
 ###############################################################################
 # Cleanup trap

@@ -28,9 +28,6 @@ You are allowed to import ONLY the following libraries:
 - string: Use when working with string constants (e.g., punctuation, digits, ascii letters).
 - math: Use when performing mathematical operations (e.g., ceil, floor, sqrt, log).
 - collections: Use when counting elements, ordering dicts, or using specialised containers like Counter and defaultdict.
-- spacy: Use when performing NLP tasks such as tokenisation, POS tagging, or dependency parsing for a single language.
-- nltk: Use when performing NLP tasks such as sentence splitting, stemming, or accessing language corpora.
-- trankit: Use when performing multilingual NLP tasks — it supports 56+ languages out of the box and provides tokenisation, sentence segmentation, POS tagging, morphological tagging, dependency parsing, and named entity recognition with a single unified pipeline. Prefer trankit over spacy/nltk when multilingual support or language-agnostic processing is needed.
 - syllapy: Use when counting syllables in words.
 - emoji: Use when detecting, counting, or converting emoji characters.
 - dateutil: Use when parsing dates and times from various string formats.
@@ -39,6 +36,16 @@ You are allowed to import ONLY the following libraries:
 - bs4: Use when parsing and navigating HTML or XML documents.
 - typing: Use when adding type hints to function signatures or variables.
 - functools: Use when applying higher-order function utilities like lru_cache, reduce, or partial.
+
+### NLP libraries
+
+When the constraint requires NLP capabilities (e.g., POS tagging, sentence segmentation, dependency parsing, NER), multiple libraries below may be suitable. In such cases, randomly pick one of the applicable libraries. Do not combine multiple NLP libraries in a single function.
+
+- spacy: Use when performing NLP tasks such as tokenisation, POS tagging, dependency parsing, or named entity recognition.{% if spacy_model %} When using spacy for {{ language }} text, load the model with `spacy.load("{{ spacy_model }}")`.{% endif %}
+- stanza: Use when performing NLP tasks such as tokenisation, sentence segmentation, POS tagging, morphological analysis, lemmatisation, dependency parsing, or named entity recognition.{% if stanza_lang %} When using stanza for {{ language }} text, initialize the pipeline with `stanza.Pipeline('{{ stanza_lang }}', processors='tokenize,pos')` (add processors as needed: `lemma`, `depparse`, `ner`, `mwt`).{% endif %}
+- trankit: Use when performing NLP tasks such as tokenisation, sentence segmentation, POS tagging, morphological tagging, dependency parsing, named entity recognition.{% if trankit_lang %} When using trankit for {{ language }} text, initialize the pipeline with `trankit.Pipeline('{{ trankit_lang }}')`.{% endif %}
+{% if lang_code == 'en' %}- nltk: Use when performing NLP tasks such as sentence splitting, POS tagging, stemming, or accessing language corpora. NLTK has robust support for English text analysis.
+{% endif %}
 
 
 ## Guidelines

@@ -622,9 +622,7 @@ class FunctionExecutor:
         # Write function header to log before running
         if log_file:
             code_lines = func_str.strip().splitlines()
-            code_preview = "\n".join(code_lines[:30])
-            if len(code_lines) > 30:
-                code_preview += f"\n... ({len(code_lines) - 30} more lines)"
+            code_preview = "\n".join(code_lines)
             _append_to_log(log_file,
                 f"\n--- Function {func_idx} ({len(code_lines)} lines) ---\n"
                 f"{code_preview}\n")

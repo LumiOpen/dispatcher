@@ -145,7 +145,7 @@ srun -l bash -c '
         # Ports
         export MASTER_ADDR=${MASTER_ADDR:-127.0.0.1}
         export MASTER_PORT=$(( 7000 + LOCALID ))
-        export VLLM_PORT=$(( 8000 + LOCALID * 100 ))
+        export VLLM_PORT=$(( 29000 + LOCALID * 100 ))
         
 {% if exports is defined %}
         # Task-specific environment variables
