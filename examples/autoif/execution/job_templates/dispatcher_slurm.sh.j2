@@ -129,14 +129,16 @@ srun -l bash -c '
         
         LOCALID=${SLURM_LOCALID:-0}
         
-        # GPU allocation: SLURM cgroups partition and renumber GPUs per task,
-        # so each task always sees GPUs 0..GPUS_PER_TASK-1 regardless of LOCALID.
+        # GPU allocation: Singularity --cleanenv does not inherit SLURM
+        # cgroup device isolation, so we manually assign disjoint GPU sets
+        # based on LOCALID (task 0 → GPUs 0..N-1, task 1 → GPUs N..2N-1, …).
+        start_gpu=$(( LOCALID * '"'$GPUS_PER_TASK'"' ))
         GPU_IDS=""
         for (( i=0; i<'"'$GPUS_PER_TASK'"'; i++ )); do
             if [ -z "$GPU_IDS" ]; then
-                GPU_IDS="$i"
+                GPU_IDS="$(( start_gpu + i ))"
             else
-                GPU_IDS="${GPU_IDS},$i"
+                GPU_IDS="${GPU_IDS},$(( start_gpu + i ))"
             fi
         done
         export ROCR_VISIBLE_DEVICES="$GPU_IDS"

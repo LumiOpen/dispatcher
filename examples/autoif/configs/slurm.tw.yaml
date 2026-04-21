@@ -34,9 +34,12 @@ jobs:
     gpus_per_node: 8
     time: "10:00:00"
 
-  responses_generation:
-    time: "08:00:00"
-
   concatenation_job:
     mem: "128G"
     time: "00:30:00"
+
+  response_generation:
+    ntasks_per_node: 2
+    gpus_per_node: 8
+    time: "12:00:00"
+    

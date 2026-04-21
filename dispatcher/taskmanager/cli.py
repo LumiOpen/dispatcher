@@ -184,6 +184,8 @@ def run(
         extra_vllm_args=extra_vllm_args,
     )
 
+    task_cls.setup()
+
     manager = TaskManager(num_workers=workers)
 
     _install_signal_handlers(backend, manager, source)

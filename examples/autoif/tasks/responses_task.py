@@ -22,7 +22,7 @@ from src.placeholder_resolver import (
     LLMPlaceholderResolver,
     format_value,
 )
-from src.utils.function_executor import FunctionExecutor
+from src.utils.function_executor import FunctionExecutor, set_worker_pool
 from src.utils.lang_id import get_env_language_name, detect_language
 from src.utils.text_utils import format_constraints_with_conjunctions
 from src.utils.error_utils import format_error_type_with_turn
@@ -43,6 +43,29 @@ _SCORE_PATTERNS = [
 
 class GenerateResponsesTask(GeneratorTask):
     """Generate responses from the new constraints/turns input format."""
+
+    @classmethod
+    def setup(cls) -> None:
+        """Create a shared WorkerPool for eval-function execution.
+
+        Reads configuration from environment variables:
+        - PREIMPORT_MODULES: comma-separated list of modules to cache
+          (e.g. "stanza,spacy,trankit").  If empty or unset, no pool is
+          created and evaluation falls back to isolated subprocesses.
+        - EVAL_WORKERS: number of spawn'd pool workers (default 4).
+        """
+        modules_str = os.environ.get("PREIMPORT_MODULES", "")
+        modules = [m.strip() for m in modules_str.split(",") if m.strip()]
+        if not modules:
+            return
+
+        from src.utils.worker_pool import WorkerPool
+
+        n_workers = int(os.environ.get("EVAL_WORKERS", "4"))
+        pool = WorkerPool.create(num_workers=n_workers, preimport_modules=modules)
+        set_worker_pool(pool)
+        logger.info("WorkerPool active (%d workers, pre-imported: %s)",
+                     n_workers, ", ".join(modules))
 
     GEN_PARAMS: Dict[str, Any] = {
         "temperature": 0.7,
@@ -67,31 +90,31 @@ class GenerateResponsesTask(GeneratorTask):
 
     @staticmethod
     def _check_error(response: str, turn: int) -> None:
-        """Raise TaskFailed if the response contains an error JSON."""
+        """Raise TaskFailed if the response is entirely an error JSON object.
 
-        def _extract_json(text: str):
-            m = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL | re.IGNORECASE)
+        Only matches when the whole response is a JSON object (or a single
+        markdown code block wrapping one) — avoids false positives on
+        responses that mention errors as part of substantive content.
+        """
+        text = response.strip()
+        data = None
+
+        # Try parsing entire response as JSON
+        try:
+            parsed = json.loads(text)
+            if isinstance(parsed, dict):
+                data = parsed
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+        # Try a standalone code block (response is *only* the block)
+        if data is None:
+            m = re.fullmatch(r'```(?:json)?\s*(\{.*?\})\s*```', text, re.DOTALL)
             if m:
                 try:
-                    return json.loads(m.group(1))
-                except json.JSONDecodeError:
+                    data = json.loads(m.group(1))
+                except (json.JSONDecodeError, ValueError):
                     pass
-            for m in re.finditer(r"\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}", text, re.DOTALL):
-                try:
-                    parsed = json.loads(m.group())
-                    if isinstance(parsed, dict):
-                        return parsed
-                except json.JSONDecodeError:
-                    continue
-            try:
-                parsed = json.loads(text.strip())
-                if isinstance(parsed, dict):
-                    return parsed
-            except json.JSONDecodeError:
-                pass
-            return None
-
-        data = _extract_json(response)
         if data and "error" in data:
             err = data["error"]
             if err == "contradicting_constraints":
@@ -131,9 +154,9 @@ class GenerateResponsesTask(GeneratorTask):
         eval_funcs_by_id: Dict[str, List[str]],
         resolved_values: Dict[str, Dict[str, Any]],
         turn: int,
+        executor: FunctionExecutor,
     ) -> None:
         """Run evaluation functions for each constraint; raise on failure."""
-        executor = FunctionExecutor()
         failed = []
 
         for cid in constraint_ids:
@@ -151,10 +174,11 @@ class GenerateResponsesTask(GeneratorTask):
                     if r is not None:
                         results.append(r)
                 except Exception as e:
-                    raise TaskFailed(
-                        message=f"Error executing eval func for constraint {cid}: {e} <response>{response}</response>",
-                        error_type=format_error_type_with_turn("function_execution_failed", turn),
+                    logger.warning(
+                        "Eval function error for constraint %s (turn %d): %s",
+                        cid, turn + 1, e,
                     )
+                    results.append(0)
             acc = float(np.mean(results)) if results else 0.0
             if acc <= 0:
                 failed.append((cid, acc))
@@ -257,8 +281,11 @@ class GenerateResponsesTask(GeneratorTask):
             try:
                 with open(placeholder_lookup_file, "r") as f:
                     placeholder_lookup = json.load(f)
-            except (FileNotFoundError, json.JSONDecodeError):
-                logger.warning(f"[{task_id}] Could not load placeholder lookup from {placeholder_lookup_file}")
+            except (FileNotFoundError, json.JSONDecodeError) as e:
+                raise TaskFailed(
+                    message=f"Could not load placeholder lookup from {placeholder_lookup_file}: {e}",
+                    error_type="placeholder_lookup_failed",
+                )
 
         static_resolver = StaticPlaceholderResolver(placeholder_lookup)
         llm_resolver = LLMPlaceholderResolver()
@@ -274,12 +301,14 @@ class GenerateResponsesTask(GeneratorTask):
                 resolved_values.setdefault(cid, {}).update(vals)
 
         # Phase B: build one LLM request per constraint for remaining placeholders
+        # (includes static placeholders that couldn't be resolved from the lookup)
         pending_requests: List[Request] = []
         for cid, cinfo in constraints.items():
             placeholders = cinfo.get("placeholders", {})
             if not placeholders:
                 continue
-            req = llm_resolver.build_request(cid, cinfo["constraint"], placeholders, query, self.GEN_PARAMS)
+            already_resolved = set(resolved_values.get(cid, {}).keys())
+            req = llm_resolver.build_request(cid, cinfo["constraint"], placeholders, query, self.GEN_PARAMS, resolved_names=already_resolved)
             if req is not None:
                 pending_requests.append(req)
 
@@ -316,11 +345,20 @@ class GenerateResponsesTask(GeneratorTask):
         language = get_env_language_name()
         is_no_followup = True  # always true – single query, multiple rephrase turns
 
+        # Format query once (before turn loop)
+        with open("model_prompts/format_query_prompt.txt", "r") as f:
+            fmt_prompt = f.read().strip()
+        fmt_prompt = fmt_prompt.format(query=query, language=language)
+        logger.info(f"[TASK:{task_id}] Format query prompt: {fmt_prompt}")
+        fmt_resp: Response = yield Request({"messages": [{"role": "user", "content": fmt_prompt}], **self.GEN_PARAMS})
+        formatted_query = fmt_resp.get_text().strip()
+        logger.info(f"[TASK:{task_id}] Formatted query: {formatted_query}")
+
+        executor = FunctionExecutor()
         queries_messages: List[Dict[str, str]] = []
         output_turns: List[Dict[str, Any]] = []
         all_responses: List[str] = []
         final_messages: List[Dict[str, str]] = []
-        formatted_query: str = ""
 
         for turn_idx in range(num_turns):
             # Save state for rollback on retry
@@ -349,17 +387,6 @@ class GenerateResponsesTask(GeneratorTask):
 
                     # b. Format constraints as bullet-point list
                     constraints_bullet_list = "\n".join(f"- {t}" for t in turn_constraint_texts)
-
-                    # b2. Format query (turn 0 only)
-                    if turn_idx == 0:
-                        with open("model_prompts/format_query_prompt.txt", "r") as f:
-                            fmt_prompt = f.read().strip()
-                        fmt_prompt = fmt_prompt.format(query=query, language=language)
-                        logger.info(f"[TASK:{task_id},RETRY:{retry}] Turn 0 format query prompt: {fmt_prompt}")
-
-                        fmt_resp: Response = yield Request({"messages": [{"role": "user", "content": fmt_prompt}], **self.GEN_PARAMS})
-                        formatted_query = fmt_resp.get_text().strip()
-                        logger.info(f"[TASK:{task_id},RETRY:{retry}] Turn 0 formatted query: {formatted_query}")
 
                     # c. Build prompt
                     if num_turns == 1:
@@ -396,7 +423,7 @@ class GenerateResponsesTask(GeneratorTask):
                     # e. Verify response
                     self._check_error(response_text, turn_idx)
                     self._check_language(response_text, turn_idx)
-                    self._run_eval_funcs(response_text, turn_cids, eval_funcs_by_id, resolved_values, turn_idx)
+                    self._run_eval_funcs(response_text, turn_cids, eval_funcs_by_id, resolved_values, turn_idx, executor)
 
                     # f. Score relevance
                     is_rephrase = is_no_followup and turn_idx > 0

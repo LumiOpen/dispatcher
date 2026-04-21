@@ -36,6 +36,16 @@ class Task(ABC):
         self.data = data
         self.context = context
 
+    # -- one-time setup ----------------------------------------------------
+
+    @classmethod
+    def setup(cls) -> None:
+        """Called once per process before any items are created.
+
+        Override to perform expensive one-time initialisation (e.g. spawning
+        a worker pool, pre-downloading models).  The default is a no-op.
+        """
+
     # -- lifecycle ---------------------------------------------------------
 
     @abstractmethod

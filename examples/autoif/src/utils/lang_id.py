@@ -1,9 +1,17 @@
 #language identifier
-from huggingface_hub import hf_hub_download
-import fasttext
 
-model_path = hf_hub_download(repo_id="cis-lmu/glotlid", filename="model.bin")   
-model_glotlid = fasttext.load_model(model_path)
+_model_glotlid = None
+
+
+def _get_glotlid_model():
+    """Lazy-load the GlotLID model on first use."""
+    global _model_glotlid
+    if _model_glotlid is None:
+        from huggingface_hub import hf_hub_download
+        import fasttext
+        model_path = hf_hub_download(repo_id="cis-lmu/glotlid", filename="model.bin")
+        _model_glotlid = fasttext.load_model(model_path)
+    return _model_glotlid
 
 # ISO 639-2 to 639-1 lang code mapping
 GLOT_LANG_DICT = {
@@ -111,7 +119,8 @@ def get_env_language_name() -> str:
 def detect_language(text):
     """Given a text, it returns the Glotlid prediction as NLLB language code, e.g., Latn-eng
     """
-    lang_code, score = model_glotlid.predict(text.replace("\n", " "))
+    model = _get_glotlid_model()
+    lang_code, score = model.predict(text.replace("\n", " "))
     # extract 639-2 lang code (three-letter code)
     three_lang_code = lang_code[0].replace("__label__","").replace("_Latn","")
     # map 639-2 to 639-1 code if available

@@ -27,8 +27,8 @@ pipeline:
   - verifiers_preprocessing: false
   - verifiers_generation: false
   - verifiers_cross_validation: false
-  - concatenation_job: true
-  - response_generation: false
+  - concatenation_job: false
+  - response_generation: true
 
 # ==============================================================================
 # Global Configuration
@@ -139,12 +139,12 @@ jobs:
     # --no-deps skips trankit's torch<=2.0.1 pin.
     container: "/shared_silo/scratch/containers/vllm-openai-rocm-gemma4.sif"
     pip_extras:
-      - --no-deps trankit==1.1.2
-      - adapters
-      - langid==1.1.6
-      - sacremoses
-      - stanza
-      - spacy
+      - "--no-deps trankit==1.1.2"
+      - "--no-deps adapters"
+      - "--no-deps langid==1.1.6"
+      - "--no-deps sacremoses"
+      - "--no-deps stanza"
+      - "--no-deps spacy"
     # trankit's tpipeline.py imports AdamW (removed in transformers>=4.43).
     # We only use Pipeline (inference), not TPipeline (training), so skip it.
     setup_commands:
@@ -188,20 +188,23 @@ jobs:
     vllm_extra_args: "--gpu-memory-utilization 0.85"
     work_timeout: 3600
     request_timeout: 1800
-    workers: 4
+    workers: 128
     # trankit 1.1.2 removed the vendored adapter_transformers module that
     # breaks on Python 3.12 (mutable dataclass default).  Install with
     # --no-deps to skip the torch<=2.0.1 pin (container torch is fine).
     pip_extras:
       - "--no-deps trankit==1.1.2"
-      - "adapters"
-      - "langid==1.1.6"
-      - "sacremoses"
-      - "stanza"
-      - "spacy"
+      - "--no-deps adapters"
+      - "--no-deps langid==1.1.6"
+      - "--no-deps sacremoses"
+      - "--no-deps stanza"
+      - "--no-deps spacy"
     exports:
       LANGUAGE: "${language}"
       SCORE_THRESHOLD: "4"
-      PLACEHOLDER_LOOKUP_FILE: "${base_dir}/data/lumi_gemma3_it/placeholder_lookup.json"
+      PLACEHOLDER_LOOKUP_FILE: "placeholder_lookup.json"
       MAX_RETRIES: "5"
-      FUNCTION_TIMEOUT: "${function_timeout}"
+      EVAL_WORKERS: "8"
+      PREIMPORT_MODULES: "stanza,spacy,trankit"
+      INIT_TIMEOUT: "300"
+      CASE_TIMEOUT: "30"

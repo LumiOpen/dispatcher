@@ -32,8 +32,6 @@ class StaticPlaceholderResolver:
             values = meta.get("values") or self.lookup.get(name, {}).get("values")
             if values:
                 resolved[name] = random.choice(values)
-            else:
-                resolved[name] = f"[{name}]"
         return resolved
 
 
@@ -59,16 +57,17 @@ class LLMPlaceholderResolver:
         placeholders: Dict[str, Dict],
         query: str,
         gen_params: Dict[str, Any],
+        resolved_names: Optional[set] = None,
     ) -> Optional[Request]:
-        """Build a single LLM request for all non-static placeholders.
+        """Build a single LLM request for all unresolved placeholders.
 
-        Returns None if every placeholder is static (nothing for the LLM to do).
+        Returns None if every placeholder is already resolved.
         """
-        # Collect non-static placeholders as {name: type}
+        resolved_names = resolved_names or set()
         llm_placeholders = {
             name: meta.get("type", "dynamic")
             for name, meta in placeholders.items()
-            if meta.get("type") != "static"
+            if name not in resolved_names
         }
         if not llm_placeholders:
             return None
