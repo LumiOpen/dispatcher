@@ -91,7 +91,8 @@ class VLLMServerManager:
         ]
         
         if disable_log_requests:
-            cmd.append("--disable-log-requests")
+            # cmd.append("--disable-log-requests")
+            pass
         if api_key:
             cmd.extend(["--api-key", api_key])
         if chat_template:
