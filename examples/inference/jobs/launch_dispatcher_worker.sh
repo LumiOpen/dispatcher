@@ -142,6 +142,35 @@ else
 fi
 
 ###############################################################################
+# Claim a node-local port slot (0-7) using atomic mkdir.
+# Multiple array tasks may land on the same node; this gives each a unique
+# slot so their VLLM_PORT / MASTER_PORT values never collide.
+###############################################################################
+
+PORT_SLOT_DIR="/tmp/dispatcher_port_slots_${SLURM_ARRAY_JOB_ID:-$$}"
+mkdir -p "$PORT_SLOT_DIR"
+NODE_LOCAL_SLOT=""
+for _slot in $(seq 0 7); do
+  if mkdir "$PORT_SLOT_DIR/$_slot" 2>/dev/null; then
+    NODE_LOCAL_SLOT=$_slot
+    break
+  fi
+done
+if [ -z "$NODE_LOCAL_SLOT" ]; then
+  echo "[ERROR] Could not claim a port slot (all 8 slots taken on this node)" >&2
+  exit 1
+fi
+echo "Claimed node-local port slot $NODE_LOCAL_SLOT (dir: $PORT_SLOT_DIR/$NODE_LOCAL_SLOT)"
+
+_release_port_slot() {
+  rmdir "$PORT_SLOT_DIR/$NODE_LOCAL_SLOT" 2>/dev/null || true
+}
+trap '_release_port_slot' EXIT
+
+VLLM_PORT=$((20000 + NODE_LOCAL_SLOT * 100))
+MASTER_PORT=$((19000 + NODE_LOCAL_SLOT * 100))
+
+###############################################################################
 # Run worker in container
 #
 # Signal handling for preemption:
@@ -154,7 +183,7 @@ fi
 ###############################################################################
 
 _CHILD_PID=
-trap '[ -n "$_CHILD_PID" ] && { kill -TERM -- -"$_CHILD_PID" 2>/dev/null; wait "$_CHILD_PID" 2>/dev/null; }' TERM INT
+trap '[ -n "$_CHILD_PID" ] && { kill -TERM -- -"$_CHILD_PID" 2>/dev/null; wait "$_CHILD_PID" 2>/dev/null; }; _release_port_slot' TERM INT
 
 set -m
 run_sing_bash "
@@ -165,8 +194,8 @@ run_sing_bash "
   export HIP_VISIBLE_DEVICES=\$(seq -s, 0 $((GPUS_PER_TASK - 1)))
 
   export MASTER_ADDR=\${MASTER_ADDR:-127.0.0.1}
-  export MASTER_PORT=$((7000 + ${SLURM_ARRAY_TASK_ID:-0} * 100))
-  export VLLM_PORT=$((8000 + ${SLURM_ARRAY_TASK_ID:-0} * 100))
+  export MASTER_PORT=$MASTER_PORT
+  export VLLM_PORT=$VLLM_PORT
 
   echo \"Launching worker on \$(hostname) with GPUs \$HIP_VISIBLE_DEVICES (job \${SLURM_JOB_ID:-unknown})\"
 

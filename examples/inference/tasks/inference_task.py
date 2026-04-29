@@ -33,15 +33,31 @@ class InferenceTask(GeneratorTask):
         return_dict = self.data.copy()
         input_messages = return_dict.get("messages", [])
        
-        try:
-            resp: Response = yield Request({"messages": input_messages, **self.GEN_PARAMS})
-        except Exception as e:
-            self.logger.error(f"[InferenceTask] ID:{self.data.get('prompt_id')} Error generating response: {e}")
-            raise TaskFailed(
-                message=f"Error generating response: {e}", 
-                error_type="response_generation_error"
+        resp: Response = yield Request({"messages": input_messages, **self.GEN_PARAMS})
+       
+        if not resp.is_success:
+            self.logger.error(
+                "[InferenceTask] ID:%s Backend request failed: %s",
+                self.data.get("prompt_id"),
+                resp.error,
             )
-        response = resp.get_text().strip()
+            raise TaskFailed(
+                message=f"Backend request failed: {resp.error}",
+                error_type="response_generation_error",
+            )
+
+        response_text = resp.get_text()
+        if response_text is None:
+            self.logger.error(
+                "[InferenceTask] ID:%s Backend response had no extractable text payload",
+                self.data.get("prompt_id"),
+            )
+            raise TaskFailed(
+                message="Backend response had no extractable text payload",
+                error_type="response_parsing_error",
+            )
+
+        response = response_text.strip()
 
         self.logger.info(
             f"[InferenceTask] ID:{self.data.get('prompt_id')} Finished processing sample"
