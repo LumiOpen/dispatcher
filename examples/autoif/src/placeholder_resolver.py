@@ -93,13 +93,22 @@ class LLMPlaceholderResolver:
 
 def _extract_json_values(text: str) -> Dict[str, Any]:
     """Extract a JSON object from LLM output, handling markdown fences."""
+    candidate = _extract_json_candidate(text)
+    value = json.loads(candidate)
+    if not isinstance(value, dict):
+        raise ValueError(f"Expected placeholder response to decode to an object, got {type(value).__name__}")
+    return value
+
+
+def _extract_json_candidate(text: str) -> str:
+    """Return the most likely JSON object substring from raw LLM output."""
     m = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
     if m:
-        return json.loads(m.group(1))
+        return m.group(1)
     m = re.search(r"\{.*\}", text, re.DOTALL)
     if m:
-        return json.loads(m.group())
-    return json.loads(text)
+        return m.group()
+    return text.strip()
 
 
 def format_value(value: Any) -> str:

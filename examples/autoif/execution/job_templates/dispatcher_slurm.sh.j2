@@ -92,9 +92,8 @@ echo "Server is up."
 # ============================================================
 source {{ environment_setup }}
 
-# Pre-build wheels on the shared filesystem so every srun worker can install
-# without rebuilding from source (avoids node-local /tmp issues and parallel
-# build race conditions on setup.py).
+# Pre-build wheels on the shared filesystem so the venv install can use
+# them without rebuilding from source.
 WHEEL_DIR="$(pwd)/.wheels"
 rm -rf "$WHEEL_DIR"
 mkdir -p "$WHEEL_DIR"
@@ -106,32 +105,41 @@ run_sing_python -m pip wheel --wheel-dir "$WHEEL_DIR" -r requirements.txt
 echo "Wheels ready in $WHEEL_DIR"
 
 # ============================================================
-# Dispatcher Workers (with vLLM launch)
+# Worker Venv (built once, shared by all srun ranks)
 # ============================================================
-srun -l bash -c '
-    source {{ environment_setup }}
+# The venv inherits the container's system-site-packages (torch, vllm, …)
+# and adds dispatcher + requirements + any pip_extras.  pip sees the
+# container packages as already installed so only genuinely missing
+# transitive deps get pulled in.
+run_sing_venv_create "worker_venv"
 
-    echo "Installing packages from pre-built wheels..."
-    run_sing_pip_install --no-index --find-links '"'$WHEEL_DIR'"' dispatcher
-    run_sing_pip_install --no-index --find-links '"'$WHEEL_DIR'"' -r requirements.txt
-    echo "Packages installed."
+echo "Installing dispatcher + requirements into venv..."
+run_sing_venv_pip "worker_venv" --no-index --find-links "$WHEEL_DIR" dispatcher
+run_sing_venv_pip "worker_venv" --no-index --find-links "$WHEEL_DIR" -r requirements.txt
 {% if pip_extras is defined %}
 
-    echo "Installing extra packages..."
+echo "Installing extra packages into venv..."
 {% for pkg in pip_extras %}
-    run_sing_pip_install {{ pkg }}
+run_sing_venv_pip "worker_venv" {{ pkg }}
 {% endfor %}
-    echo "Extra packages installed."
 {% endif %}
+echo "Worker venv ready."
+
+# ============================================================
+# Dispatcher Workers (with vLLM launch)
+# ============================================================
+# LAUNCHER_VENV was exported by run_sing_venv_create; srun inherits it,
+# so run_sing_bash inside each worker activates the venv automatically.
+srun -l bash -c '
+    source {{ environment_setup }}
 
     run_sing_bash '\''
         set -euxo pipefail
         
         LOCALID=${SLURM_LOCALID:-0}
         
-        # GPU allocation: Singularity --cleanenv does not inherit SLURM
-        # cgroup device isolation, so we manually assign disjoint GPU sets
-        # based on LOCALID (task 0 → GPUs 0..N-1, task 1 → GPUs N..2N-1, …).
+        # Per-task GPU isolation: task 0 → GPUs 0..GPUS_PER_TASK-1,
+        # task 1 → GPUs GPUS_PER_TASK..2*GPUS_PER_TASK-1, etc.
         start_gpu=$(( LOCALID * '"'$GPUS_PER_TASK'"' ))
         GPU_IDS=""
         for (( i=0; i<'"'$GPUS_PER_TASK'"'; i++ )); do
@@ -141,7 +149,6 @@ srun -l bash -c '
                 GPU_IDS="${GPU_IDS},$(( start_gpu + i ))"
             fi
         done
-        export ROCR_VISIBLE_DEVICES="$GPU_IDS"
         export HIP_VISIBLE_DEVICES="$GPU_IDS"
         
         # Ports

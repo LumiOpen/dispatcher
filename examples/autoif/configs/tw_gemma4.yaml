@@ -35,7 +35,7 @@ pipeline:
 # ==============================================================================
 model: "google/gemma-4-31b-it"
 max_model_len: 32768
-tensor_parallel: 4
+tensor_parallel: 2
 workers: 16
 batch_size: 1
 work_timeout: 3600
@@ -135,20 +135,14 @@ jobs:
     args:
       input-file: "verifiers_output.jsonl"
       output-file: "verifiers_validated.jsonl"
-    # Container provides torch.  adapters pulls in compatible transformers.
-    # --no-deps skips trankit's torch<=2.0.1 pin.
+    # Venv with --system-site-packages inherits the container's torch/vllm
+    # and lets pip resolve transitive deps (thinc, udtools, etc.) normally.
     container: "/shared_silo/scratch/containers/vllm-openai-rocm-gemma4.sif"
     pip_extras:
-      - "--no-deps trankit==1.1.2"
-      - "--no-deps adapters"
-      - "--no-deps langid==1.1.6"
-      - "--no-deps sacremoses"
-      - "--no-deps stanza"
-      - "--no-deps spacy"
-    # trankit's tpipeline.py imports AdamW (removed in transformers>=4.43).
-    # We only use Pipeline (inference), not TPipeline (training), so skip it.
-    setup_commands:
-      - "sed -i 's/from .tpipeline import TPipeline/TPipeline = None/' pythonuserbase_cv/lib/python*/site-packages/trankit/__init__.py"
+      - "langid==1.1.6"
+      - "sacremoses"
+      - "stanza"
+      - "spacy"
     exports:
       PYTHONUSERBASE: "$(pwd)/pythonuserbase_cv"
       FUNCTION_TIMEOUT: "300"
@@ -173,8 +167,8 @@ jobs:
       queries-path: "/shared_silo/scratch/datasets/lmsys-chat-fi.jsonl"
       output-file: "queries_constraints_verifiers.jsonl"
       instructions-per-turn: "1,0.5,0.25"
-      turns: 2
-      num-output-lines: 500000
+      turns: 3
+      num-output-lines: 700000
 
   # --------------------------------------------------------------------------
   # Response Generation
@@ -189,22 +183,19 @@ jobs:
     work_timeout: 3600
     request_timeout: 1800
     workers: 128
-    # trankit 1.1.2 removed the vendored adapter_transformers module that
-    # breaks on Python 3.12 (mutable dataclass default).  Install with
-    # --no-deps to skip the torch<=2.0.1 pin (container torch is fine).
+    # Venv with --system-site-packages inherits container torch/vllm;
+    # pip resolves transitive deps (thinc, udtools, …) normally.
     pip_extras:
-      - "--no-deps trankit==1.1.2"
-      - "--no-deps adapters"
-      - "--no-deps langid==1.1.6"
-      - "--no-deps sacremoses"
-      - "--no-deps stanza"
-      - "--no-deps spacy"
+      - "langid==1.1.6"
+      - "sacremoses"
+      - "stanza"
+      - "spacy"
     exports:
       LANGUAGE: "${language}"
       SCORE_THRESHOLD: "4"
       PLACEHOLDER_LOOKUP_FILE: "placeholder_lookup.json"
       MAX_RETRIES: "5"
       EVAL_WORKERS: "8"
-      PREIMPORT_MODULES: "stanza,spacy,trankit"
+      PREIMPORT_MODULES: "stanza,spacy"
       INIT_TIMEOUT: "300"
       CASE_TIMEOUT: "30"

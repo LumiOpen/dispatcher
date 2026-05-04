@@ -20,7 +20,7 @@ import subprocess
 import sys
 import time
 import zipfile
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Set, Tuple
 
 DOWNLOAD_TIMEOUT = int(os.getenv("MODEL_DOWNLOAD_TIMEOUT", 300))
 
@@ -50,6 +50,16 @@ _TRANKIT_HF_URL = (
 _TRANKIT_CACHE_DIR = os.path.join("cache", "trankit")
 _TRANKIT_EMBEDDING = "xlm-roberta-base"
 _TRANKIT_VERSION = "v1.0.0"
+_STANZA_DEFAULT_PROCESSOR = "__default__"
+_STANZA_PROCESSOR_DEPENDENCIES: Dict[str, Set[str]] = {
+    "mwt": {"tokenize"},
+    "pos": {"tokenize"},
+    "lemma": {"tokenize", "pos"},
+    "depparse": {"tokenize", "pos", "lemma"},
+    "ner": {"tokenize"},
+    "sentiment": {"tokenize"},
+    "constituency": {"tokenize", "pos"},
+}
 
 
 # ---------------------------------------------------------------------------
@@ -76,15 +86,84 @@ def _scan_trankit_languages(functions: List[str]) -> Set[str]:
     return langs
 
 
+def _encode_stanza_requirement(lang: str, processor: str) -> str:
+    """Encode a stanza dependency into a stable string token."""
+    return f"{lang}:{processor}"
+
+
+def _decode_stanza_requirement(requirement: str) -> Tuple[str, str]:
+    """Decode a stanza dependency token into ``(lang, processor)``."""
+    lang, processor = requirement.split(":", 1)
+    return lang, processor
+
+
+def _expand_stanza_processors(processors: Set[str]) -> Set[str]:
+    """Expand stanza processors to include known prerequisites."""
+    expanded = {p for p in processors if p and p != _STANZA_DEFAULT_PROCESSOR}
+    queue = list(expanded)
+    while queue:
+        processor = queue.pop()
+        for dep in _STANZA_PROCESSOR_DEPENDENCIES.get(processor, set()):
+            if dep not in expanded:
+                expanded.add(dep)
+                queue.append(dep)
+    return expanded
+
+
+def _extract_stanza_lang(call_args: str) -> Optional[str]:
+    """Extract the stanza language argument from a ``Pipeline(...)`` call."""
+    match = re.search(r'lang\s*=\s*["\'](\w+)["\']', call_args)
+    if match:
+        return match.group(1).lower()
+    match = re.match(r'\s*["\'](\w+)["\']', call_args)
+    if match:
+        return match.group(1).lower()
+    return None
+
+
+def _extract_stanza_processors(call_args: str) -> Set[str]:
+    """Extract stanza processors from a ``Pipeline(...)`` call when specified."""
+    processors: Set[str] = set()
+    string_match = re.search(r'processors\s*=\s*["\']([^"\']+)["\']', call_args, re.DOTALL)
+    if string_match:
+        for processor in string_match.group(1).split(","):
+            normalized = processor.strip().lower()
+            if normalized:
+                processors.add(normalized)
+        return processors
+
+    dict_match = re.search(r'processors\s*=\s*\{(.*?)\}', call_args, re.DOTALL)
+    if dict_match:
+        for processor in re.findall(r'["\'](\w+)["\']\s*:', dict_match.group(1)):
+            normalized = processor.strip().lower()
+            if normalized:
+                processors.add(normalized)
+    return processors
+
+
 def _scan_stanza_languages(functions: List[str]) -> Set[str]:
-    """Detect ``stanza.Pipeline('lang')`` or ``stanza.Pipeline(lang='lang')``."""
-    langs: Set[str] = set()
+    """Detect stanza dependencies at processor granularity.
+
+    Requirements are encoded as ``lang:processor`` tokens so the runtime can
+    preload processors such as ``pos`` and ``lemma`` instead of only checking
+    that a tokenizer exists for the language.
+    """
+    requirements: Set[str] = set()
     for fn in functions:
-        for m in re.findall(r'stanza\.Pipeline\(\s*["\'](\w+)["\']\s*', fn):
-            langs.add(m.lower())
-        for m in re.findall(r'stanza\.Pipeline\(\s*lang\s*=\s*["\'](\w+)["\']\s*', fn):
-            langs.add(m.lower())
-    return langs
+        for match in re.finditer(r'stanza\.Pipeline\((.*?)\)', fn, re.DOTALL):
+            call_args = match.group(1)
+            lang = _extract_stanza_lang(call_args)
+            if not lang:
+                continue
+
+            processors = _extract_stanza_processors(call_args)
+            if not processors:
+                requirements.add(_encode_stanza_requirement(lang, _STANZA_DEFAULT_PROCESSOR))
+                continue
+
+            for processor in sorted(_expand_stanza_processors(processors)):
+                requirements.add(_encode_stanza_requirement(lang, processor))
+    return requirements
 
 
 def _scan_nltk_resources(functions: List[str]) -> Set[str]:
@@ -101,6 +180,16 @@ def _scan_nltk_resources(functions: List[str]) -> Set[str]:
     return resources
 
 
+def detect_nlp_model_dependencies(all_function_strings: List[str]) -> Dict[str, List[str]]:
+    """Detect NLP libraries/models referenced by generated verifier code."""
+    return {
+        "spacy": sorted(_scan_spacy_models(all_function_strings)),
+        "stanza": sorted(_scan_stanza_languages(all_function_strings)),
+        "trankit": sorted(_scan_trankit_languages(all_function_strings)),
+        "nltk": sorted(_scan_nltk_resources(all_function_strings)),
+    }
+
+
 # ---------------------------------------------------------------------------
 # In-process downloaders — spacy, stanza, nltk
 #
@@ -109,7 +198,11 @@ def _scan_nltk_resources(functions: List[str]) -> Set[str]:
 # will see.  No subprocess environment mismatches.
 # ---------------------------------------------------------------------------
 
-def _ensure_spacy_model(model: str, logger: logging.Logger) -> bool:
+def _ensure_spacy_model(
+    model: str,
+    logger: logging.Logger,
+    install_mode: str = "user",
+) -> bool:
     """Ensure a spaCy model is loadable, downloading if needed.
 
     Check is in-process (same sys.path as workers).  Download requires
@@ -131,11 +224,15 @@ def _ensure_spacy_model(model: str, logger: logging.Logger) -> bool:
     try:
         # spaCy models are hosted on GitHub releases, not PyPI, so we
         # must use `spacy download` for URL resolution.  Extra args
-        # after the model name are forwarded to `pip install`; pass
-        # --user so the model installs into PYTHONUSERBASE (required
-        # in read-only containers like Singularity).
+        # after the model name are forwarded to `pip install`.
+        cmd = [sys.executable, "-m", "spacy", "download", model]
+        if install_mode == "user":
+            cmd.append("--user")
+        elif install_mode != "current":
+            logger.warning("  Unknown spaCy install_mode=%s for model %s", install_mode, model)
+            return False
         proc = subprocess.run(
-            [sys.executable, "-m", "spacy", "download", model, "--user"],
+            cmd,
             capture_output=True, text=True, timeout=DOWNLOAD_TIMEOUT,
         )
         elapsed = time.monotonic() - t0
@@ -151,37 +248,73 @@ def _ensure_spacy_model(model: str, logger: logging.Logger) -> bool:
     return False
 
 
-def _ensure_stanza_model(lang: str, logger: logging.Logger) -> bool:
-    """Ensure a stanza model is downloaded, downloading if needed.
-
-    Both the check and the download run in-process.
-    """
+def _ensure_stanza_model(
+    lang: str,
+    processors: Optional[Set[str]],
+    logger: logging.Logger,
+) -> Set[str]:
+    """Ensure stanza resources are available for the requested processors."""
     try:
         import stanza
     except ImportError:
         logger.warning("  stanza is not installed — cannot load model %s", lang)
-        return False
+        return set()
 
-    # Check if model is already usable.
+    requested = set(processors or {_STANZA_DEFAULT_PROCESSOR})
+    expanded = _expand_stanza_processors(requested)
+    validation_processors = "tokenize" if not expanded else ",".join(sorted(expanded))
+
     try:
-        stanza.Pipeline(lang, processors='tokenize', verbose=False,
-                        download_method=stanza.DownloadMethod.REUSE_RESOURCES)
-        logger.info("  stanza model %s already downloaded", lang)
-        return True
+        stanza.Pipeline(
+            lang,
+            processors=validation_processors,
+            verbose=False,
+            download_method=stanza.DownloadMethod.REUSE_RESOURCES,
+        )
+        logger.info(
+            "  stanza model %s already downloaded for processors=%s",
+            lang,
+            sorted(requested),
+        )
+        return requested
     except Exception:
         pass  # model not found — download below
 
     t0 = time.monotonic()
-    logger.info("  Downloading stanza model: %s ...", lang)
+    logger.info(
+        "  Downloading stanza model: %s (processors=%s) ...",
+        lang,
+        sorted(requested),
+    )
     try:
-        stanza.download(lang, verbose=False)
+        if requested == {_STANZA_DEFAULT_PROCESSOR}:
+            stanza.download(lang, verbose=False)
+        else:
+            stanza.download(lang, processors=",".join(sorted(expanded)), verbose=False)
+        stanza.Pipeline(
+            lang,
+            processors=validation_processors,
+            verbose=False,
+            download_method=stanza.DownloadMethod.REUSE_RESOURCES,
+        )
         elapsed = time.monotonic() - t0
-        logger.info("  stanza model %s OK (%.0fs)", lang, elapsed)
-        return True
+        logger.info(
+            "  stanza model %s OK (%.0fs, processors=%s)",
+            lang,
+            elapsed,
+            sorted(requested),
+        )
+        return requested
     except Exception as e:
         elapsed = time.monotonic() - t0
-        logger.warning("  stanza model %s FAILED (%.0fs): %s", lang, elapsed, e)
-    return False
+        logger.warning(
+            "  stanza model %s FAILED (%.0fs, processors=%s): %s",
+            lang,
+            elapsed,
+            sorted(requested),
+            e,
+        )
+    return set()
 
 
 def _set_stanza_offline(logger: logging.Logger) -> None:
@@ -458,20 +591,13 @@ def _warmup_trankit(lang: str, logger: logging.Logger) -> bool:
 # Main entry point
 # ---------------------------------------------------------------------------
 
-def scan_and_preload_models(
-    all_function_strings: List[str],
+def preload_model_dependencies(
+    dependencies: Dict[str, List[str]],
     logger: logging.Logger,
     timeout: int = DOWNLOAD_TIMEOUT,
+    spacy_install_mode: str = "user",
 ) -> Dict[str, List[str]]:
-    """Scan function code for NLP model usage and pre-download detected models.
-
-    Runs once at startup before cross-validation begins.  Downloads are
-    sequential (they share the network) and failures are logged as warnings
-    without aborting the run.
-
-    Returns:
-        Dict mapping library name to list of successfully pre-loaded models.
-    """
+    """Ensure detected NLP dependencies are available in the current runtime."""
     global DOWNLOAD_TIMEOUT
     DOWNLOAD_TIMEOUT = timeout
 
@@ -482,28 +608,34 @@ def scan_and_preload_models(
                 os.getcwd(),
                 sys.executable)
 
-    spacy_models = _scan_spacy_models(all_function_strings)
-    stanza_langs = _scan_stanza_languages(all_function_strings)
-    trankit_langs = _scan_trankit_languages(all_function_strings)
-    nltk_resources = _scan_nltk_resources(all_function_strings)
+    spacy_models = set(dependencies.get("spacy", []))
+    stanza_requirements = set(dependencies.get("stanza", []))
+    trankit_langs = set(dependencies.get("trankit", []))
+    nltk_resources = set(dependencies.get("nltk", []))
 
-    if not spacy_models and not stanza_langs and not trankit_langs and not nltk_resources:
+    if not spacy_models and not stanza_requirements and not trankit_langs and not nltk_resources:
         logger.info("No NLP model dependencies detected in functions")
         return {"spacy": [], "stanza": [], "trankit": [], "nltk": []}
 
     logger.info("Detected NLP models: spacy=%s, stanza=%s, trankit=%s, nltk=%s",
-                sorted(spacy_models), sorted(stanza_langs),
+                sorted(spacy_models), sorted(stanza_requirements),
                 sorted(trankit_langs), sorted(nltk_resources))
 
     loaded: Dict[str, List[str]] = {"spacy": [], "stanza": [], "trankit": [], "nltk": []}
 
     for model in sorted(spacy_models):
-        if _ensure_spacy_model(model, logger):
+        if _ensure_spacy_model(model, logger, install_mode=spacy_install_mode):
             loaded["spacy"].append(model)
 
-    for lang in sorted(stanza_langs):
-        if _ensure_stanza_model(lang, logger):
-            loaded["stanza"].append(lang)
+    stanza_by_lang: Dict[str, Set[str]] = {}
+    for requirement in sorted(stanza_requirements):
+        lang, processor = _decode_stanza_requirement(requirement)
+        stanza_by_lang.setdefault(lang, set()).add(processor)
+
+    for lang in sorted(stanza_by_lang):
+        loaded_processors = _ensure_stanza_model(lang, stanza_by_lang[lang], logger)
+        for processor in sorted(loaded_processors):
+            loaded["stanza"].append(_encode_stanza_requirement(lang, processor))
 
     # After downloading stanza models, patch Pipeline to skip update checks.
     # Must happen before fork() so workers inherit the patched default.
@@ -563,9 +695,33 @@ def scan_and_preload_models(
         logger.info("Trankit cache_dir: %s", abs_cache)
 
     total = sum(len(v) for v in loaded.values())
-    expected = len(spacy_models) + len(stanza_langs) + len(trankit_langs) + len(nltk_resources)
+    expected = len(spacy_models) + len(stanza_requirements) + len(trankit_langs) + len(nltk_resources)
     logger.info("Model pre-loading complete: %d/%d downloads succeeded, "
                 "xlmr_cached=%s, trankit_warmup=%s",
                 total, expected, xlmr_ok, warmup_ok)
 
     return loaded
+
+
+def scan_and_preload_models(
+    all_function_strings: List[str],
+    logger: logging.Logger,
+    timeout: int = DOWNLOAD_TIMEOUT,
+    spacy_install_mode: str = "user",
+) -> Dict[str, List[str]]:
+    """Scan function code for NLP model usage and pre-download detected models.
+
+    Runs once at startup before cross-validation begins.  Downloads are
+    sequential (they share the network) and failures are logged as warnings
+    without aborting the run.
+
+    Returns:
+        Dict mapping library name to list of successfully pre-loaded models.
+    """
+    dependencies = detect_nlp_model_dependencies(all_function_strings)
+    return preload_model_dependencies(
+        dependencies,
+        logger,
+        timeout=timeout,
+        spacy_install_mode=spacy_install_mode,
+    )

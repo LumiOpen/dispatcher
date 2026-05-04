@@ -41,6 +41,12 @@ export LAUNCHER_AITER_DIR=""
 export LAUNCHER_PYUSERBASE="${PWD}/pythonuserbase"
 export LAUNCHER_PYUSERPKG="${LAUNCHER_PYUSERBASE}/lib/python${LAUNCHER_PYTHON_VERSION}/site-packages"
 
+# Optional venv name (relative to /workspace inside container).
+# When set, run_sing_bash activates this venv instead of using PYTHONUSERBASE.
+# Preserved across srun inheritance — use := so a parent export is not clobbered.
+: "${LAUNCHER_VENV:=}"
+export LAUNCHER_VENV
+
 ###############################################################################
 # get_binds() - Returns bind mount arguments (one per line)
 # Exported so it's available in srun workers
@@ -230,17 +236,32 @@ run_sing_bash() {
     local binds_array
     mapfile -t binds_array < <(get_binds)
     
-    # Build inline environment setup that runs inside the container
-    # This handles per-rank cache isolation and defines run_python helper
+    # Build inline environment setup that runs inside the container.
+    # This handles Python path setup, per-rank cache isolation, and
+    # defines the run_python helper.
     local env_setup="
-    # Set HOME
     export HOME=\"${LAUNCHER_HOME}\"
-    
-    # Python user site-packages
+"
+
+    if [ -n "${LAUNCHER_VENV:-}" ]; then
+        # Venv mode: activate the pre-built venv that inherits container
+        # system-site-packages.  Keep PYTHONUSERBASE/bin on PATH so that
+        # tools installed there (e.g. ninja for AITER JIT) remain accessible.
+        env_setup+="
+    export PATH=\"\${PYTHONUSERBASE:-/workspace/pythonuserbase}/bin:\$PATH\"
+    source /workspace/${LAUNCHER_VENV}/bin/activate
+    export PYTHONPATH=\"/workspace:\${PYTHONPATH:-}\"
+"
+    else
+        # Legacy PYTHONUSERBASE mode (pip install --user)
+        env_setup+="
     export PYTHONUSERBASE=\"\${PYTHONUSERBASE:-/workspace/pythonuserbase}\"
     export PATH=\"\$PYTHONUSERBASE/bin:\$PATH\"
     export PYTHONPATH=\"\$PYTHONUSERBASE/lib/python${LAUNCHER_PYTHON_VERSION}/site-packages:/usr/local/lib/python${LAUNCHER_PYTHON_VERSION}/dist-packages:\${PYTHONPATH:-}\"
-    
+"
+    fi
+
+    env_setup+="
     # Per-rank Triton cache isolation (avoids multi-rank races on shared filesystems)
     export TRITON_CACHE_DIR=\"/tmp/triton_cache/\${SLURM_JOB_ID:-nojob}/\${SLURM_PROCID:-\${SLURM_LOCALID:-0}}\"
     mkdir -p \"\$TRITON_CACHE_DIR\" 2>/dev/null || true
@@ -250,11 +271,11 @@ run_sing_bash() {
     # derives from XDG_CACHE_HOME) produces a stable hash across SLURM jobs.
     export XDG_CACHE_HOME=\"/shared_silo/scratch/cache/xdg/\${SLURM_PROCID:-\${SLURM_LOCALID:-0}}\"
     mkdir -p \"\$XDG_CACHE_HOME\" 2>/dev/null || true
-    
+
     # Torch extensions in shared memory
     export TORCH_EXTENSIONS_DIR=\"\${TORCH_EXTENSIONS_DIR:-/dev/shm/torch_ext}\"
     mkdir -p \"\$TORCH_EXTENSIONS_DIR\" 2>/dev/null || true
-    
+
     # Define run_python helper
     run_python() {
         python3 \"\$@\"
@@ -306,6 +327,52 @@ run_sing_pip_install() {
     run_sing_python -m pip install --user "$@"
 }
 export -f run_sing_pip_install
+
+###############################################################################
+# run_sing_venv_create VENV_NAME - Create a venv with system-site-packages
+# The venv inherits all container packages (torch, vllm, …) and installs
+# new packages into a writable directory on /workspace.
+# Sets LAUNCHER_VENV so subsequent run_sing_bash calls activate it.
+###############################################################################
+run_sing_venv_create() {
+    local venv_name="${1:?usage: run_sing_venv_create VENV_NAME}"
+    local host_path="${PWD}/${venv_name}"
+
+    echo "[launcher] Creating venv: /workspace/${venv_name}"
+    rm -rf "$host_path"
+
+    local binds_array
+    mapfile -t binds_array < <(get_binds)
+
+    singularity exec --rocm --cleanenv "${binds_array[@]}" "$IMG" \
+        bash --noprofile --norc -c "
+            export HOME=${LAUNCHER_HOME}
+            python3 -m venv --system-site-packages /workspace/${venv_name}
+        "
+
+    LAUNCHER_VENV="$venv_name"
+    export LAUNCHER_VENV
+    echo "[launcher] Venv ready: /workspace/${venv_name}  (LAUNCHER_VENV=${LAUNCHER_VENV})"
+}
+export -f run_sing_venv_create
+
+###############################################################################
+# run_sing_venv_pip VENV_NAME [pip-args...] - pip install into a container venv
+###############################################################################
+run_sing_venv_pip() {
+    local venv_name="${1:?usage: run_sing_venv_pip VENV_NAME [pip-args...]}"
+    shift
+
+    local binds_array
+    mapfile -t binds_array < <(get_binds)
+
+    singularity exec --rocm --cleanenv "${binds_array[@]}" "$IMG" \
+        bash --noprofile --norc -c "
+            export HOME=${LAUNCHER_HOME}
+            /workspace/${venv_name}/bin/pip install \"\$@\"
+        " bash "$@"
+}
+export -f run_sing_venv_pip
 
 ###############################################################################
 # Cleanup trap

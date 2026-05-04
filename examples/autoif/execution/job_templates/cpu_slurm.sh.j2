@@ -53,6 +53,25 @@ export {{ key }}="{{ value }}"
 {% endfor %}
 {% endif %}
 
+{% if container is defined and pip_extras is defined %}
+# ============================================================
+# Venv Setup (system-site-packages inherits container packages)
+# ============================================================
+VENV_DIR="$(pwd)/.venv_{{ job_name }}"
+rm -rf "$VENV_DIR"
+echo "Creating venv with system-site-packages..."
+_run python3 -m venv --system-site-packages "$VENV_DIR"
+
+echo "Installing requirements into venv..."
+_run "$VENV_DIR/bin/pip" install -r requirements.txt
+{% for pkg in pip_extras %}
+echo "  {{ pkg }}"
+_run "$VENV_DIR/bin/pip" install {{ pkg }}
+{% endfor %}
+echo "Venv ready: $VENV_DIR"
+
+_run_py() { _run "$VENV_DIR/bin/python3" "$@"; }
+{% else %}
 # ============================================================
 # Install requirements
 # ============================================================
@@ -64,6 +83,9 @@ _run python3 -m pip install --user {{ pkg }}
 {% endfor %}
 {% endif %}
 echo "Requirements installed."
+
+_run_py() { _run python3 "$@"; }
+{% endif %}
 {% if setup_commands is defined %}
 
 # ============================================================
@@ -82,7 +104,7 @@ echo "Setup commands completed."
 echo "Running: python {{ script }}"
 echo ""
 
-_run python3 {{ script }} \
+_run_py {{ script }} \
 {%- for key, value in args.items() if value is not none %}
 {%- if value is sameas true %}
     --{{ key }}{% if not loop.last %} \{% endif %}
