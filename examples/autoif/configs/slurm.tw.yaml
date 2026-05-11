@@ -39,8 +39,8 @@ jobs:
     time: "00:30:00"
 
   response_generation:
-    nodes: 2
+    nodes: 1
     ntasks_per_node: 4
     gpus_per_node: 8
-    time: "48:00:00"
+    time: "72:00:00"
     

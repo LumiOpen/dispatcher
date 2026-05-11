@@ -3,29 +3,13 @@ import argparse
 import json
 import os
 import random
-from collections import Counter
+from collections import Counter, defaultdict
 from pathlib import Path
 
 
-SAMPLE_SIZE = 30_000
-TEST_SIZE = 150
-SAMPLE_SEED = 12_345
+DEFAULT_SAMPLE_SIZE = 30_000
+DEFAULT_TEST_SIZE = 150
 TEST_SEED = 67_890
-
-DATASETS = {
-    "successful_score4plus_1turn_or_2turn_final_messages": (
-        "successful_turn_count in {1,2}; exactly that many usable final turns; all usable scores in {4,5}"
-    ),
-    "highest_quality_score5_1turn_final_messages": (
-        "successful_turn_count == 1; one usable final turn; usable score == 5"
-    ),
-    "highest_quality_score5_2turn_final_messages": (
-        "successful_turn_count == 2; two usable final turns; both usable scores == 5"
-    ),
-    "highest_quality_score5_1turn_or_2turn_final_messages": (
-        "successful_turn_count in {1,2}; exactly that many usable final turns; all usable scores == 5"
-    ),
-}
 
 
 def usable_turns(row):
@@ -40,30 +24,13 @@ def usable_scores(row):
     return [turn.get("score") for turn in usable_turns(row)]
 
 
-def matching_dataset_names(row):
+def is_eligible(row):
     successful_turn_count = row.get("successful_turn_count")
-    if successful_turn_count not in (1, 2):
-        return []
-
-    scores = usable_scores(row)
-    if len(scores) != successful_turn_count:
-        return []
-
-    dataset_names = []
-    all_4plus = all(score in (4, 5) for score in scores)
-    all_5 = all(score == 5 for score in scores)
-
-    if all_4plus:
-        dataset_names.append("successful_score4plus_1turn_or_2turn_final_messages")
-
-    if all_5:
-        dataset_names.append("highest_quality_score5_1turn_or_2turn_final_messages")
-        if successful_turn_count == 1:
-            dataset_names.append("highest_quality_score5_1turn_final_messages")
-        elif successful_turn_count == 2:
-            dataset_names.append("highest_quality_score5_2turn_final_messages")
-
-    return dataset_names
+    return (
+        isinstance(successful_turn_count, int)
+        and successful_turn_count > 0
+        and len(usable_turns(row)) == successful_turn_count
+    )
 
 
 def compact_record(row):
@@ -79,38 +46,27 @@ def compact_record(row):
     source_constraints = row.get("constraints") or {}
     return {
         "messages": row.get("messages") or [],
-        "constraints": {
-            constraint_id: source_constraints[constraint_id]
+        "constraints": [
+            {
+                "constraint_id": constraint_id,
+                "constraint": source_constraints[constraint_id]["constraint"],
+                "template": source_constraints[constraint_id]["template"],
+                "kwargs": source_constraints[constraint_id]["kwargs"],
+                "eval_funcs": source_constraints[constraint_id]["eval_funcs"],
+                "category": source_constraints[constraint_id]["category"],
+            }
             for constraint_id in constraint_ids
             if constraint_id in source_constraints
-        },
+        ],
     }
 
 
-def update_reservoir(reservoir, rng, line_number, count, reservoir_size):
-    if len(reservoir) < reservoir_size:
-        reservoir.append(line_number)
-        return
-
-    replacement_index = rng.randint(1, count)
-    if replacement_index <= reservoir_size:
-        reservoir[replacement_index - 1] = line_number
-
-
-def select_line_numbers(input_file):
-    counts = Counter()
-    score_patterns = {name: Counter() for name in DATASETS}
-    sample_reservoirs = {name: [] for name in DATASETS}
-    full_test_reservoirs = {name: [] for name in DATASETS}
-    sample_rngs = {
-        name: random.Random(f"{SAMPLE_SEED}:{name}")
-        for name in DATASETS
-    }
-    full_test_rngs = {
-        name: random.Random(f"{TEST_SEED}:full:{name}")
-        for name in DATASETS
-    }
+def select_line_numbers(input_file, sample_size, test_size):
+    target_size = sample_size + test_size
     source_rows = 0
+    eligible_counts = Counter()
+    score_patterns = Counter()
+    line_numbers_by_turn_count = defaultdict(list)
 
     with input_file.open(encoding="utf-8") as source:
         for line_number, line in enumerate(source, 1):
@@ -119,203 +75,147 @@ def select_line_numbers(input_file):
 
             source_rows += 1
             row = json.loads(line)
-            names = matching_dataset_names(row)
-            if not names:
+            if not is_eligible(row):
                 continue
 
-            scores_key = ",".join(str(score) for score in sorted(usable_scores(row)))
-            for name in names:
-                counts[name] += 1
-                score_patterns[name][scores_key] += 1
-                update_reservoir(
-                    sample_reservoirs[name],
-                    sample_rngs[name],
-                    line_number,
-                    counts[name],
-                    SAMPLE_SIZE,
-                )
-                update_reservoir(
-                    full_test_reservoirs[name],
-                    full_test_rngs[name],
-                    line_number,
-                    counts[name],
-                    TEST_SIZE,
-                )
+            successful_turn_count = row["successful_turn_count"]
+            eligible_counts[successful_turn_count] += 1
+            score_patterns[",".join(str(score) for score in usable_scores(row))] += 1
 
-    for name in DATASETS:
-        count = counts[name]
-        if count < SAMPLE_SIZE:
-            raise ValueError(
-                f"{name} has only {count} matching rows; need {SAMPLE_SIZE}"
-            )
+            if len(line_numbers_by_turn_count[successful_turn_count]) < target_size:
+                line_numbers_by_turn_count[successful_turn_count].append(line_number)
 
-    return source_rows, counts, score_patterns, sample_reservoirs, full_test_reservoirs
+    selected_line_numbers = []
+    selected_by_turn_count = Counter()
+    for turn_count in sorted(line_numbers_by_turn_count, reverse=True):
+        remaining = target_size - len(selected_line_numbers)
+        if remaining <= 0:
+            break
 
+        selected = line_numbers_by_turn_count[turn_count][:remaining]
+        selected_line_numbers.extend(selected)
+        selected_by_turn_count[turn_count] = len(selected)
 
-def prepare_outputs(output_dir):
-    output_dir.mkdir(parents=True, exist_ok=True)
-    handles = {}
-    paths = {}
-
-    for name in DATASETS:
-        handles[name] = {}
-        paths[name] = {}
-
-        for split_name, suffix in (
-            ("sample_30k", "sample_30k.split"),
-            ("full", "full.split"),
-        ):
-            dataset_dir = output_dir / f"{name}.{suffix}"
-            dataset_dir.mkdir(parents=True, exist_ok=True)
-            train_path = dataset_dir / "train.jsonl"
-            test_path = dataset_dir / "test.jsonl"
-
-            # Remove the old JSON-array test file if this script is replacing a
-            # previous run from before both splits were standardized on JSONL.
-            old_test_json = dataset_dir / "test.json"
-            if old_test_json.exists():
-                old_test_json.unlink()
-
-            train_tmp = dataset_dir / "train.jsonl.tmp"
-            test_tmp = dataset_dir / "test.jsonl.tmp"
-            handles[name][split_name] = {
-                "train": train_tmp.open("w", encoding="utf-8"),
-                "test": test_tmp.open("w", encoding="utf-8"),
-            }
-            paths[name][split_name] = {
-                "dir": dataset_dir,
-                "train": train_path,
-                "test": test_path,
-                "train_tmp": train_tmp,
-                "test_tmp": test_tmp,
-            }
-
-    return handles, paths
-
-
-def write_splits(input_file, output_dir, sample_reservoirs, full_test_reservoirs):
-    selected_sample_lines = {
-        name: set(line_numbers)
-        for name, line_numbers in sample_reservoirs.items()
-    }
-    sample_test_lines = {
-        name: set(
-            random.Random(f"{TEST_SEED}:{name}").sample(line_numbers, TEST_SIZE)
+    if len(selected_line_numbers) < target_size:
+        raise ValueError(
+            f"Only selected {len(selected_line_numbers)} eligible rows; "
+            f"need {target_size}. Eligible counts: {dict(eligible_counts)}"
         )
-        for name, line_numbers in sample_reservoirs.items()
-    }
-    full_test_lines = {
-        name: set(line_numbers)
-        for name, line_numbers in full_test_reservoirs.items()
-    }
-    train_counts = {
-        "sample_30k": Counter(),
-        "full": Counter(),
-    }
-    test_counts = {
-        "sample_30k": Counter(),
-        "full": Counter(),
+
+    test_line_numbers = set(random.Random(TEST_SEED).sample(selected_line_numbers, test_size))
+    train_line_numbers = set(selected_line_numbers) - test_line_numbers
+
+    return {
+        "source_rows": source_rows,
+        "eligible_counts": eligible_counts,
+        "score_patterns": score_patterns,
+        "selected_line_numbers": set(selected_line_numbers),
+        "train_line_numbers": train_line_numbers,
+        "test_line_numbers": test_line_numbers,
+        "selected_by_turn_count": selected_by_turn_count,
     }
 
-    handles, paths = prepare_outputs(output_dir)
-    try:
-        with input_file.open(encoding="utf-8") as source:
-            for line_number, line in enumerate(source, 1):
-                if not line.strip():
-                    continue
 
-                row = json.loads(line)
-                matching_names = matching_dataset_names(row)
-                if not matching_names:
-                    continue
+def write_splits(input_file, output_dir, selected):
+    output_dir.mkdir(parents=True, exist_ok=True)
 
-                record_line = json.dumps(
+    train_path = output_dir / "train.jsonl"
+    test_path = output_dir / "test.jsonl"
+    train_tmp = output_dir / "train.jsonl.tmp"
+    test_tmp = output_dir / "test.jsonl.tmp"
+
+    train_counts = Counter()
+    test_counts = Counter()
+    train_score_counts = Counter()
+    test_score_counts = Counter()
+
+    with (
+        train_tmp.open("w", encoding="utf-8") as train_file,
+        test_tmp.open("w", encoding="utf-8") as test_file,
+        input_file.open(encoding="utf-8") as source,
+    ):
+        for line_number, line in enumerate(source, 1):
+            if line_number not in selected["selected_line_numbers"]:
+                continue
+
+            row = json.loads(line)
+            record_line = (
+                json.dumps(
                     compact_record(row),
                     ensure_ascii=False,
                     separators=(",", ":"),
-                ) + "\n"
+                )
+                + "\n"
+            )
+            successful_turn_count = row["successful_turn_count"]
+            scores = usable_scores(row)
 
-                for name in matching_names:
-                    if line_number in selected_sample_lines[name]:
-                        if line_number in sample_test_lines[name]:
-                            handles[name]["sample_30k"]["test"].write(record_line)
-                            test_counts["sample_30k"][name] += 1
-                        else:
-                            handles[name]["sample_30k"]["train"].write(record_line)
-                            train_counts["sample_30k"][name] += 1
+            if line_number in selected["test_line_numbers"]:
+                test_file.write(record_line)
+                test_counts[successful_turn_count] += 1
+                test_score_counts.update(scores)
+            else:
+                train_file.write(record_line)
+                train_counts[successful_turn_count] += 1
+                train_score_counts.update(scores)
 
-                    if line_number in full_test_lines[name]:
-                        handles[name]["full"]["test"].write(record_line)
-                        test_counts["full"][name] += 1
-                    else:
-                        handles[name]["full"]["train"].write(record_line)
-                        train_counts["full"][name] += 1
-    finally:
-        for dataset_handles in handles.values():
-            for split_handles in dataset_handles.values():
-                split_handles["train"].close()
-                split_handles["test"].close()
+    os.replace(train_tmp, train_path)
+    os.replace(test_tmp, test_path)
 
-    for dataset_paths in paths.values():
-        for split_paths in dataset_paths.values():
-            os.replace(split_paths["train_tmp"], split_paths["train"])
-            os.replace(split_paths["test_tmp"], split_paths["test"])
-
-    return train_counts, test_counts, paths
+    return {
+        "train_path": train_path,
+        "test_path": test_path,
+        "train_counts": train_counts,
+        "test_counts": test_counts,
+        "train_score_counts": train_score_counts,
+        "test_score_counts": test_score_counts,
+    }
 
 
-def write_manifest(
-    output_dir,
-    input_file,
-    source_rows,
-    counts,
-    score_patterns,
-    train_counts,
-    test_counts,
-    paths,
-):
+def write_manifest(output_dir, input_file, sample_size, test_size, selected, written):
     manifest = {
         "source": str(input_file),
-        "source_rows": source_rows,
-        "sample_size": SAMPLE_SIZE,
-        "test_size": TEST_SIZE,
-        "train_size": SAMPLE_SIZE - TEST_SIZE,
-        "sample_seed": SAMPLE_SEED,
+        "source_rows": selected["source_rows"],
+        "sample_size": sample_size,
+        "test_size": test_size,
+        "total_size": sample_size + test_size,
         "test_seed": TEST_SEED,
         "format": "jsonl",
-        "record_shape": (
-            "Each row contains only messages and constraints. messages is the "
-            "source final messages list; constraints is pruned to IDs from "
-            "usable attempted_turns.constraint_ids."
+        "selection": (
+            "Eligible rows are sorted by descending successful_turn_count. "
+            "Within each successful_turn_count bucket, source order is preserved. "
+            "The test split is sampled randomly from the selected rows."
         ),
-        "filters": DATASETS,
+        "eligibility": (
+            "successful_turn_count is a positive integer and exactly that many "
+            "attempted_turns have usable_for_final_dataset == true."
+        ),
+        "record_shape": (
+            "Each row contains messages and constraints. constraints is a list "
+            "of constraint_id, constraint, template, kwargs, eval_funcs, and category."
+        ),
+        "eligible_counts": dict(sorted(selected["eligible_counts"].items())),
+        "selected_by_successful_turn_count": dict(
+            sorted(selected["selected_by_turn_count"].items())
+        ),
+        "source_score_patterns": dict(selected["score_patterns"]),
         "splits": {
-            "sample_30k": {},
-            "full": {},
+            "train": {
+                "path": str(written["train_path"]),
+                "rows": sum(written["train_counts"].values()),
+                "by_successful_turn_count": dict(sorted(written["train_counts"].items())),
+                "score_counts": dict(sorted(written["train_score_counts"].items())),
+            },
+            "test": {
+                "path": str(written["test_path"]),
+                "rows": sum(written["test_counts"].values()),
+                "by_successful_turn_count": dict(sorted(written["test_counts"].items())),
+                "score_counts": dict(sorted(written["test_score_counts"].items())),
+            },
         },
     }
 
-    for name in DATASETS:
-        manifest["splits"]["sample_30k"][name] = {
-            "matching_rows": counts[name],
-            "score_patterns": dict(score_patterns[name]),
-            "output_dir": str(paths[name]["sample_30k"]["dir"]),
-            "train": str(paths[name]["sample_30k"]["train"]),
-            "test": str(paths[name]["sample_30k"]["test"]),
-            "train_rows": train_counts["sample_30k"][name],
-            "test_rows": test_counts["sample_30k"][name],
-        }
-        manifest["splits"]["full"][name] = {
-            "matching_rows": counts[name],
-            "score_patterns": dict(score_patterns[name]),
-            "output_dir": str(paths[name]["full"]["dir"]),
-            "train": str(paths[name]["full"]["train"]),
-            "test": str(paths[name]["full"]["test"]),
-            "train_rows": train_counts["full"][name],
-            "test_rows": test_counts["full"][name],
-        }
-
-    manifest_path = output_dir / "sample_30k_train_test_splits_manifest.json"
+    manifest_path = output_dir / "manifest.json"
     with manifest_path.open("w", encoding="utf-8") as manifest_file:
         json.dump(manifest, manifest_file, ensure_ascii=False, indent=2, sort_keys=True)
         manifest_file.write("\n")
@@ -326,60 +226,65 @@ def write_manifest(
 def parse_args():
     parser = argparse.ArgumentParser(
         description=(
-            "Build compact SFT train/test splits directly from scored_responses.jsonl."
+            "Build compact SFT train/test splits from scored_responses.jsonl, "
+            "prioritizing longer successful chats."
         )
     )
     parser.add_argument(
-        "input_file",
+        "--input-file",
+        required=True,
         type=Path,
         help="Input scored_responses.jsonl file.",
     )
     parser.add_argument(
-        "output_dir",
+        "--output-dir",
+        required=True,
         type=Path,
-        help="Directory where split subdirectories and the manifest will be written.",
+        help="Directory where train.jsonl, test.jsonl, and manifest.json will be written.",
+    )
+    parser.add_argument(
+        "--train-size",
+        type=int,
+        default=DEFAULT_SAMPLE_SIZE,
+        help=f"Number of training samples to write. Default: {DEFAULT_SAMPLE_SIZE}.",
+    )
+    parser.add_argument(
+        "--test-size",
+        type=int,
+        default=DEFAULT_TEST_SIZE,
+        help=f"Number of random test samples to write. Default: {DEFAULT_TEST_SIZE}.",
     )
     return parser.parse_args()
 
 
 def main():
     args = parse_args()
+    if args.train_size < 0:
+        raise ValueError("--train-size must be non-negative")
+    if args.test_size < 0:
+        raise ValueError("--test-size must be non-negative")
 
-    (
-        source_rows,
-        counts,
-        score_patterns,
-        sample_reservoirs,
-        full_test_reservoirs,
-    ) = select_line_numbers(args.input_file)
-    train_counts, test_counts, paths = write_splits(
-        args.input_file,
-        args.output_dir,
-        sample_reservoirs,
-        full_test_reservoirs,
-    )
+    selected = select_line_numbers(args.input_file, args.train_size, args.test_size)
+    written = write_splits(args.input_file, args.output_dir, selected)
     manifest_path = write_manifest(
         args.output_dir,
         args.input_file,
-        source_rows,
-        counts,
-        score_patterns,
-        train_counts,
-        test_counts,
-        paths,
+        args.train_size,
+        args.test_size,
+        selected,
+        written,
     )
 
     print(f"Wrote manifest: {manifest_path}")
-    for name in DATASETS:
-        print(
-            f"{name}: matched={counts[name]} "
-            f"sample_train={train_counts['sample_30k'][name]} "
-            f"sample_test={test_counts['sample_30k'][name]} "
-            f"sample_output_dir={paths[name]['sample_30k']['dir']} "
-            f"full_train={train_counts['full'][name]} "
-            f"full_test={test_counts['full'][name]} "
-            f"full_output_dir={paths[name]['full']['dir']}"
-        )
+    print(
+        f"train_rows={sum(written['train_counts'].values())} "
+        f"test_rows={sum(written['test_counts'].values())} "
+        f"output_dir={args.output_dir}"
+    )
+    print(
+        "selected_by_successful_turn_count="
+        f"{dict(sorted(selected['selected_by_turn_count'].items()))}"
+    )
 
 
 if __name__ == "__main__":

@@ -915,7 +915,9 @@ class GenerateResponsesTask(GeneratorTask):
                 if first_failed_turn_index is None:
                     first_failed_turn_index = turn_idx
 
-        # ---- Build output constraints dict (mirrors input structure, with resolved text) ----
+        # ---- Build output constraints dict ----
+        # Keep both the resolved instruction text used for prompting and the
+        # template/kwargs pair needed to rerun eval funcs against this sample.
         used_cids = set()
         for turn in attempted_turns:
             used_cids.update(turn["constraint_ids"])
@@ -925,7 +927,9 @@ class GenerateResponsesTask(GeneratorTask):
             cinfo = constraints[cid]
             output_constraints[cid] = {
                 "constraint": resolved_constraints[cid],
+                "template": cinfo.get("constraint", ""),
                 "category": cinfo.get("category", "default"),
+                "kwargs": resolved_values.get(cid, {}),
                 "eval_funcs": cinfo.get("eval_funcs", []),
             }
 

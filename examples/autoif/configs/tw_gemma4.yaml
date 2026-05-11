@@ -29,11 +29,12 @@ pipeline:
   - verifiers_cross_validation: false
   - concatenation_job: false
   - response_generation: true
+  - build_sft: true
 
 # ==============================================================================
 # Global Configuration
 # ==============================================================================
-model: "google/gemma-4-31b-it"
+model: "/shared_silo/scratch/models/gemma-4-31B-it"
 max_model_len: 32768
 tensor_parallel: 2
 workers: 16
@@ -199,3 +200,16 @@ jobs:
       PREIMPORT_MODULES: "stanza,spacy"
       INIT_TIMEOUT: "300"
       CASE_TIMEOUT: "30"
+
+  # --------------------------------------------------------------------------
+  # SFT Dataset Build
+  # --------------------------------------------------------------------------
+  build_sft:
+    type: cpu_script
+    template: "cpu_slurm.sh.j2"
+    script: src/build_sft.py
+    args:
+      input-file: "scored_responses.jsonl"
+      output-dir: "sft_longest_chats.split"
+      train-size: 30000
+      test-size: 150
