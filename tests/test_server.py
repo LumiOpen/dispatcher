@@ -1,10 +1,13 @@
 import os
 import tempfile
 import json
+import logging
 import unittest
+import h11
 from fastapi.testclient import TestClient
 import dispatcher.server as server_mod
 from dispatcher.data_tracker import DataTracker
+from dispatcher.http_protocol import InvalidRequestLoggingH11Protocol
 
 class TestServer(unittest.TestCase):
     def setUp(self):
@@ -161,6 +164,36 @@ class TestServer(unittest.TestCase):
         release_data = release_resp.json()
         self.assertEqual(release_data["status"], "OK")
         self.assertEqual(release_data["released_count"], 0)
+
+    def test_invalid_http_logging_protocol_logs_peer_and_preview(self):
+        """The opt-in protocol logs details when h11 rejects request bytes."""
+        class RejectingConnection:
+            def next_event(self):
+                raise h11.RemoteProtocolError("bad request bytes")
+
+        protocol = InvalidRequestLoggingH11Protocol.__new__(InvalidRequestLoggingH11Protocol)
+        protocol.conn = RejectingConnection()
+        protocol.logger = logging.getLogger("uvicorn.error")
+        protocol.client = ("10.0.0.1", 12345)
+        protocol.server = ("10.0.0.2", 9999)
+        protocol._invalid_http_preview = b"\x16\x03\x01bad"
+        protocol.sent_400 = None
+
+        def send_400_response(msg):
+            protocol.sent_400 = msg
+
+        protocol.send_400_response = send_400_response
+
+        with self.assertLogs("uvicorn.error", level="WARNING") as logs:
+            protocol.handle_events()
+
+        output = "\n".join(logs.output)
+        self.assertEqual(protocol.sent_400, "Invalid HTTP request received.")
+        self.assertIn("Invalid HTTP request received.", output)
+        self.assertIn("client=('10.0.0.1', 12345)", output)
+        self.assertIn("server=('10.0.0.2', 9999)", output)
+        self.assertIn("first_bytes_hex=160301626164", output)
+        self.assertIn("first_bytes_ascii=", output)
 
 if __name__ == "__main__":
     unittest.main()

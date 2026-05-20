@@ -273,6 +273,19 @@ class TestDataTracker(unittest.TestCase):
         self.assertEqual(reissued[1], r0[1])
         dt.close()
 
+    def test_all_work_complete_false_with_inflight_work(self):
+        """Exhausted input is not complete while issued work is unfinished."""
+        dt = DataTracker(self.infile.name, self.outfile.name, self.checkpoint,
+                         work_timeout=WORK_TIMEOUT, checkpoint_interval=CHECKPOINT_INTERVAL)
+
+        batch = dt.get_work_batch(batch_size=20)
+        self.assertIsNotNone(batch)
+        self.assertFalse(dt.all_work_complete())
+
+        dt.complete_work_batch([(work_id, f"result_{work_id}") for work_id, _ in batch])
+        self.assertTrue(dt.all_work_complete())
+        dt.close()
+
     def test_release_work_increments_retry(self):
         """Released items go through the normal reissue path and increment retry_count."""
         dt = DataTracker(self.infile.name, self.outfile.name, self.checkpoint,
