@@ -6,7 +6,7 @@ setup(
     packages=find_packages(),
     install_requires=[
         "fastapi",
-        "uvicorn",
+        "uvicorn>=0.34,<0.35",
         "pydantic",
         "requests",
     ],
