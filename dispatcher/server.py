@@ -3,7 +3,6 @@ import uvicorn
 import logging
 import threading
 import time
-import sys
 from fastapi import FastAPI, Query, Body
 from pydantic import BaseModel
 
@@ -22,16 +21,19 @@ from dispatcher.http_protocol import InvalidRequestLoggingH11Protocol
 app = FastAPI()
 
 dt = None            # Global DataTracker
+server = None        # Global uvicorn.Server, set in main()
 retry_time = 300     # default wait time
 shutdown_interval = 5
 
 def background_shutdown():
     while True:
         time.sleep(shutdown_interval)
-        global dt
+        global dt, server
         if dt is not None and dt.all_work_complete():
             logging.info("All work complete. Shutting down server.")
-            sys.exit(0)
+            if server is not None:
+                server.should_exit = True
+            return
 
 @app.on_event("startup")
 def startup_event():
@@ -117,7 +119,7 @@ def main():
     parser.add_argument("--invalid-http-preview-bytes", type=int, default=64, help="Number of malformed request bytes to include when --log-invalid-http is enabled.")
     args = parser.parse_args()
 
-    global dt, retry_time
+    global dt, retry_time, server
     retry_time = args.retry
     checkpoint_path = args.checkpoint if args.checkpoint else args.outfile + ".checkpoint"
     dt = DataTracker(
@@ -135,7 +137,7 @@ def main():
         InvalidRequestLoggingH11Protocol.invalid_http_preview_bytes = args.invalid_http_preview_bytes
         uvicorn_kwargs["http"] = InvalidRequestLoggingH11Protocol
 
-    uvicorn.run(
+    config = uvicorn.Config(
         app,
         host=args.host,
         port=args.port,
@@ -143,6 +145,8 @@ def main():
         access_log=False,
         **uvicorn_kwargs,
     )
+    server = uvicorn.Server(config)
+    server.run()
 
 if __name__ == "__main__":
     main()

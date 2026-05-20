@@ -2,6 +2,7 @@ import os
 import tempfile
 import json
 import logging
+import threading
 import unittest
 import h11
 from fastapi.testclient import TestClient
@@ -194,6 +195,37 @@ class TestServer(unittest.TestCase):
         self.assertIn("server=('10.0.0.2', 9999)", output)
         self.assertIn("first_bytes_hex=160301626164", output)
         self.assertIn("first_bytes_ascii=", output)
+
+
+class TestServerShutdown(unittest.TestCase):
+    def test_background_shutdown_signals_uvicorn_server(self):
+        """Completion watcher should ask uvicorn to exit, not just its thread."""
+        class CompleteTracker:
+            def all_work_complete(self):
+                return True
+
+        class FakeServer:
+            should_exit = False
+
+        old_dt = server_mod.dt
+        old_server = server_mod.server
+        old_interval = server_mod.shutdown_interval
+        fake_server = FakeServer()
+        try:
+            server_mod.dt = CompleteTracker()
+            server_mod.server = fake_server
+            server_mod.shutdown_interval = 0.01
+
+            thread = threading.Thread(target=server_mod.background_shutdown)
+            thread.start()
+            thread.join(timeout=1)
+
+            self.assertFalse(thread.is_alive())
+            self.assertTrue(fake_server.should_exit)
+        finally:
+            server_mod.dt = old_dt
+            server_mod.server = old_server
+            server_mod.shutdown_interval = old_interval
 
 if __name__ == "__main__":
     unittest.main()
