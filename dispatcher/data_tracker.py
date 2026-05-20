@@ -90,7 +90,7 @@ class DataTracker:
         Returns True if the input file is exhausted and no pending work remains.
         """
         remaining = os.stat(self.infile_path).st_size - self.infile.tell()
-        return remaining == 0 and len(self.pending_write) == 0
+        return remaining == 0 and len(self.issued) == 0 and len(self.pending_write) == 0
 
 
     def get_work_batch(self, batch_size=1):
