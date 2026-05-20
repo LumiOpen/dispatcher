@@ -42,6 +42,7 @@ from dispatcher.taskmanager.backend import VLLMBackendManager
 from dispatcher.taskmanager.taskmanager import TaskManager
 from dispatcher.taskmanager.tasksource import FileTaskSource, DispatcherTaskSource
 from dispatcher.taskmanager.task.base import Task
+from dispatcher.models import WorkStatus
 
 logger = logging.getLogger(__name__)
 
@@ -97,7 +98,16 @@ def _install_signal_handlers(backend: VLLMBackendManager, task_manager: TaskMana
         if work_ids and isinstance(task_source, DispatcherTaskSource):
             try:
                 resp = task_source.client.release_work(work_ids)
-                logger.info("Released %d/%d work items", resp.released_count, len(work_ids))
+                if resp.status != WorkStatus.OK or resp.released_count != len(work_ids):
+                    logger.warning(
+                        "Released %d/%d in-flight work items during shutdown; status=%s. "
+                        "Unreleased items will be retried after dispatcher timeout.",
+                        resp.released_count,
+                        len(work_ids),
+                        resp.status,
+                    )
+                else:
+                    logger.info("Released %d/%d work items", resp.released_count, len(work_ids))
             except Exception:
                 logger.exception(
                     "Error while releasing work items during signal %d handling",

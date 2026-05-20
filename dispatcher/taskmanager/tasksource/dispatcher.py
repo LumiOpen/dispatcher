@@ -97,8 +97,17 @@ class DispatcherTaskSource(TaskSource):
 
             # If the task should be retried, release the work item back to the dispatcher
             if task.should_retry():
-                self.client.release_work([work_item.work_id])
-                self.logger.debug(f"Released work item {work_item.work_id} for retry: {task.retry_reason}")
+                resp = self.client.release_work([work_item.work_id])
+                if resp.status != WorkStatus.OK or resp.released_count != 1:
+                    self.logger.warning(
+                        "Failed to release retry work item %s immediately; status=%s released_count=%s. "
+                        "It will be retried after dispatcher timeout.",
+                        work_item.work_id,
+                        resp.status,
+                        resp.released_count,
+                    )
+                else:
+                    self.logger.debug(f"Released work item {work_item.work_id} for retry: {task.retry_reason}")
                 return
 
             work_item.set_result(json.dumps(result, ensure_ascii=False))
