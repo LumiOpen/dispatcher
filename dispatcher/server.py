@@ -17,6 +17,7 @@ from dispatcher.models import (
     WorkStatus,
 )
 from dispatcher.data_tracker import DataTracker
+from dispatcher.http_protocol import InvalidRequestLoggingH11Protocol
 
 app = FastAPI()
 
@@ -112,6 +113,8 @@ def main():
     parser.add_argument("--max-retries", type=int, default=3, help="Number of times to reissue an entry before writing a tombstone. Set to -1 for infinite retries.")
     parser.add_argument("--host", type=str, default="0.0.0.0", help="Host")
     parser.add_argument("--port", type=int, default=8000, help="Port")
+    parser.add_argument("--log-invalid-http", action="store_true", help="Log client address and first bytes for malformed HTTP requests.")
+    parser.add_argument("--invalid-http-preview-bytes", type=int, default=64, help="Number of malformed request bytes to include when --log-invalid-http is enabled.")
     args = parser.parse_args()
 
     global dt, retry_time
@@ -127,12 +130,18 @@ def main():
     logging.info("Server starting with infile=%s, outfile=%s, checkpoint=%s, retry_time=%d work_timeout=%d, max_retries=%d",
                  args.infile, args.outfile, checkpoint_path, retry_time, args.work_timeout, args.max_retries)
 
+    uvicorn_kwargs = {}
+    if args.log_invalid_http:
+        InvalidRequestLoggingH11Protocol.invalid_http_preview_bytes = args.invalid_http_preview_bytes
+        uvicorn_kwargs["http"] = InvalidRequestLoggingH11Protocol
+
     uvicorn.run(
         app,
         host=args.host,
         port=args.port,
         log_level="warning",
         access_log=False,
+        **uvicorn_kwargs,
     )
 
 if __name__ == "__main__":
