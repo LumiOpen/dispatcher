@@ -75,13 +75,15 @@ def release_work(req: ReleaseWorkRequest):
 @app.get("/status")
 def get_status():
     global dt
+    lock_stats = dt.get_lock_stats()
     return {
         "last_processed_work_id": dt.last_processed_work_id,
         "next_work_id": dt.next_work_id,
         "issued": len(dt.issued),
         "pending": len(dt.pending_write),
         "heap_size": len(dt.issued_heap),
-        "expired_reissues": dt.expired_reissues
+        "expired_reissues": dt.expired_reissues,
+        "lock_stats": lock_stats
     }
 
 # Pydantic model for the request body

@@ -4,8 +4,58 @@ import json
 import logging
 import heapq
 import threading
+from contextlib import contextmanager
+from dataclasses import dataclass, field
 
 logging.basicConfig(level=logging.INFO)
+
+
+@dataclass
+class LockStats:
+    interval_start: float = field(default_factory=time.perf_counter)
+    acquires: int = 0
+    wait_total: float = 0.0
+    wait_max: float = 0.0
+    hold_total: float = 0.0
+    hold_max: float = 0.0
+
+    def record_acquire(self, wait_seconds):
+        self.acquires += 1
+        self.wait_total += wait_seconds
+        if wait_seconds > self.wait_max:
+            self.wait_max = wait_seconds
+
+    def record_release(self, hold_seconds):
+        self.hold_total += hold_seconds
+        if hold_seconds > self.hold_max:
+            self.hold_max = hold_seconds
+
+    def snapshot(self, now=None, active_hold_seconds=0.0):
+        now = time.perf_counter() if now is None else now
+        elapsed = max(now - self.interval_start, 1e-9)
+        hold_total = self.hold_total + active_hold_seconds
+        hold_max = max(self.hold_max, active_hold_seconds)
+        return {
+            "interval_seconds": elapsed,
+            "acquires": self.acquires,
+            "wait_avg_ms": (self.wait_total / self.acquires * 1000) if self.acquires else 0.0,
+            "wait_max_ms": self.wait_max * 1000,
+            "hold_avg_ms": (hold_total / self.acquires * 1000) if self.acquires else 0.0,
+            "hold_max_ms": hold_max * 1000,
+            "utilization_pct": min(100.0, hold_total / elapsed * 100),
+        }
+
+    def snapshot_and_reset(self, now=None, active_hold_seconds=0.0):
+        now = time.perf_counter() if now is None else now
+        snapshot = self.snapshot(now, active_hold_seconds=active_hold_seconds)
+        self.interval_start = now
+        self.acquires = 0
+        self.wait_total = 0.0
+        self.wait_max = 0.0
+        self.hold_total = 0.0
+        self.hold_max = 0.0
+        return snapshot
+
 
 class DataTracker:
     # Sentinel timestamp used by release_work() to force immediate reissue.
@@ -43,6 +93,8 @@ class DataTracker:
         self.pending_write = {}     # work_id -> result
 
         self._state_lock = threading.Lock()
+        self._lock_stats = LockStats()
+        self._active_lock_hold_start = None
 
         # NOTE: we open these files in binary mode because os.seek/os.tell do
         # not actually represent byte offsets in text files, but an opque
@@ -51,6 +103,45 @@ class DataTracker:
         self.infile = open(self.infile_path, "rb")
         self.outfile = open(self.outfile_path, "ab+")
         self._load_checkpoint()
+
+    @contextmanager
+    def _measured_state_lock(self):
+        """Acquire the DataTracker state lock and record wait/hold timing.
+
+        The stats updates happen while holding _state_lock, so LockStats does
+        not need its own synchronization.
+        """
+        wait_start = time.perf_counter()
+        self._state_lock.acquire()
+        hold_start = time.perf_counter()
+        self._active_lock_hold_start = hold_start
+        self._lock_stats.record_acquire(hold_start - wait_start)
+        try:
+            yield
+        finally:
+            hold_end = time.perf_counter()
+            self._lock_stats.record_release(hold_end - self._active_lock_hold_start)
+            self._active_lock_hold_start = None
+            self._state_lock.release()
+
+    def _snapshot_lock_stats(self, reset=False):
+        """Return lock stats while _state_lock is already held.
+
+        If reset=True during an active hold, split that hold across the old and
+        new intervals so utilization remains meaningful on both sides.
+        """
+        now = time.perf_counter()
+        active_hold_seconds = 0.0
+        if self._active_lock_hold_start is not None:
+            active_hold_seconds = now - self._active_lock_hold_start
+
+        if reset:
+            snapshot = self._lock_stats.snapshot_and_reset(now, active_hold_seconds=active_hold_seconds)
+            if self._active_lock_hold_start is not None:
+                self._active_lock_hold_start = now
+                self._lock_stats.acquires = 1
+            return snapshot
+        return self._lock_stats.snapshot(now, active_hold_seconds=active_hold_seconds)
 
     def _load_checkpoint(self):
         # If a checkpoint file exists and is non-empty, load its state.
@@ -89,14 +180,14 @@ class DataTracker:
         """
         Returns True if the input file is exhausted and no pending work remains.
         """
-        with self._state_lock:
+        with self._measured_state_lock():
             remaining = os.stat(self.infile_path).st_size - self.infile.tell()
             return remaining == 0 and len(self.issued) == 0 and len(self.pending_write) == 0
 
 
     def get_work_batch(self, batch_size=1):
         batch = []
-        with self._state_lock:
+        with self._measured_state_lock():
             now = time.time()
             # check first for expired work needing to be reissued
             while self.issued_heap and len(batch) < batch_size:
@@ -197,7 +288,7 @@ class DataTracker:
         Returns the number of items actually released.
         """
         released = 0
-        with self._state_lock:
+        with self._measured_state_lock():
             for work_id in work_ids:
                 if work_id in self.issued and work_id not in self.pending_write:
                     content, input_offset, retry_count, _ = self.issued[work_id]
@@ -244,18 +335,31 @@ class DataTracker:
         if now - self.last_checkpoint_time >= self.checkpoint_interval:
             self._write_checkpoint()
             self.last_checkpoint_time = now
+            lock_stats = self._snapshot_lock_stats(reset=True)
             logging.info(f"Checkpoint: last_processed_work_id={self.last_processed_work_id}, "
                          f"input_offset={self.input_offset}, output_offset={self.outfile.tell()}, "
                          f"issued={len(self.issued)}, pending={len(self.pending_write)}, "
-                         f"heap_size={len(self.issued_heap)}, expired_reissues={self.expired_reissues}")
+                         f"heap_size={len(self.issued_heap)}, expired_reissues={self.expired_reissues}, "
+                         f"lock_utilization_pct={lock_stats['utilization_pct']:.3f}, "
+                         f"lock_acquires={lock_stats['acquires']}, "
+                         f"lock_wait_avg_ms={lock_stats['wait_avg_ms']:.3f}, "
+                         f"lock_wait_max_ms={lock_stats['wait_max_ms']:.3f}, "
+                         f"lock_hold_avg_ms={lock_stats['hold_avg_ms']:.3f}, "
+                         f"lock_hold_max_ms={lock_stats['hold_max_ms']:.3f}")
 
     def complete_work_batch(self, batch):
         """
         Public method for completing a batch of work. Acquires the lock before
         calling the internal implementation.
         """
-        with self._state_lock:
+        with self._measured_state_lock():
             self._complete_work_batch(batch)
+
+    def get_lock_stats(self, reset=False):
+        # Do not use _measured_state_lock() here: reading metrics should not
+        # itself count as measured DataTracker work.
+        with self._state_lock:
+            return self._snapshot_lock_stats(reset=reset)
 
 
     def _flush_pending_writes(self):
@@ -293,12 +397,19 @@ class DataTracker:
         os.rename(temp_path, self.checkpoint_path)
 
     def close(self):
-        with self._state_lock:
+        with self._measured_state_lock():
             # Write a final checkpoint and log status before shutting down.
             self._write_checkpoint()
+            lock_stats = self._snapshot_lock_stats()
             logging.info(f"Final checkpoint written: last_processed_work_id={self.last_processed_work_id}, "
                          f"input_offset={self.input_offset}, output_offset={self.outfile.tell()}, "
                          f"issued={len(self.issued)}, pending={len(self.pending_write)}, "
-                         f"heap_size={len(self.issued_heap)}, expired_reissues={self.expired_reissues}")
+                         f"heap_size={len(self.issued_heap)}, expired_reissues={self.expired_reissues}, "
+                         f"lock_utilization_pct={lock_stats['utilization_pct']:.3f}, "
+                         f"lock_acquires={lock_stats['acquires']}, "
+                         f"lock_wait_avg_ms={lock_stats['wait_avg_ms']:.3f}, "
+                         f"lock_wait_max_ms={lock_stats['wait_max_ms']:.3f}, "
+                         f"lock_hold_avg_ms={lock_stats['hold_avg_ms']:.3f}, "
+                         f"lock_hold_max_ms={lock_stats['hold_max_ms']:.3f}")
             self.infile.close()
             self.outfile.close()

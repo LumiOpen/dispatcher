@@ -105,6 +105,10 @@ class TestServer(unittest.TestCase):
         status_data = status_resp.json()
         # last_processed_work_id should now be at least 1
         self.assertGreaterEqual(status_data["last_processed_work_id"], 1)
+        self.assertIn("lock_stats", status_data)
+        self.assertIn("utilization_pct", status_data["lock_stats"])
+        self.assertIn("wait_avg_ms", status_data["lock_stats"])
+        self.assertIn("hold_avg_ms", status_data["lock_stats"])
 
     def test_all_work_complete(self):
         """

@@ -3,7 +3,7 @@ import time
 import json
 import tempfile
 import unittest
-from dispatcher.data_tracker import DataTracker
+from dispatcher.data_tracker import DataTracker, LockStats
 
 # Use short timeouts for testing.
 WORK_TIMEOUT = 2      # seconds
@@ -285,6 +285,75 @@ class TestDataTracker(unittest.TestCase):
         dt.complete_work_batch([(work_id, f"result_{work_id}") for work_id, _ in batch])
         self.assertTrue(dt.all_work_complete())
         dt.close()
+
+    def test_lock_stats_record_state_lock_activity(self):
+        """State lock stats should report lock acquisition and hold timing."""
+        dt = DataTracker(self.infile.name, self.outfile.name, self.checkpoint,
+                         work_timeout=WORK_TIMEOUT, checkpoint_interval=CHECKPOINT_INTERVAL)
+
+        dt.get_work_batch()
+        stats = dt.get_lock_stats()
+
+        self.assertGreaterEqual(stats["acquires"], 1)
+        self.assertGreaterEqual(stats["interval_seconds"], 0)
+        self.assertGreaterEqual(stats["wait_avg_ms"], 0)
+        self.assertGreaterEqual(stats["wait_max_ms"], 0)
+        self.assertGreaterEqual(stats["hold_avg_ms"], 0)
+        self.assertGreaterEqual(stats["hold_max_ms"], 0)
+        self.assertGreaterEqual(stats["utilization_pct"], 0)
+        self.assertLessEqual(stats["utilization_pct"], 100)
+
+        reset_stats = dt.get_lock_stats(reset=True)
+        self.assertGreaterEqual(reset_stats["acquires"], 1)
+        self.assertEqual(dt.get_lock_stats()["acquires"], 0)
+        dt.close()
+
+    def test_lock_stats_snapshot_computes_interval_metrics(self):
+        """LockStats should compute averages, maxes, and utilization."""
+        stats = LockStats(interval_start=10.0)
+
+        stats.record_acquire(0.010)
+        stats.record_release(0.020)
+        stats.record_acquire(0.030)
+        stats.record_release(0.040)
+
+        snapshot = stats.snapshot(now=20.0)
+
+        self.assertEqual(snapshot["interval_seconds"], 10.0)
+        self.assertEqual(snapshot["acquires"], 2)
+        self.assertAlmostEqual(snapshot["wait_avg_ms"], 20.0)
+        self.assertAlmostEqual(snapshot["wait_max_ms"], 30.0)
+        self.assertAlmostEqual(snapshot["hold_avg_ms"], 30.0)
+        self.assertAlmostEqual(snapshot["hold_max_ms"], 40.0)
+        self.assertAlmostEqual(snapshot["utilization_pct"], 0.6)
+
+    def test_lock_stats_snapshot_and_reset_clears_interval(self):
+        """snapshot_and_reset should return current stats and start a new interval."""
+        stats = LockStats(interval_start=10.0)
+        stats.record_acquire(0.010)
+        stats.record_release(0.020)
+
+        snapshot = stats.snapshot_and_reset(now=15.0)
+
+        self.assertEqual(snapshot["acquires"], 1)
+        self.assertEqual(stats.interval_start, 15.0)
+        self.assertEqual(stats.acquires, 0)
+        self.assertEqual(stats.wait_total, 0.0)
+        self.assertEqual(stats.wait_max, 0.0)
+        self.assertEqual(stats.hold_total, 0.0)
+        self.assertEqual(stats.hold_max, 0.0)
+
+    def test_lock_stats_snapshot_includes_active_hold(self):
+        """Active hold seconds should contribute to snapshot calculations."""
+        stats = LockStats(interval_start=10.0)
+        stats.record_acquire(0.010)
+
+        snapshot = stats.snapshot(now=12.0, active_hold_seconds=0.500)
+
+        self.assertEqual(snapshot["acquires"], 1)
+        self.assertAlmostEqual(snapshot["hold_avg_ms"], 500.0)
+        self.assertAlmostEqual(snapshot["hold_max_ms"], 500.0)
+        self.assertAlmostEqual(snapshot["utilization_pct"], 25.0)
 
     def test_release_work_increments_retry(self):
         """Released items go through the normal reissue path and increment retry_count."""
