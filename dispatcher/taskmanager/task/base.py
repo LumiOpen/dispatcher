@@ -77,6 +77,49 @@ class Task(ABC):
         """Human-readable reason for the retry, or empty string if none."""
         return ""
 
+    # -- result helpers ----------------------------------------------------
+    #
+    # The helpers below encode the dispatcher's conventional result schema
+    # (success / error / retry_count / max_retries) in one
+    # place so individual tasks do not hand-assemble the return dict. If the
+    # schema ever changes, update build_result and every task picks it up.
+
+    def is_last_retry_attempt(self) -> bool:
+        """True when this attempt is the last one the dispatcher will issue.
+
+        Returns False when retry metadata is unavailable (e.g. FileTaskSource)
+        or when retries are unlimited (max_retries == -1).
+        """
+        retry_count = getattr(self.context, "retry_count", 0) or 0
+        max_retries = getattr(self.context, "max_retries", None)
+        if max_retries is None or max_retries == -1:
+            return False
+        return retry_count >= max_retries
+
+    def build_result(
+        self,
+        *,
+        success: bool = True,
+        error: Optional[str] = None,
+        **payload: Any,
+    ) -> Dict[str, Any]:
+        """Construct a result dict with the standard dispatcher fields filled in.
+
+        Layering (last wins): self.data -> standard fields -> caller payload.
+        Retry metadata is included automatically when the task source provides it.
+        """
+        result: Dict[str, Any] = {**self.data, "success": success}
+        if error is not None:
+            result["error"] = error
+        retry_count = getattr(self.context, "retry_count", None)
+        max_retries = getattr(self.context, "max_retries", None)
+        if retry_count is not None:
+            result["retry_count"] = retry_count
+        if max_retries is not None:
+            result["max_retries"] = max_retries
+        result.update(payload)
+        return result
+
 ###############################################################################
 # Generator‑powered task helper
 ###############################################################################

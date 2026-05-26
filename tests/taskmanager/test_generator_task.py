@@ -254,6 +254,121 @@ class TestGeneratorTaskLifecycle(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# Tests for Task.is_last_retry_attempt() and Task.build_result()
+# ---------------------------------------------------------------------------
+
+class _RetryCtx:
+    """Stand-in for dispatcher.models.WorkItem with retry metadata."""
+    def __init__(self, retry_count=0, max_retries=None):
+        self.retry_count = retry_count
+        self.max_retries = max_retries
+
+
+def _make_task(data=None, context=None):
+    """Build a minimal initialized Task instance to exercise the helpers."""
+    return MockGeneratorTaskForLifecycle(
+        data=data if data is not None else {},
+        mode="immediate_return",
+        context=context,
+    )
+
+
+class TestIsLastRetryAttempt(unittest.TestCase):
+    """is_last_retry_attempt() reads retry_count / max_retries off self.context."""
+
+    def test_returns_false_when_metadata_unavailable(self):
+        # context=None, FileTaskSource-style dict context, missing max_retries,
+        # and an explicit None retry_count must all return False without crashing.
+        for ctx in (
+            None,
+            {"line_number": 5},
+            _RetryCtx(retry_count=2, max_retries=None),
+            _RetryCtx(retry_count=None, max_retries=3),
+        ):
+            with self.subTest(ctx=ctx):
+                self.assertFalse(_make_task(context=ctx).is_last_retry_attempt())
+
+    def test_returns_false_for_unlimited_retries(self):
+        # max_retries == -1 means infinite retries; no "last" attempt exists.
+        task = _make_task(context=_RetryCtx(retry_count=99, max_retries=-1))
+        self.assertFalse(task.is_last_retry_attempt())
+
+    def test_threshold_behavior(self):
+        # False before the last attempt, True at the threshold, True past it
+        # (defensive), and True when max_retries=0 means "no retries allowed".
+        cases = [
+            (2, 3, False),
+            (3, 3, True),
+            (5, 3, True),
+            (0, 0, True),
+        ]
+        for retry_count, max_retries, expected in cases:
+            with self.subTest(retry_count=retry_count, max_retries=max_retries):
+                task = _make_task(context=_RetryCtx(retry_count, max_retries))
+                self.assertEqual(task.is_last_retry_attempt(), expected)
+
+
+class TestBuildResult(unittest.TestCase):
+    """build_result() assembles the dispatcher's standard result schema."""
+
+    def test_default_success_with_payload(self):
+        # success defaults to True; data is spread in; payload is merged.
+        task = _make_task(data={"prompt": "hi"})
+        self.assertEqual(
+            task.build_result(translated="HI", score=0.9),
+            {"prompt": "hi", "success": True, "translated": "HI", "score": 0.9},
+        )
+        # Empty data still yields a valid minimal result.
+        self.assertEqual(_make_task().build_result(), {"success": True})
+
+    def test_failure_with_error_and_partial_payload(self):
+        task = _make_task(data={"prompt": "hi"})
+        self.assertEqual(
+            task.build_result(success=False, error="boom", partial="HE"),
+            {"prompt": "hi", "success": False, "error": "boom", "partial": "HE"},
+        )
+        # error=None must be omitted, not serialized as null.
+        self.assertNotIn("error", task.build_result(success=False))
+
+    def test_retry_metadata_included_with_edge_values(self):
+        # retry_count=0 (first attempt) and max_retries=-1 (unlimited) are both
+        # meaningful and must surface in the result, not be dropped by a truthy check.
+        for retry_count, max_retries in [(2, 3), (0, 3), (5, -1)]:
+            with self.subTest(retry_count=retry_count, max_retries=max_retries):
+                task = _make_task(context=_RetryCtx(retry_count, max_retries))
+                result = task.build_result()
+                self.assertEqual(result["retry_count"], retry_count)
+                self.assertEqual(result["max_retries"], max_retries)
+
+    def test_retry_metadata_omitted_when_context_lacks_attrs(self):
+        for ctx in (None, {"line_number": 0}):
+            with self.subTest(ctx=ctx):
+                result = _make_task(context=ctx).build_result()
+                self.assertNotIn("retry_count", result)
+                self.assertNotIn("max_retries", result)
+
+    def test_payload_overrides_data_and_standard_fields(self):
+        # Last-write-wins: caller payload trumps both self.data and the auto-filled
+        # retry fields, so a task can override defaults when it has better info.
+        task = _make_task(
+            data={"prompt": "original"},
+            context=_RetryCtx(retry_count=2, max_retries=3),
+        )
+        result = task.build_result(prompt="overridden", retry_count=999)
+        self.assertEqual(result["prompt"], "overridden")
+        self.assertEqual(result["retry_count"], 999)
+
+    def test_success_and_error_are_keyword_only(self):
+        # Guards against positional misuse like build_result(False, "oops")
+        # silently swapping argument meaning.
+        task = _make_task()
+        with self.assertRaises(TypeError):
+            task.build_result(False)  # type: ignore[misc]
+        with self.assertRaises(TypeError):
+            task.build_result(True, "oops")  # type: ignore[misc]
+
+
+# ---------------------------------------------------------------------------
 # Exports for use in other test modules
 # ---------------------------------------------------------------------------
 __all__ = [
