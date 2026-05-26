@@ -207,6 +207,14 @@ class DataTracker:
                     logging.info(f"Released work item {work_id} for immediate reissue.")
         return released
 
+    def get_retry_metadata(self, work_id):
+        with self._state_lock:
+            if work_id not in self.issued:
+                return 0, self.max_retries
+
+            _, _, retry_count, _ = self.issued[work_id]
+            return retry_count, self.max_retries
+
     def _track_issued_work(self, when, content, input_offset, work_id=None):
         if work_id is None:
             # This is brand new work.

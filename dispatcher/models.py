@@ -12,6 +12,8 @@ class WorkItem(BaseModel):
     work_id: int
     content: str
     result: Optional[str] = None  # This can be filled in after processing.
+    retry_count: int = 0
+    max_retries: Optional[int] = None
 
     def set_result(self, new_result: str):
         """Optional convenience method to store a result directly on the item."""

@@ -51,7 +51,17 @@ def get_work(batch_size: int = Query(1, ge=1)):
         
     batch = dt.get_work_batch(batch_size)
     if batch:
-        items = [WorkItem(work_id=i[0], content=i[1]) for i in batch]
+        items = []
+        for work_id, content in batch:
+            retry_count, max_retries = dt.get_retry_metadata(work_id)
+            items.append(
+                WorkItem(
+                    work_id=work_id,
+                    content=content,
+                    retry_count=retry_count,
+                    max_retries=max_retries,
+                )
+            )
         return BatchWorkResponse(status=WorkStatus.OK, items=items)
     else:
         # The input is exhausted but pending work not done => "retry"
