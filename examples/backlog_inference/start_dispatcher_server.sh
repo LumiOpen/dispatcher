@@ -1,0 +1,228 @@
+#!/bin/bash
+###############################################################################
+# start_dispatcher_server.sh - Launch dispatcher server on the login node in tmux
+#
+# Usage:
+#   ./start_dispatcher_server.sh [config]          # Start server
+#   ./start_dispatcher_server.sh [config] --stop   # Stop the server
+#   ./start_dispatcher_server.sh [config] --status # Check server status
+#
+# If a config file is provided, it is sourced before applying defaults.
+# Config files are shell-sourceable files with KEY=VALUE pairs.
+# See configs/dispatcher-server.conf.example for available options.
+#
+# The server address is saved to .dispatcher_address_<SESSION_NAME>
+# for the worker scripts. Server stdout/stderr are logged to
+# logs/<SESSION_NAME>.{out,err}.
+# The server is lightweight (FastAPI) and safe to run on the login node.
+###############################################################################
+
+set -euo pipefail
+
+###############################################################################
+# Argument parsing: [config_file] [--stop|--status|--run-server]
+###############################################################################
+
+CONFIG_FILE=""
+ACTION=""
+
+for arg in "$@"; do
+  case "$arg" in
+    --stop|--status|--run-server) ACTION="$arg" ;;
+    *) CONFIG_FILE="$arg" ;;
+  esac
+done
+
+# Resolve working directory (reasoning_traces/)
+WORK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Source config file if provided
+if [ -n "$CONFIG_FILE" ]; then
+  if [[ "$CONFIG_FILE" != /* ]]; then
+    CONFIG_FILE="$(cd "$(dirname "$CONFIG_FILE")" && pwd)/$(basename "$CONFIG_FILE")"
+  fi
+  if [ ! -f "$CONFIG_FILE" ]; then
+    echo "ERROR: Config file not found: $CONFIG_FILE" >&2
+    exit 1
+  fi
+  source "$CONFIG_FILE"
+fi
+
+###############################################################################
+# Configuration - defaults for anything not set by config file or environment
+###############################################################################
+
+: "${INPUT_FILE:?INPUT_FILE must be set in the config file or environment.}"
+: "${OUTPUT_FILE:?OUTPUT_FILE must be set in the config file or environment.}"
+
+WORK_TIMEOUT=${WORK_TIMEOUT:-1800}
+DISPATCHER_PORT=${DISPATCHER_PORT:-9999}
+MAX_RETRIES=${MAX_RETRIES:-3}
+SESSION_NAME=${SESSION_NAME:-"dispatcher-server"}
+
+# Dispatcher package source. Default: repo root two levels above this script
+# (i.e. examples/backlog_inference/../..), so jobs submitted from this dir
+# pick up the in-tree dispatcher without any extra configuration.
+DISPATCHER_PKG=${DISPATCHER_PKG:-"$(cd "$WORK_DIR/../.." && pwd)"}
+SKIP_DISPATCHER_INSTALL=${SKIP_DISPATCHER_INSTALL:-0}
+
+# Per-session file paths (avoids collisions between concurrent instances)
+ADDRESS_FILE="$WORK_DIR/.${SESSION_NAME}"
+LOG_OUT="$WORK_DIR/logs/${SESSION_NAME}.out"
+LOG_ERR="$WORK_DIR/logs/${SESSION_NAME}.err"
+
+# Build the command prefix for helper messages
+SELF_CMD="$0"
+[ -n "$CONFIG_FILE" ] && SELF_CMD="$0 $CONFIG_FILE"
+
+###############################################################################
+# --stop: kill the tmux session and clean up
+###############################################################################
+if [ "$ACTION" = "--stop" ]; then
+  if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
+    tmux kill-session -t "$SESSION_NAME"
+    echo "Server session '$SESSION_NAME' stopped."
+  else
+    echo "No active session '$SESSION_NAME' found."
+  fi
+  rm -f "$ADDRESS_FILE"
+  exit 0
+fi
+
+###############################################################################
+# --status: check the server
+###############################################################################
+if [ "$ACTION" = "--status" ]; then
+  if [ -f "$ADDRESS_FILE" ]; then
+    ADDR=$(cat "$ADDRESS_FILE")
+    echo "Address file: $ADDR"
+    echo "Querying server..."
+    curl -s "http://$ADDR/status" 2>/dev/null && echo "" || echo "Server not reachable."
+  else
+    echo "No address file found. Server may not be running."
+  fi
+  if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
+    echo "Tmux session '$SESSION_NAME' is active."
+  else
+    echo "Tmux session '$SESSION_NAME' not found."
+  fi
+  echo ""
+  echo "Log files:"
+  echo "  stdout: $LOG_OUT"
+  echo "  stderr: $LOG_ERR"
+  exit 0
+fi
+
+###############################################################################
+# --run-server: internal entry point (called inside the tmux session)
+###############################################################################
+if [ "$ACTION" = "--run-server" ]; then
+  cd "$WORK_DIR"
+  mkdir -p "$WORK_DIR/logs"
+
+  # Log all output to files while also showing in the tmux terminal
+  exec > >(tee -a "$LOG_OUT") 2> >(tee -a "$LOG_ERR" >&2)
+
+  export DISPATCHER_SERVER=$(hostname)
+  export DISPATCHER_PORT
+
+  # Write address file early so workers can discover us.
+  # The main script waits for the TCP port to actually open before declaring
+  # success, so this is safe even though the server isn't listening yet.
+  echo "${DISPATCHER_SERVER}:${DISPATCHER_PORT}" > "$ADDRESS_FILE"
+
+  if [ "$SKIP_DISPATCHER_INSTALL" = "1" ]; then
+    echo "Skipping dispatcher install (SKIP_DISPATCHER_INSTALL=1). Adding $DISPATCHER_PKG to PYTHONPATH."
+    export PYTHONPATH="$DISPATCHER_PKG:${PYTHONPATH:-}"
+  else
+    # Install dispatcher package in user site-packages (no singularity on login node).
+    echo "Installing dispatcher package from $DISPATCHER_PKG..."
+    pip install --user -e "$DISPATCHER_PKG"
+  fi
+
+  echo "=========================================="
+  echo "Dispatcher server starting"
+  echo "  Session:      $SESSION_NAME"
+  echo "  Config:       ${CONFIG_FILE:-<defaults>}"
+  echo "  Address:      $DISPATCHER_SERVER:$DISPATCHER_PORT"
+  echo "  Input:        $INPUT_FILE"
+  echo "  Output:       $OUTPUT_FILE"
+  echo "  Work timeout: $WORK_TIMEOUT"
+  echo "  Max retries:  $MAX_RETRIES"
+  echo "  Log stdout:   $LOG_OUT"
+  echo "  Log stderr:   $LOG_ERR"
+  echo "=========================================="
+
+  until python3 -m dispatcher.server \
+    --infile "$INPUT_FILE" \
+    --outfile "$OUTPUT_FILE" \
+    --work-timeout "$WORK_TIMEOUT" \
+    --max-retries "$MAX_RETRIES" \
+    --host 0.0.0.0 \
+    --port "$DISPATCHER_PORT"; do
+    echo "Dispatcher exited non-zero; restarting in 5s (checkpoint will be resumed)."
+    sleep 5
+  done
+
+  echo "Dispatcher exited normally (all work complete)."
+  rm -f "$ADDRESS_FILE"
+  exit 0
+fi
+
+###############################################################################
+# Main: start the server in a new tmux session
+###############################################################################
+if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
+  echo "Tmux session '$SESSION_NAME' already exists."
+  echo "  Attach:  tmux attach -t $SESSION_NAME"
+  echo "  Stop:    $SELF_CMD --stop"
+  echo "  Status:  $SELF_CMD --status"
+  exit 1
+fi
+
+echo "Starting dispatcher server in tmux session '$SESSION_NAME'..."
+
+# Pass the config file into the tmux session so --run-server can source it.
+# The config is a file on disk, so no env-var propagation issues.
+CONFIG_ARG=""
+[ -n "$CONFIG_FILE" ] && CONFIG_ARG="'$CONFIG_FILE'"
+tmux new-session -d -s "$SESSION_NAME" "bash --login $0 $CONFIG_ARG --run-server"
+
+# Stream server logs in the background so the user sees progress.
+mkdir -p "$WORK_DIR/logs"
+touch "$LOG_OUT"
+tail -f "$LOG_OUT" &
+TAIL_PID=$!
+cleanup_tail() { kill "$TAIL_PID" 2>/dev/null; wait "$TAIL_PID" 2>/dev/null; }
+trap cleanup_tail EXIT
+
+# Wait for the TCP port to actually open (not just the address file).
+echo "Waiting for server to come up (this may take a few minutes on first run)..."
+for i in $(seq 1 150); do
+  if [ -f "$ADDRESS_FILE" ]; then
+    ADDR=$(cat "$ADDRESS_FILE")
+    IFS=: read -r HOST PORT <<< "$ADDR"
+    if curl -sf -o /dev/null --max-time 2 "http://$HOST:$PORT/status"; then
+      cleanup_tail
+      trap - EXIT
+      echo ""
+      echo "Server is up at: $ADDR"
+      echo ""
+      echo "  Monitor: tmux attach -t $SESSION_NAME"
+      echo "  Logs:    tail -f $LOG_OUT"
+      echo "  Status:  $SELF_CMD --status"
+      echo "  Stop:    $SELF_CMD --stop"
+      echo "  Check:   curl http://$ADDR/status"
+      exit 0
+    fi
+  fi
+  sleep 2
+done
+
+cleanup_tail
+trap - EXIT
+echo ""
+echo "WARNING: Server did not become reachable within timeout."
+echo "Check the tmux session: tmux attach -t $SESSION_NAME"
+echo "Check logs: $LOG_ERR"
+exit 1
