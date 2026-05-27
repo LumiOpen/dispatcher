@@ -101,23 +101,28 @@ class Task(ABC):
         *,
         success: bool = True,
         error: Optional[str] = None,
+        error_type: Optional[str] = None,
         **payload: Any,
     ) -> Dict[str, Any]:
-        """Construct a result dict with the standard dispatcher fields filled in.
+        """Construct a result dict with bookkeeping kept out of the payload.
 
-        Layering (last wins): self.data -> standard fields -> caller payload.
-        Retry metadata is included automatically when the task source provides it.
+        Task bookkeeping (success / error / error_type / retry_count /
+        max_retries) is collected under a single ``task_metadata`` key so it
+        does not collide with the task's own output fields. Layering:
+        ``self.data`` -> caller payload -> ``task_metadata``.
         """
-        result: Dict[str, Any] = {**self.data, "success": success}
+        metadata: Dict[str, Any] = {"success": success}
         if error is not None:
-            result["error"] = error
+            metadata["error"] = error
+        if error_type is not None:
+            metadata["error_type"] = error_type
         retry_count = getattr(self.context, "retry_count", None)
         max_retries = getattr(self.context, "max_retries", None)
         if retry_count is not None:
-            result["retry_count"] = retry_count
+            metadata["retry_count"] = retry_count
         if max_retries is not None:
-            result["max_retries"] = max_retries
-        result.update(payload)
+            metadata["max_retries"] = max_retries
+        result: Dict[str, Any] = {**self.data, **payload, "task_metadata": metadata}
         return result
 
 ###############################################################################

@@ -309,56 +309,82 @@ class TestIsLastRetryAttempt(unittest.TestCase):
 
 
 class TestBuildResult(unittest.TestCase):
-    """build_result() assembles the dispatcher's standard result schema."""
+    """build_result() assembles the task's standard schema under task_metadata."""
 
     def test_default_success_with_payload(self):
-        # success defaults to True; data is spread in; payload is merged.
+        # success defaults to True; data is spread in; payload is merged; metadata is nested.
         task = _make_task(data={"prompt": "hi"})
         self.assertEqual(
             task.build_result(translated="HI", score=0.9),
-            {"prompt": "hi", "success": True, "translated": "HI", "score": 0.9},
+            {
+                "prompt": "hi",
+                "translated": "HI",
+                "score": 0.9,
+                "task_metadata": {"success": True},
+            },
         )
         # Empty data still yields a valid minimal result.
-        self.assertEqual(_make_task().build_result(), {"success": True})
+        self.assertEqual(
+            _make_task().build_result(),
+            {"task_metadata": {"success": True}},
+        )
 
-    def test_failure_with_error_and_partial_payload(self):
+    def test_failure_with_error_error_type_and_partial_payload(self):
         task = _make_task(data={"prompt": "hi"})
         self.assertEqual(
-            task.build_result(success=False, error="boom", partial="HE"),
-            {"prompt": "hi", "success": False, "error": "boom", "partial": "HE"},
+            task.build_result(
+                success=False,
+                error="boom",
+                error_type="prompt_error",
+                partial="HE",
+            ),
+            {
+                "prompt": "hi",
+                "partial": "HE",
+                "task_metadata": {
+                    "success": False,
+                    "error": "boom",
+                    "error_type": "prompt_error",
+                },
+            },
         )
-        # error=None must be omitted, not serialized as null.
-        self.assertNotIn("error", task.build_result(success=False))
+        # error=None and error_type=None are omitted, not serialized as null.
+        result = task.build_result(success=False)
+        self.assertEqual(result["task_metadata"], {"success": False})
 
     def test_retry_metadata_included_with_edge_values(self):
         # retry_count=0 (first attempt) and max_retries=-1 (unlimited) are both
-        # meaningful and must surface in the result, not be dropped by a truthy check.
+        # meaningful and must surface in task_metadata, not be dropped by a truthy check.
         for retry_count, max_retries in [(2, 3), (0, 3), (5, -1)]:
             with self.subTest(retry_count=retry_count, max_retries=max_retries):
                 task = _make_task(context=_RetryCtx(retry_count, max_retries))
-                result = task.build_result()
-                self.assertEqual(result["retry_count"], retry_count)
-                self.assertEqual(result["max_retries"], max_retries)
+                metadata = task.build_result()["task_metadata"]
+                self.assertEqual(metadata["retry_count"], retry_count)
+                self.assertEqual(metadata["max_retries"], max_retries)
 
     def test_retry_metadata_omitted_when_context_lacks_attrs(self):
         for ctx in (None, {"line_number": 0}):
             with self.subTest(ctx=ctx):
-                result = _make_task(context=ctx).build_result()
-                self.assertNotIn("retry_count", result)
-                self.assertNotIn("max_retries", result)
+                metadata = _make_task(context=ctx).build_result()["task_metadata"]
+                self.assertNotIn("retry_count", metadata)
+                self.assertNotIn("max_retries", metadata)
 
-    def test_payload_overrides_data_and_standard_fields(self):
-        # Last-write-wins: caller payload trumps both self.data and the auto-filled
-        # retry fields, so a task can override defaults when it has better info.
+    def test_payload_and_data_do_not_collide_with_metadata(self):
+        # The whole point of nesting metadata: a task that already has a
+        # "success" or "retry_count" key in self.data (input row) can keep it
+        # at the top level without clobbering the dispatcher-managed values
+        # under task_metadata.
         task = _make_task(
-            data={"prompt": "original"},
+            data={"prompt": "original", "retry_count": "user-supplied"},
             context=_RetryCtx(retry_count=2, max_retries=3),
         )
-        result = task.build_result(prompt="overridden", retry_count=999)
-        self.assertEqual(result["prompt"], "overridden")
-        self.assertEqual(result["retry_count"], 999)
+        result = task.build_result(prompt="overridden")
+        self.assertEqual(result["prompt"], "overridden")        # payload overrides data
+        self.assertEqual(result["retry_count"], "user-supplied")  # data survives at top level
+        self.assertEqual(result["task_metadata"]["retry_count"], 2)  # metadata is independent
+        self.assertEqual(result["task_metadata"]["success"], True)
 
-    def test_success_and_error_are_keyword_only(self):
+    def test_success_error_and_error_type_are_keyword_only(self):
         # Guards against positional misuse like build_result(False, "oops")
         # silently swapping argument meaning.
         task = _make_task()
@@ -366,7 +392,8 @@ class TestBuildResult(unittest.TestCase):
             task.build_result(False)  # type: ignore[misc]
         with self.assertRaises(TypeError):
             task.build_result(True, "oops")  # type: ignore[misc]
-
+        with self.assertRaises(TypeError):
+            task.build_result(True, None, "oops")  # type: ignore[misc]
 
 # ---------------------------------------------------------------------------
 # Exports for use in other test modules
