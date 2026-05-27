@@ -544,6 +544,17 @@ dispatcher-task-run \
 
 The server exits automatically when all work is complete. If workers connect after the server has already exited (because a previous run finished all lines), they'll see `SERVER_UNAVAILABLE` and exit immediately. To reprocess, delete or rename the output file and checkpoint file, then restart the server.
 
+### vLLM startup fails with `unrecognized arguments: --disable-log-requests`
+
+Older dispatcher releases hardcoded `--disable-log-requests` on every vLLM launch. vLLM [PR #21739](https://github.com/vllm-project/vllm/pull/21739) renamed the flag to `--enable-log-requests` **and inverted the polarity** — request logging is now off by default. The dispatcher no longer adds either flag.
+
+| vLLM version | Default | Add to `--vllm-extra-args` if you want… |
+|---|---|---|
+| **< 0.10.1** (has `--disable-log-requests`) | request logging **on** | `"--disable-log-requests"` to suppress (this was the dispatcher's previous default) |
+| **≥ 0.10.1** (has `--enable-log-requests`) | request logging **off** | `"--enable-log-requests"` to enable |
+
+Most users on vLLM ≥ 0.10.1 don't need to add anything.
+
 ### Items are being reissued constantly
 
 Check `GET /status` — if `expired_reissues` is climbing, inferences are taking longer than `work_timeout`. Increase it live:

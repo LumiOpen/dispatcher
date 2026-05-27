@@ -53,7 +53,6 @@ class VLLMServerManager:
         chat_template: Optional[str],
         max_model_len: Optional[int],
         startup_timeout: int,
-        disable_log_requests: bool = True,
         disable_output: bool = False,
         enforce_eager: bool = False,
         extra_vllm_args: Optional[List[str]] = None,
@@ -71,7 +70,6 @@ class VLLMServerManager:
             chat_template: Optional path to a chat template file.
             max_model_len: Optional max model length override.
             startup_timeout: Max seconds to wait for the server to pass health check.
-            disable_log_requests: Whether to add --disable-log-requests flag.
             extra_vllm_args: Optional list of additional command-line arguments to pass to vLLM server.
 
         Returns:
@@ -90,8 +88,6 @@ class VLLMServerManager:
             "--gpu-memory-utilization", str(gpu_memory_utilization),
         ]
         
-        if disable_log_requests:
-            cmd.append("--disable-log-requests")
         if api_key:
             cmd.extend(["--api-key", api_key])
         if chat_template:
@@ -234,7 +230,6 @@ class VLLMBackendManager(BackendManager):
                     chat_template=chat_template,
                     max_model_len=max_model_len,
                     startup_timeout=startup_timeout,
-                    disable_log_requests=True,
                     disable_output=disable_output,
                     enforce_eager=enforce_eager,
                     extra_vllm_args=extra_vllm_args,
