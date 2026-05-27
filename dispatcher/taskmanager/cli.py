@@ -153,6 +153,7 @@ def run(
     silence_vllm_logs: bool = False,
     enforce_eager: bool = False,
     extra_vllm_args: Optional[List[str]] = None,
+    disable_log_requests: bool = True,
     # task manager params
     workers: int = 16,
     batch_size: int = 4,
@@ -192,6 +193,7 @@ def run(
         disable_output=silence_vllm_logs,
         enforce_eager=enforce_eager,
         extra_vllm_args=extra_vllm_args,
+        disable_log_requests=disable_log_requests,
     )
 
     manager = TaskManager(num_workers=workers)
@@ -240,6 +242,7 @@ def _build_parser() -> argparse.ArgumentParser:
     # vllm tuning
     p.add_argument("--enforce-eager", action="store_true", help="Force vLLM to run in eager mode")
     p.add_argument("--vllm-extra-args", type=str, default=None, help="Space-separated additional vLLM command-line arguments (e.g., '--block-size 1 --trust-remote-code') Supports shell-like quoting.")
+    p.add_argument("--no-disable-log-requests", dest="disable_log_requests", action="store_false", default=True, help="Skip --disable-log-requests (removed in newer vLLM).")
 
     # manager & batches
     p.add_argument("--workers", type=int, default=16)
@@ -276,6 +279,7 @@ def main(argv: Optional[list[str]] = None):
         silence_vllm_logs=args.silence_vllm_logs,
         enforce_eager=args.enforce_eager,
         extra_vllm_args=extra_vllm_args,
+        disable_log_requests=args.disable_log_requests,
         workers=args.workers,
         batch_size=args.batch_size,
     )

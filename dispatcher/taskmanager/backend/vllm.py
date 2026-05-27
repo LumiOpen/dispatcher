@@ -187,7 +187,8 @@ class VLLMBackendManager(BackendManager):
                  health_check_interval: int = 60,
                  disable_output: bool = False,
                  enforce_eager: bool = False,
-                 extra_vllm_args: Optional[List[str]] = None):
+                 extra_vllm_args: Optional[List[str]] = None,
+                 disable_log_requests: bool = True):
         """
         Initialize a VLLM backend manager.
         
@@ -234,7 +235,7 @@ class VLLMBackendManager(BackendManager):
                     chat_template=chat_template,
                     max_model_len=max_model_len,
                     startup_timeout=startup_timeout,
-                    disable_log_requests=True,
+                    disable_log_requests=disable_log_requests,
                     disable_output=disable_output,
                     enforce_eager=enforce_eager,
                     extra_vllm_args=extra_vllm_args,
