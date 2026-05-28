@@ -1,4 +1,4 @@
-# Dispatcher Inference Example
+# Preemptible (Backfill) Inference
 
 A shared example for running dispatcher-backed generation tasks over JSONL
 input. It covers plain OpenAI-messages inference, two flavors of reasoning-trace
