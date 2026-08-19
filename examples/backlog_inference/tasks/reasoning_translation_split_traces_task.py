@@ -67,7 +67,7 @@ Guidelines:
 2. Translate only the surrounding natural language, not the math expressions inside \( ... \), \[ ... \], or $$ ... $$.
 3. Maintain the precise meaning, tone, and logical structure of the original text.
 4. Use the standard mathematical terminology of the target language.
-5. Do not simplify, interpret, or solve the math; your goal is linguistic translation only.
+5. Do not solve, answer, summarize, simplify, interpret, or expand the content; your goal is linguistic translation only.
 6. Keep variable names, constants, and notation unchanged.
 7. If an English math term has multiple valid equivalents in the target language, choose the most widely accepted in academic usage.
 8. Do not explain your translation; output only the translated text unless asked otherwise.
@@ -244,9 +244,7 @@ class ReasoningTranslationSplitTracesTask(GeneratorTask):
         if not turns:
             message = "No conversation turns found (empty messages and no output)"
             self.logger.error("[ReasoningTranslationSplitTracesTask] ID:%s %s", sample_id, message)
-            if self.is_last_retry_attempt():
-                return self._failed_result(error_type="no_conversation_turns", message=message)
-            raise TaskRetry(message=message)
+            return self._failed_result(error_type="no_conversation_turns", message=message)
 
         last_assistant_idx = max(
             (i for i, turn in enumerate(turns) if turn.get("role") == "assistant"),
@@ -255,9 +253,7 @@ class ReasoningTranslationSplitTracesTask(GeneratorTask):
         if last_assistant_idx is None:
             message = "No assistant turn found to translate (empty messages/output)"
             self.logger.error("[ReasoningTranslationSplitTracesTask] ID:%s %s", sample_id, message)
-            if self.is_last_retry_attempt():
-                return self._failed_result(error_type="no_assistant_turn", message=message)
-            raise TaskRetry(message=message)
+            return self._failed_result(error_type="no_assistant_turn", message=message)
 
         # Build the translation plan: one entry per turn, describing how it will be
         # translated, plus the Request(s) needed to do it.
@@ -290,12 +286,10 @@ class ReasoningTranslationSplitTracesTask(GeneratorTask):
                     # trace - mirrors the original single-turn strictness check.
                     message = "Unable to split output into <think> trace body and answer"
                     self.logger.error("[ReasoningTranslationSplitTracesTask] ID:%s %s", sample_id, message)
-                    if self.is_last_retry_attempt():
-                        return self._failed_result(
-                            error_type=TranslationIssueType.UNABLE_TO_SPLIT_THINK_BLOCK,
-                            message=message,
-                        )
-                    raise TaskRetry(message=message)
+                    return self._failed_result(
+                        error_type=TranslationIssueType.UNABLE_TO_SPLIT_THINK_BLOCK,
+                        message=message,
+                    )
 
                 # Earlier assistant turns in a multi-turn conversation may legitimately
                 # be plain text with no reasoning trace - translate as-is.
