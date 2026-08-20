@@ -67,7 +67,7 @@ Guidelines:
 2. Translate only the surrounding natural language, not the math expressions inside \( ... \), \[ ... \], or $$ ... $$.
 3. Maintain the precise meaning, tone, and logical structure of the original text.
 4. Use the standard mathematical terminology of the target language.
-5. Do not simplify, interpret, or solve the math; your goal is linguistic translation only.
+5. Do not solve, answer, summarize, simplify, interpret, or expand the content; your goal is linguistic translation only.
 6. Keep variable names, constants, and notation unchanged.
 7. If an English math term has multiple valid equivalents in the target language, choose the most widely accepted in academic usage.
 8. Do not explain your translation; output only the translated text unless asked otherwise.
@@ -195,6 +195,35 @@ class ReasoningTranslationSplitTracesTask(GeneratorTask):
             return False
         return True
 
+    def _translation_request(self, text: str, gen_params: Dict[str, Any], *, sample_id: str, turn_index: int, part: str) -> Request:
+        messages = [
+            {
+                "role": "user",
+                "content": TRANSLATION_PROMPT.format(
+                    language=LANGUAGE_NAMES.get(LANGUAGE, ["Finnish"])[0],
+                    text=text,
+                ),
+            }
+        ]
+        return Request(
+            {"messages": messages, **gen_params},
+            context={
+                "task": "reasoning_translation_split_traces",
+                "sample_id": sample_id,
+                "turn_index": turn_index,
+                "part": part,
+            },
+        )
+
+    def _extract_text(self, response: Response, label: str) -> tuple[bool, str, str]:
+        """Validate one response and pull out its text. Returns (ok, text-or-error-message, error_type)."""
+        if not response.is_success:
+            return False, f"{label} translation request failed: {response.error}", f"{label}_translation_error"
+        text = response.get_text()
+        if text is None:
+            return False, f"{label} translation response had no extractable text payload", f"{label}_translation_response_parsing_error"
+        return True, text.strip(), ""
+
     # --------------- generator ---------------
     def task_generator(self) -> Generator[Union[Request, List[Request]], Any, Dict[str, Any]]:
         # self.data is prepopulated with the data from the jsonl row being processed
@@ -203,190 +232,155 @@ class ReasoningTranslationSplitTracesTask(GeneratorTask):
         self.data["id"] = sample_id
         self.logger.info(f"[ReasoningTranslationSplitTracesTask] ID:{sample_id} Processing sample")
 
-        # read prompt from input.content with "role"=="user"
-        prompt = next((item for item in self.data.get("input", []) if item.get("role") == "user"), {}).get("content", "")
+        # Canonical conversation to translate: the messages list, plus (for the legacy
+        # schema where the final assistant reply lives in a top-level "output" field
+        # instead of being embedded in "messages") the output appended as the final
+        # assistant turn.
+        turns = list(self.data.get("messages", []))
+        legacy_output = self.data.get("output")
+        if legacy_output is not None and (not turns or turns[-1].get("role") != "assistant"):
+            turns.append({"role": "assistant", "content": str(legacy_output)})
 
-        original_output = str(self.data.get("output", {}))
-        split_output = self._split_traces_and_answer(original_output)
-        if split_output is None:
-            message = "Unable to split output into <think> trace body and answer"
-            self.logger.error(
-                "[ReasoningTranslationSplitTracesTask] ID:%s %s",
-                sample_id,
-                message,
-            )
-            if self.is_last_retry_attempt():
-                return self._failed_result(
-                    error_type=TranslationIssueType.UNABLE_TO_SPLIT_THINK_BLOCK,
-                    message=message,
-                )
-            raise TaskRetry(message=message)
+        if not turns:
+            message = "No conversation turns found (empty messages and no output)"
+            self.logger.error("[ReasoningTranslationSplitTracesTask] ID:%s %s", sample_id, message)
+            return self._failed_result(error_type="no_conversation_turns", message=message)
 
-        trace_body, answer = split_output
-
-        prompt_messages = [
-            {
-                "role": "user",
-                "content": TRANSLATION_PROMPT.format(
-                    language=LANGUAGE_NAMES.get(LANGUAGE, ["Finnish"])[0],
-                    text=prompt
-                )
-            }
-        ]
-        trace_messages = [
-            {
-                "role": "user",
-                "content": TRANSLATION_PROMPT.format(
-                    language=LANGUAGE_NAMES.get(LANGUAGE, ["Finnish"])[0],
-                    text=trace_body
-                )
-            }
-        ]
-        answer_messages = [
-            {
-                "role": "user",
-                "content": TRANSLATION_PROMPT.format(
-                    language=LANGUAGE_NAMES.get(LANGUAGE, ["Finnish"])[0],
-                    text=answer
-                )
-            }
-        ]
-
-        responses = yield [
-            Request(
-                {"messages": prompt_messages, **self.PROMPT_TRANSLATION_GEN_PARAMS},
-                context={
-                    "task": "reasoning_translation_split_traces",
-                    "sample_id": sample_id,
-                    "part": "prompt",
-                },
-            ),
-            Request(
-                {"messages": trace_messages, **self.TRACES_TRANSLATION_GEN_PARAMS},
-                context={
-                    "task": "reasoning_translation_split_traces",
-                    "sample_id": sample_id,
-                    "part": "trace_body",
-                },
-            ),
-            Request(
-                {"messages": answer_messages, **self.ANSWER_TRANSLATION_GEN_PARAMS},
-                context={
-                    "task": "reasoning_translation_split_traces",
-                    "sample_id": sample_id,
-                    "part": "answer",
-                },
-            ),
-        ]
-        responses_by_part = {
-            response.request.context["part"]: response for response in responses
-        }
-        prompt_resp = responses_by_part["prompt"]
-        trace_resp = responses_by_part["trace_body"]
-        answer_resp = responses_by_part["answer"]
-
-        if not prompt_resp.is_success:
-            self.logger.error(
-                "[ReasoningTranslationSplitTracesTask] ID:%s Prompt translation request failed: %s",
-                sample_id,
-                prompt_resp.error,
-            )
-            raise TaskRetry(message=f"Prompt translation request failed: {prompt_resp.error}")
-
-        translated_prompt_text = prompt_resp.get_text()
-        if translated_prompt_text is None:
-            self.logger.error(
-                "[ReasoningTranslationSplitTracesTask] ID:%s Prompt translation response had no extractable text payload",
-                sample_id,
-            )
-            raise TaskRetry(
-                message="Prompt translation response had no extractable text payload"
-            )
-
-        translated_prompt = translated_prompt_text.strip()
-
-        if not trace_resp.is_success:
-            self.logger.error(
-                "[ReasoningTranslationSplitTracesTask] ID:%s Trace body translation request failed: %s",
-                sample_id,
-                trace_resp.error,
-            )
-            if self.is_last_retry_attempt():
-                return self._failed_result(
-                    error_type="trace_body_translation_error",
-                    message=f"Trace body translation request failed: {trace_resp.error}",
-                    translated_prompt=translated_prompt,
-                )
-            raise TaskRetry(message=f"Trace body translation request failed: {trace_resp.error}")
-
-        if not answer_resp.is_success:
-            self.logger.error(
-                "[ReasoningTranslationSplitTracesTask] ID:%s Answer translation request failed: %s",
-                sample_id,
-                answer_resp.error,
-            )
-            if self.is_last_retry_attempt():
-                return self._failed_result(
-                    error_type="answer_translation_error",
-                    message=f"Answer translation request failed: {answer_resp.error}",
-                    translated_prompt=translated_prompt,
-                )
-            raise TaskRetry(message=f"Answer translation request failed: {answer_resp.error}")
-
-        translated_trace_body_text = trace_resp.get_text()
-        if translated_trace_body_text is None:
-            message = "Trace body translation response had no extractable text payload"
-            self.logger.error(
-                "[ReasoningTranslationSplitTracesTask] ID:%s %s",
-                sample_id,
-                message,
-            )
-            if self.is_last_retry_attempt():
-                return self._failed_result(
-                    error_type="trace_body_translation_response_parsing_error",
-                    message=message,
-                    translated_prompt=translated_prompt,
-                )
-            raise TaskRetry(message=message)
-
-        translated_answer_text = answer_resp.get_text()
-        if translated_answer_text is None:
-            message = "Answer translation response had no extractable text payload"
-            self.logger.error(
-                "[ReasoningTranslationSplitTracesTask] ID:%s %s",
-                sample_id,
-                message,
-            )
-            if self.is_last_retry_attempt():
-                return self._failed_result(
-                    error_type="answer_translation_response_parsing_error",
-                    message=message,
-                    translated_prompt=translated_prompt,
-                )
-            raise TaskRetry(message=message)
-
-        translated_traces = self._reconstruct_traces(
-            translated_trace_body_text.strip(),
-            translated_answer_text.strip(),
+        last_assistant_idx = max(
+            (i for i, turn in enumerate(turns) if turn.get("role") == "assistant"),
+            default=None,
         )
+        if last_assistant_idx is None:
+            message = "No assistant turn found to translate (empty messages/output)"
+            self.logger.error("[ReasoningTranslationSplitTracesTask] ID:%s %s", sample_id, message)
+            return self._failed_result(error_type="no_assistant_turn", message=message)
 
-        issues = []
-        if not self._check_token_count(original_output, translated_traces, issues):
-            issue_types = ", ".join(i["type"] for i in issues)
-            if self.is_last_retry_attempt():
-                return self._failed_result(
-                    error_type="trace_translation_validation_failed",
-                    message=f"Trace translation validation failed: {issue_types}",
-                    translated_prompt=translated_prompt,
-                    translated_traces=translated_traces,
+        # Build the translation plan: one entry per turn, describing how it will be
+        # translated, plus the Request(s) needed to do it.
+        turn_plans: List[Dict[str, Any]] = []
+        requests: List[Request] = []
+
+        for i, turn in enumerate(turns):
+            role = turn.get("role")
+            content = str(turn.get("content", ""))
+
+            if role == "user":
+                turn_plans.append({"index": i, "kind": "prompt", "original": content})
+                requests.append(
+                    self._translation_request(
+                        content, self.PROMPT_TRANSLATION_GEN_PARAMS,
+                        sample_id=sample_id, turn_index=i, part="prompt",
+                    )
                 )
-            raise TaskRetry(message=f"Trace translation validation failed: {issue_types}")
+                continue
+
+            if role != "assistant":
+                # No other roles observed in practice; pass through untranslated.
+                turn_plans.append({"index": i, "kind": "asis", "original": content})
+                continue
+
+            split_output = self._split_traces_and_answer(content)
+            if split_output is None:
+                if i == last_assistant_idx:
+                    # The final assistant turn is expected to always carry a reasoning
+                    # trace - mirrors the original single-turn strictness check.
+                    message = "Unable to split output into <think> trace body and answer"
+                    self.logger.error("[ReasoningTranslationSplitTracesTask] ID:%s %s", sample_id, message)
+                    return self._failed_result(
+                        error_type=TranslationIssueType.UNABLE_TO_SPLIT_THINK_BLOCK,
+                        message=message,
+                    )
+
+                # Earlier assistant turns in a multi-turn conversation may legitimately
+                # be plain text with no reasoning trace - translate as-is.
+                turn_plans.append({"index": i, "kind": "plain", "original": content})
+                requests.append(
+                    self._translation_request(
+                        content, self.ANSWER_TRANSLATION_GEN_PARAMS,
+                        sample_id=sample_id, turn_index=i, part="full",
+                    )
+                )
+                continue
+
+            trace_body, answer = split_output
+            turn_plans.append({
+                "index": i, "kind": "split", "original": content,
+                "trace_body": trace_body, "answer": answer,
+            })
+            requests.append(
+                self._translation_request(
+                    trace_body, self.TRACES_TRANSLATION_GEN_PARAMS,
+                    sample_id=sample_id, turn_index=i, part="trace_body",
+                )
+            )
+            requests.append(
+                self._translation_request(
+                    answer, self.ANSWER_TRANSLATION_GEN_PARAMS,
+                    sample_id=sample_id, turn_index=i, part="answer",
+                )
+            )
+
+        responses = yield requests
+        responses_by_key = {
+            (response.request.context["turn_index"], response.request.context["part"]): response
+            for response in responses
+        }
+
+        # Phase 1: validate every response and extract its translated text.
+        texts_by_key: Dict[tuple[int, str], str] = {}
+        for plan in turn_plans:
+            i = plan["index"]
+            parts = {"prompt": ["prompt"], "plain": ["full"], "split": ["trace_body", "answer"]}.get(plan["kind"], [])
+            for part in parts:
+                response = responses_by_key[(i, part)]
+                ok, text_or_message, error_type = self._extract_text(response, f"turn{i}_{part}")
+                if not ok:
+                    self.logger.error("[ReasoningTranslationSplitTracesTask] ID:%s %s", sample_id, text_or_message)
+                    if self.is_last_retry_attempt():
+                        return self._failed_result(error_type=error_type, message=text_or_message)
+                    raise TaskRetry(message=text_or_message)
+                texts_by_key[(i, part)] = text_or_message
+
+        # Phase 2: reconstruct each turn's translated content and validate token counts.
+        translated_by_turn: Dict[int, str] = {}
+        for plan in turn_plans:
+            i = plan["index"]
+            kind = plan["kind"]
+
+            if kind == "asis":
+                translated_by_turn[i] = plan["original"]
+                continue
+
+            if kind == "prompt":
+                translated_by_turn[i] = texts_by_key[(i, "prompt")]
+                continue
+
+            if kind == "plain":
+                translated_content = texts_by_key[(i, "full")]
+            else:  # split
+                translated_content = self._reconstruct_traces(
+                    texts_by_key[(i, "trace_body")],
+                    texts_by_key[(i, "answer")],
+                )
+
+            issues: list = []
+            if not self._check_token_count(plan["original"], translated_content, issues):
+                issue_types = ", ".join(issue["type"] for issue in issues)
+                message = f"Turn {i} translation validation failed: {issue_types}"
+                if self.is_last_retry_attempt():
+                    error_type = "trace_translation_validation_failed" if kind == "split" else "translation_validation_failed"
+                    return self._failed_result(error_type=error_type, message=message)
+                raise TaskRetry(message=message)
+
+            translated_by_turn[i] = translated_content
+
+        translated_messages = [
+            {"role": turns[i].get("role"), "content": translated_by_turn[i]}
+            for i in range(len(turns))
+        ]
 
         self.logger.info(
             f"[ReasoningTranslationSplitTracesTask] ID:{sample_id} Finished processing sample"
         )
 
-        return self.build_result(
-            translated_prompt=translated_prompt,
-            translated_traces=translated_traces,
-        )
+        return self.build_result(translated_messages=translated_messages)
