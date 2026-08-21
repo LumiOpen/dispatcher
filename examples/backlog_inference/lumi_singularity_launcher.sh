@@ -23,6 +23,7 @@
 : "${LAUNCHER_HF_HOME:=/scratch/project_462001516/users/zosaelai2/hf-home}"
 : "${LAUNCHER_TORCHINDUCTOR_CACHE:=/tmp/$USER/$SLURM_JOB_ID/torch_inductor_cache}"
 : "${LAUNCHER_BIND_DIRS:=/pfs,/scratch,/projappl,/project,/flash,/appl,/opt/cray,/var/spool/slurmd}"
+: "${LAUNCHER_PASSTHROUGH_VARS:=}"
 
 # Offline mode flags (set to empty string to disable)
 : "${LAUNCHER_HF_HUB_OFFLINE:=}"
@@ -85,7 +86,19 @@ setup_singularity_environment() {
   export SINGULARITYENV_PYTHONPATH="$PYUSERPKG:\${PYTHONPATH-}"
   export SINGULARITYENV_PYEXEC_IN_IMG="$PYEXEC_IN_IMG"
   export SINGULARITYENV_DISPATCHER_SERVER="${DISPATCHER_SERVER:-}"
-  export SINGULARITYENV_DISPATCHER_PORT="${DISPATCHER_PORT:-}"
+
+  # Keep --cleanenv while allowing each job to explicitly opt selected host
+  # variables into the container environment.
+  local passthrough_var
+  for passthrough_var in $LAUNCHER_PASSTHROUGH_VARS; do
+    if [[ ! "$passthrough_var" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+      echo "Invalid LAUNCHER_PASSTHROUGH_VARS entry: $passthrough_var" >&2
+      return 1
+    fi
+    if declare -p "$passthrough_var" &>/dev/null; then
+      export "SINGULARITYENV_${passthrough_var}=${!passthrough_var}"
+    fi
+  done
 
   if [ -n "${HF_HUB_OFFLINE:-}" ]; then
     export SINGULARITYENV_HF_HUB_OFFLINE="$HF_HUB_OFFLINE"

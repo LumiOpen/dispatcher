@@ -34,6 +34,7 @@ WORK_DIR="${WORK_DIR:-$SLURM_SUBMIT_DIR}"
 cd "$WORK_DIR"
 
 LAUNCHER="${LAUNCHER:-$WORK_DIR/lumi_singularity_launcher.sh}"
+LAUNCHER_PASSTHROUGH_VARS="${LAUNCHER_PASSTHROUGH_VARS:-} OUTPUT_FILE DISPATCHER_PORT SESSION_NAME"
 source "$LAUNCHER"
 
 echo "Starting dispatcher server (config: $CONFIG_FILE) on $(hostname)"
