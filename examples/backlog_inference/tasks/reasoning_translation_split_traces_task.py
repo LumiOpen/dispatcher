@@ -27,6 +27,7 @@ def _env_int(name: str, default: int) -> int:
 PROMPT_TRANSLATION_MAX_TOKENS = _env_int("PROMPT_TRANSLATION_MAX_TOKENS", 8192)
 TRACE_TRANSLATION_MAX_TOKENS = _env_int("TRACE_TRANSLATION_MAX_TOKENS", 32768)
 ANSWER_TRANSLATION_MAX_TOKENS = _env_int("ANSWER_TRANSLATION_MAX_TOKENS", 8192)
+MAX_MODEL_LEN = _env_int("MAX_MODEL_LEN", 32768)
 THINK_BLOCK_PATTERN = re.compile(r"^\s*<think>(?P<traces>.*?)</think>(?P<answer>.*)\s*$", re.DOTALL)
 
 LANGUAGE_NAMES = {
@@ -54,6 +55,7 @@ LANGUAGE_NAMES = {
     "sk": ["Slovak", "slk"],
     "sl": ["Slovenian", "slv"],
     "sv": ["Swedish", "swe"],
+    "uk": ["Ukrainian", "ukr"],
     "is": ["Icelandic", "isl"],
     "no": ["Norwegian", "nob"],
 }
@@ -86,6 +88,8 @@ class TranslationIssueType:
     NO_CONTENT_AFTER_CLOSE_THINK_TAG = "no_content_after_close_think_tag"
     TOKEN_COUNT_DELTA_TOO_LARGE = "token_count_delta_too_large"
     UNABLE_TO_SPLIT_THINK_BLOCK = "unable_to_split_think_block"
+    CONTEXT_LENGTH_EXCEEDED = "context_length_exceeded"
+    OUTPUT_TRUNCATED = "output_truncated"
 
 
 class ReasoningTranslationSplitTracesTask(GeneratorTask):
@@ -114,7 +118,7 @@ class ReasoningTranslationSplitTracesTask(GeneratorTask):
     def _failed_result(self, *, error_type: str, message: str, **payload: Any) -> Dict[str, Any]:
         """Wrap Task.build_result so every failure call site logs uniformly."""
         self.logger.warning(
-            "[ReasoningTranslationSplitTracesTask] ID:%s Dumping unsuccessful record after final retry: %s",
+            "[ReasoningTranslationSplitTracesTask] ID:%s Dumping unsuccessful record: %s",
             self.data.get("id"),
             message,
         )
@@ -213,6 +217,65 @@ class ReasoningTranslationSplitTracesTask(GeneratorTask):
                 "turn_index": turn_index,
                 "part": part,
             },
+        )
+
+    def _rendered_input_token_count(self, request: Request) -> int:
+        """Count tokens exactly as a chat request after applying the model template."""
+        tokenizer = self.get_tokenizer()
+        tokenized = tokenizer.apply_chat_template(
+            request.content["messages"],
+            tokenize=True,
+            add_generation_prompt=True,
+        )
+        if isinstance(tokenized, dict):
+            tokenized = tokenized["input_ids"]
+        if hasattr(tokenized, "shape"):
+            return int(tokenized.shape[-1])
+        return len(tokenized)
+
+    def _preflight_context_issue(self, request: Request) -> Dict[str, Any] | None:
+        """Return context-limit details when a request cannot fit before generation."""
+        max_tokens = int(request.content.get("max_tokens") or 0)
+        max_input_tokens = MAX_MODEL_LEN - max_tokens
+        input_tokens = self._rendered_input_token_count(request)
+        if input_tokens <= max_input_tokens:
+            return None
+        return {
+            "turn_index": request.context["turn_index"],
+            "part": request.context["part"],
+            "input_tokens": input_tokens,
+            "max_input_tokens": max_input_tokens,
+            "max_output_tokens": max_tokens,
+            "max_model_len": MAX_MODEL_LEN,
+        }
+
+    @staticmethod
+    def _finish_reason(response: Response) -> str | None:
+        """Extract the first choice's finish reason from a successful response."""
+        if not isinstance(response.content, dict):
+            return None
+        choices = response.content.get("choices")
+        if not choices or not isinstance(choices[0], dict):
+            return None
+        return choices[0].get("finish_reason")
+
+    def _translated_content_for_plan(
+        self,
+        plan: Dict[str, Any],
+        texts_by_key: Dict[tuple[int, str], str],
+    ) -> str:
+        """Reconstruct one translated turn, including partial generated text."""
+        i = plan["index"]
+        kind = plan["kind"]
+        if kind == "asis":
+            return plan["original"]
+        if kind == "prompt":
+            return texts_by_key[(i, "prompt")]
+        if kind == "plain":
+            return texts_by_key[(i, "full")]
+        return self._reconstruct_traces(
+            texts_by_key[(i, "trace_body")],
+            texts_by_key[(i, "answer")],
         )
 
     def _extract_text(self, response: Response, label: str) -> tuple[bool, str, str]:
@@ -320,6 +383,30 @@ class ReasoningTranslationSplitTracesTask(GeneratorTask):
                 )
             )
 
+        # Preflight validation of trace translation input context length.
+        for request in requests:
+            if request.context["part"] != "trace_body":
+                continue
+            context_issue = self._preflight_context_issue(request)
+            if context_issue is None:
+                continue
+            message = (
+                f"Turn {context_issue['turn_index']} trace translation input has "
+                f"{context_issue['input_tokens']} tokens after applying the chat template; "
+                f"at most {context_issue['max_input_tokens']} fit with "
+                f"max_tokens={context_issue['max_output_tokens']} and "
+                f"max_model_len={context_issue['max_model_len']}"
+            )
+            return self._failed_result(
+                error_type=TranslationIssueType.CONTEXT_LENGTH_EXCEEDED,
+                message=message,
+                translation_issues=[{
+                    "type": TranslationIssueType.CONTEXT_LENGTH_EXCEEDED,
+                    "params": context_issue,
+                }],
+            )
+
+        # Yield generation requests and wait for responses.
         responses = yield requests
         responses_by_key = {
             (response.request.context["turn_index"], response.request.context["part"]): response
@@ -328,6 +415,7 @@ class ReasoningTranslationSplitTracesTask(GeneratorTask):
 
         # Phase 1: validate every response and extract its translated text.
         texts_by_key: Dict[tuple[int, str], str] = {}
+        truncated_parts: List[Dict[str, Any]] = []
         for plan in turn_plans:
             i = plan["index"]
             parts = {"prompt": ["prompt"], "plain": ["full"], "split": ["trace_body", "answer"]}.get(plan["kind"], [])
@@ -340,6 +428,31 @@ class ReasoningTranslationSplitTracesTask(GeneratorTask):
                         return self._failed_result(error_type=error_type, message=text_or_message)
                     raise TaskRetry(message=text_or_message)
                 texts_by_key[(i, part)] = text_or_message
+                if self._finish_reason(response) == "length":
+                    truncated_parts.append({"turn_index": i, "part": part})
+
+        if truncated_parts:
+            translated_by_turn = {
+                plan["index"]: self._translated_content_for_plan(plan, texts_by_key)
+                for plan in turn_plans
+            }
+            translated_messages = [
+                {"role": turns[i].get("role"), "content": translated_by_turn[i]}
+                for i in range(len(turns))
+            ]
+            truncated_labels = ", ".join(
+                f"turn{item['turn_index']}_{item['part']}" for item in truncated_parts
+            )
+            message = f"Translation output reached the generation length limit: {truncated_labels}"
+            return self._failed_result(
+                error_type=TranslationIssueType.OUTPUT_TRUNCATED,
+                message=message,
+                translated_messages=translated_messages,
+                translation_issues=[{
+                    "type": TranslationIssueType.OUTPUT_TRUNCATED,
+                    "params": item,
+                } for item in truncated_parts],
+            )
 
         # Phase 2: reconstruct each turn's translated content and validate token counts.
         translated_by_turn: Dict[int, str] = {}
@@ -347,21 +460,11 @@ class ReasoningTranslationSplitTracesTask(GeneratorTask):
             i = plan["index"]
             kind = plan["kind"]
 
-            if kind == "asis":
-                translated_by_turn[i] = plan["original"]
-                continue
+            translated_content = self._translated_content_for_plan(plan, texts_by_key)
 
-            if kind == "prompt":
-                translated_by_turn[i] = texts_by_key[(i, "prompt")]
+            if kind in {"asis", "prompt"}:
+                translated_by_turn[i] = translated_content
                 continue
-
-            if kind == "plain":
-                translated_content = texts_by_key[(i, "full")]
-            else:  # split
-                translated_content = self._reconstruct_traces(
-                    texts_by_key[(i, "trace_body")],
-                    texts_by_key[(i, "answer")],
-                )
 
             issues: list = []
             if not self._check_token_count(plan["original"], translated_content, issues):
