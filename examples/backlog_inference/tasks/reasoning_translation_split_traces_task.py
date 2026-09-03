@@ -226,6 +226,11 @@ class ReasoningTranslationSplitTracesTask(GeneratorTask):
             request.content["messages"],
             tokenize=True,
             add_generation_prompt=True,
+            # transformers v5 returns a BatchEncoding by default. Its len()
+            # is the number of fields (usually input_ids and attention_mask),
+            # not the number of prompt tokens. vLLM also forces this to False
+            # before performing its context-length validation.
+            return_dict=False,
         )
         if isinstance(tokenized, dict):
             tokenized = tokenized["input_ids"]
