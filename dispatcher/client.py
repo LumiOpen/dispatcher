@@ -28,8 +28,8 @@ class WorkClient:
         params = {"batch_size": batch_size}
 
         try:
-            resp = requests.get(url, params=params)
-        except requests.ConnectionError:
+            resp = requests.get(url, params=params, timeout=30)
+        except (requests.ConnectionError, requests.Timeout):
             # Return a "server unavailable" response
             return BatchWorkResponse(status=WorkStatus.SERVER_UNAVAILABLE, items=[])
 

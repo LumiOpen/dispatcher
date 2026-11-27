@@ -79,23 +79,16 @@ def _install_signal_handlers(backend: VLLMBackendManager, task_manager: TaskMana
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
         signal.signal(signal.SIGINT, signal.SIG_IGN)
 
+        if isinstance(task_source, DispatcherTaskSource) and task_source.fetch_in_progress:
+            task_source.deferred_signal = signum
+            logger.info("Signal %d received during work fetch; releasing after response", signum)
+            return
+
         logger.info("Signal %d received, releasing in-flight work", signum)
 
-        # Collect in-flight work_ids and release them back to the server.
-        work_ids = []
-        try:
-            for task in task_manager.active_tasks:
-                if hasattr(task, "context") and task.context is not None:
-                    ctx = task.context
-                    if hasattr(ctx, "work_id"):
-                        work_ids.append(ctx.work_id)
-        except Exception:
-            logger.exception(
-                "Error while collecting in-flight work items during signal %d handling",
-                signum,
-            )
-
-        if work_ids and isinstance(task_source, DispatcherTaskSource):
+        # The source owns fetched items even before TaskManager activates them.
+        work_ids = list(task_source.outstanding_work_ids) if isinstance(task_source, DispatcherTaskSource) else []
+        if work_ids:
             try:
                 resp = task_source.client.release_work(work_ids)
                 if resp.status != WorkStatus.OK or resp.released_count != len(work_ids):
@@ -129,6 +122,8 @@ def _install_signal_handlers(backend: VLLMBackendManager, task_manager: TaskMana
         except ValueError:
             # In threads / unsuitable contexts just ignore.
             pass
+    if isinstance(task_source, DispatcherTaskSource):
+        task_source.shutdown_handler = _handler
 
 ###############################################################################
 # Public runner API (can be imported)

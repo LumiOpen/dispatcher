@@ -36,16 +36,23 @@ class DispatcherTaskSource(TaskSource):
             raise
         
         self._is_exhausted = False
+        # Includes fetched items that have not reached TaskManager.active_tasks.
+        self.outstanding_work_ids = set()
+        self.fetch_in_progress = False
+        self.deferred_signal = None
+        self.shutdown_handler = None
     
     def get_next_tasks(self) -> List[Task]:
         """Get up to batch_size tasks from the Dispatcher server."""
         if self._is_exhausted:
             return []
         
+        self.fetch_in_progress = True
         try:
             resp = self.client.get_work(batch_size=self.batch_size)
             
             if resp.status == WorkStatus.OK and resp.items:
+                self.outstanding_work_ids.update(item.work_id for item in resp.items)
                 tasks = []
                 
                 for work_item in resp.items:
@@ -57,7 +64,9 @@ class DispatcherTaskSource(TaskSource):
                             self.logger.error(f"Error parsing JSON for work item {work_item.work_id}: {e}")
                             # Return an error to the dispatcher
                             work_item.set_result(json.dumps({"error": f"Failed to parse JSON: {e}"}))
-                            self.client.submit_results([work_item])
+                            submitted = self.client.submit_results([work_item])
+                            if submitted.status == WorkStatus.OK and submitted.count == 1:
+                                self.outstanding_work_ids.discard(work_item.work_id)
                             continue
                         
                         # Create a task with the data and work_item as context
@@ -68,7 +77,9 @@ class DispatcherTaskSource(TaskSource):
                         self.logger.exception(f"Error creating task for work item {work_item.work_id}: {e}")
                         # Return an error to the dispatcher
                         work_item.set_result(json.dumps({"error": f"Failed to create task: {str(e)}"}))
-                        self.client.submit_results([work_item])
+                        submitted = self.client.submit_results([work_item])
+                        if submitted.status == WorkStatus.OK and submitted.count == 1:
+                            self.outstanding_work_ids.discard(work_item.work_id)
                 
                 if tasks:
                     self.logger.debug(f"Created {len(tasks)} new tasks from Dispatcher")
@@ -85,6 +96,10 @@ class DispatcherTaskSource(TaskSource):
         except Exception as e:
             self.logger.exception(f"Error getting work from Dispatcher: {e}")
             return []
+        finally:
+            self.fetch_in_progress = False
+            if self.deferred_signal is not None:
+                self.shutdown_handler(self.deferred_signal, None)
     
     def save_task_result(self, task: Task) -> None:
         """Save task result back to the Dispatcher server."""
@@ -107,14 +122,19 @@ class DispatcherTaskSource(TaskSource):
                         resp.released_count,
                     )
                 else:
+                    self.outstanding_work_ids.discard(work_item.work_id)
                     self.logger.debug(f"Released work item {work_item.work_id} for retry: {task.retry_reason}")
                 return
 
             work_item.set_result(json.dumps(result, ensure_ascii=False))
             
             # Submit back to the dispatcher
-            self.client.submit_results([work_item])
-            self.logger.debug(f"Submitted result for work item {work_item.work_id} back to Dispatcher")
+            resp = self.client.submit_results([work_item])
+            if resp.status == WorkStatus.OK and resp.count == 1:
+                self.outstanding_work_ids.discard(work_item.work_id)
+                self.logger.debug(f"Submitted result for work item {work_item.work_id} back to Dispatcher")
+            else:
+                self.logger.warning("Result for work item %s was not confirmed; it remains pending for timeout recovery", work_item.work_id)
             
         except Exception as e:
             self.logger.exception(f"Error saving task result: {e}")
