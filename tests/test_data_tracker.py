@@ -40,7 +40,35 @@ class TestDataTracker(unittest.TestCase):
         self.assertEqual(dt.last_processed_work_id, -1)
         self.assertEqual(dt.input_offset, 0)
         self.assertEqual(dt.next_work_id, 0)
+        with open(self.checkpoint) as f:
+            self.assertEqual(json.load(f), {"last_processed_work_id": -1, "input_offset": 0, "output_offset": 0})
         dt.close()
+
+    def test_restart_before_first_periodic_checkpoint(self):
+        dt = DataTracker(self.infile.name, self.outfile.name, self.checkpoint,
+                         checkpoint_interval=3600)
+        first = dt.get_work_batch(2)
+        dt.complete_work_batch([(first[0][0], "result_0")])
+        dt.outfile.close()  # Simulate abrupt exit without DataTracker.close().
+        dt.infile.close()
+
+        resumed = DataTracker(self.infile.name, self.outfile.name, self.checkpoint)
+        self.assertEqual(resumed.get_work_batch(1)[0][0], 1)
+        resumed.close()
+
+    def test_missing_checkpoint_and_partial_output(self):
+        with open(self.outfile.name, "wb") as f:
+            f.write(b"result_0\npartial")
+        dt = DataTracker(self.infile.name, self.outfile.name, self.checkpoint)
+        self.assertEqual(dt.get_work_batch(1)[0][0], 1)
+        with open(self.outfile.name, "rb") as f:
+            self.assertEqual(f.read(), b"result_0\n")
+        dt.close()
+
+        # The rebuilt checkpoint must also point past the recovered input.
+        again = DataTracker(self.infile.name, self.outfile.name, self.checkpoint)
+        self.assertEqual(again.get_work_batch(1)[0], (1, "row_content_1"))
+        again.close()
 
     def test_get_work_batch_and_reissue(self):
         dt = DataTracker(self.infile.name, self.outfile.name, self.checkpoint,
