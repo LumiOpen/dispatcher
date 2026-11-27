@@ -103,6 +103,8 @@ class DataTracker:
         self.infile = open(self.infile_path, "rb")
         self.outfile = open(self.outfile_path, "ab+")
         self._load_checkpoint()
+        if not os.path.exists(self.checkpoint_path) or os.path.getsize(self.checkpoint_path) == 0:
+            self._write_checkpoint()
 
     @contextmanager
     def _measured_state_lock(self):
@@ -144,37 +146,41 @@ class DataTracker:
         return self._lock_stats.snapshot(now, active_hold_seconds=active_hold_seconds)
 
     def _load_checkpoint(self):
-        # If a checkpoint file exists and is non-empty, load its state.
+        cp = {}
         if os.path.exists(self.checkpoint_path) and os.path.getsize(self.checkpoint_path) > 0:
             try:
                 with open(self.checkpoint_path, "r") as f:
                     cp = json.load(f)
             except json.JSONDecodeError:
-                cp = {}
-            self.last_processed_work_id = cp.get("last_processed_work_id", -1)
-            self.input_offset = cp.get("input_offset", 0)
-            self.infile.seek(self.input_offset)
-            self.outfile.seek(cp.get("output_offset", 0))
+                logging.warning("Invalid checkpoint; recovering from output start.")
 
-            # Any lines after the output_offset in in output_file have been
-            # completed after the checkpoint is written, so we need to move
-            # past them in both the outfile and the infile
-            extra_lines = self.outfile.readlines()
-            extra_count = len(extra_lines)
+        self.last_processed_work_id = cp.get("last_processed_work_id", -1)
+        self.input_offset = cp.get("input_offset", 0)
+        self.infile.seek(self.input_offset)
+        output_offset = cp.get("output_offset", 0)
+        if output_offset > os.path.getsize(self.outfile_path):
+            raise ValueError("Checkpoint output offset is beyond the output file")
+        self.outfile.seek(output_offset)
 
-            # For each extra line in the output, discard one line from the input.
-            for _ in range(extra_count):
-                self.infile.readline()
+        # Count only complete output lines. A crash during a write may leave a
+        # partial last line, which must be retried rather than counted as done.
+        while True:
+            line_start = self.outfile.tell()
+            line = self.outfile.readline()
+            if not line:
+                break
+            if not line.endswith(b"\n"):
+                self.outfile.truncate(line_start)
+                self.outfile.seek(line_start)
+                break
+            if not self.infile.readline():
+                raise ValueError("Output contains more lines than input")
+            self.last_processed_work_id += 1
 
-            self.last_processed_work_id += extra_count
-            self.next_work_id = self.last_processed_work_id + 1
-
-            logging.info(f"Loaded checkpoint: last_processed_work_id={self.last_processed_work_id}, "
-                         f"input_offset={self.input_offset}, output_offset={self.outfile.tell()}")
-        else:
-            self.last_processed_work_id = -1
-            self.next_work_id = 0
-            logging.info("No checkpoint found; starting fresh.")
+        self.input_offset = self.infile.tell()
+        self.next_work_id = self.last_processed_work_id + 1
+        logging.info("Recovered: last_processed_work_id=%s, output_offset=%s",
+                     self.last_processed_work_id, self.outfile.tell())
 
     def all_work_complete(self) -> bool:
         """
